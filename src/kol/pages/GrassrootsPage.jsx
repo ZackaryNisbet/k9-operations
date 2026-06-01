@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Btn, CalendarPicker, Card, Modal } from "../../shared/ui";
+import { Badge, Btn, CalendarPicker, Card, CustomSelect, Modal } from "../../shared/ui";
 import { hasLeanPermission } from "../../shared/permissions";
 import {
   GRASSROOTS_CATEGORY_CONFIGS,
@@ -50,6 +50,7 @@ import {
   canCloseGrassrootsEvent,
   makeGrassrootsEventCloseout,
   compareGrassrootsHistoryDesc,
+  filterGrassrootsHistory,
   groupGrassrootsActivityAttachments,
   groupGrassrootsActivities,
   inferGrassrootsActivityAttachmentMimeType,
@@ -91,10 +92,10 @@ const HISTORY_EVENT_LABELS = {
   target_updated: "Edited",
   target_moved: "Moved",
   target_deleted: "Deleted",
-  development_logged: "Development",
-  drop_logged: "Drop",
-  development_updated: "Edited Development",
-  drop_updated: "Edited Drop",
+  development_logged: "Logged update",
+  drop_logged: "Logged visit",
+  development_updated: "Edited update",
+  drop_updated: "Edited visit",
 };
 
 const GOOGLE_PLACES_API_KEY = import.meta.env?.VITE_GOOGLE_PLACES_API_KEY || "";
@@ -468,6 +469,57 @@ function getActivityHistoryChanges(entry) {
       after: formatHistoryChangeValue(afterValue, field.type),
     }];
   });
+}
+
+// Human-meaningful target columns to diff for target_updated / target_moved rows,
+// so the History tab can show "Status: Identified → Booked" instead of just "Edited row".
+const TARGET_HISTORY_FIELDS = [
+  { key: "name", label: "Name" },
+  { key: "status", label: "Status", format: (value) => getGrassrootsStatusLabel(value) },
+  { key: "organizer", label: "Organizer" },
+  { key: "contact_email", label: "Email" },
+  { key: "contact_phone", label: "Phone" },
+  { key: "address", label: "Address" },
+  { key: "business_category", label: "Business Type" },
+  { key: "expected_audience", label: "Expected Audience" },
+  { key: "cost", label: "Cost", type: "money" },
+  { key: "leads_captured", label: "Leads" },
+  { key: "event_start_date", label: "Event Start", type: "date" },
+  { key: "event_end_date", label: "Event End", type: "date" },
+  { key: "next_contact_date", label: "Follow-Up Date", type: "date" },
+];
+
+function formatTargetHistoryValue(value, field) {
+  if (field.type === "money") {
+    const num = Number(value);
+    return value == null || value === "" || Number.isNaN(num) ? "None" : `$${num.toLocaleString()}`;
+  }
+  if (field.type === "date") return value ? fmtDate(value) : "None";
+  if (field.format) return String(field.format(value) || "").trim() || "None";
+  return String(value == null ? "" : value).trim() || "None";
+}
+
+function getTargetHistoryChanges(entry) {
+  if (!["target_updated", "target_moved"].includes(entry?.event_type)) return [];
+  const before = entry.before_snapshot || {};
+  const after = entry.after_snapshot || {};
+  return TARGET_HISTORY_FIELDS.flatMap((field) => {
+    const beforeRaw = before[field.key];
+    const afterRaw = after[field.key];
+    if (String(beforeRaw ?? "") === String(afterRaw ?? "")) return [];
+    return [{
+      label: field.label,
+      before: formatTargetHistoryValue(beforeRaw, field),
+      after: formatTargetHistoryValue(afterRaw, field),
+    }];
+  });
+}
+
+// One entry point for both flavors of edit: activity (visit/development) edits and
+// target field edits each carry their own before/after snapshots.
+function getHistoryChanges(entry) {
+  const activityChanges = getActivityHistoryChanges(entry);
+  return activityChanges.length > 0 ? activityChanges : getTargetHistoryChanges(entry);
 }
 
 function buildTargetPayload(draft, locationId, actor) {
@@ -2117,64 +2169,250 @@ function FilterIcon() {
   );
 }
 
-function HistoryList({ items, emptyText = "No history yet." }) {
-  const rows = [...(items || [])].sort(compareGrassrootsHistoryDesc);
-  if (rows.length === 0) {
-    return <div style={{ fontSize: 12, color: C.textMut }}>{emptyText}</div>;
+// Compact table styling for the Marketing History tab — mirrors the Training
+// History table (tight uppercase header + roster-style cells).
+const HISTORY_TH = {
+  padding: "9px 12px",
+  fontSize: 10.5,
+  fontWeight: 900,
+  color: C.textMut,
+  textTransform: "uppercase",
+  letterSpacing: 0,
+  borderBottom: `2px solid ${C.border}`,
+  textAlign: "left",
+  whiteSpace: "nowrap",
+  background: C.bg,
+  position: "sticky",
+  top: 0,
+  zIndex: 1,
+};
+const HISTORY_TD = { padding: "11px 12px", fontSize: 12.5, lineHeight: 1.35, fontWeight: 700, color: C.text, verticalAlign: "top" };
+const HISTORY_TD_SECONDARY = { ...HISTORY_TD, color: C.textSec, fontWeight: 650 };
+
+const HISTORY_RENDER_CAP = 400;
+
+function fmtHistoryTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+// event_at is a full timestamptz (not a date-only string), so format it from a real
+// Date — using the date-only fmtDate() here would produce "Invalid Date".
+function fmtHistoryDate(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+// Notes can carry leftover rich-text markup — show clean readable text.
+function historyPlainText(value) {
+  return String(value == null ? "" : value)
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s*\n\s*/g, "\n")
+    .trim();
+}
+
+// The heart of the page: for every row, exactly WHAT changed and WHAT it became.
+// Edits -> field diffs (old -> new); logged visits/developments -> the note + what
+// was captured; moves -> from -> to category.
+function getHistoryDetailLines(entry) {
+  const changes = getHistoryChanges(entry);
+  if (changes.length > 0) {
+    return changes.map((change) => ({ label: change.label, before: change.before, after: change.after }));
   }
 
+  const type = entry?.event_type;
+  const after = entry?.after_snapshot && typeof entry.after_snapshot === "object" ? entry.after_snapshot : {};
+  const meta = entry?.metadata && typeof entry.metadata === "object" ? entry.metadata : {};
+
+  if (type === "development_logged" || type === "drop_logged") {
+    const lines = [];
+    const note = historyPlainText(after.notes);
+    if (note) lines.push({ label: type === "drop_logged" ? "Visit note" : "Note", value: note, multiline: true });
+    const md = after.metadata && typeof after.metadata === "object" ? after.metadata : {};
+    if (md.outcome) lines.push({ label: "Outcome", value: historyPlainText(md.outcome) });
+    if (md.person_spoken_with) lines.push({ label: "Spoke with", value: historyPlainText(md.person_spoken_with) });
+    const materials = parseGrassrootsMaterialsLeft(md.materials_left);
+    if (materials.length) lines.push({ label: "Materials", value: materials.join(", ") });
+    const followUp = after.next_contact_date || meta.next_contact_date;
+    if (followUp) lines.push({ label: "Follow-up", value: fmtDate(followUp) });
+    return lines;
+  }
+
+  if (type === "target_moved" && meta.from_category && meta.to_category) {
+    return [{
+      label: "Category",
+      before: getGrassrootsCategoryConfig(meta.from_category).label,
+      after: getGrassrootsCategoryConfig(meta.to_category).label,
+    }];
+  }
+
+  return [];
+}
+
+// A metric card matching the Training History header (label / big value / sub).
+function HistoryMetric({ label, value, sub }) {
   return (
-    <div style={{ display: "grid", gap: 8 }}>
-      {rows.map((entry) => {
-        const changes = getActivityHistoryChanges(entry);
-        return (
-          <div key={entry.id} style={{ display: "grid", gridTemplateColumns: "132px minmax(0, 1fr) 190px", gap: 10, alignItems: "start", fontSize: 12 }}>
-            <div style={{ display: "inline-flex", width: "fit-content", padding: "4px 8px", borderRadius: 8, background: C.priLt, color: C.pri, fontWeight: 900 }}>
-              {historyEventLabel(entry.event_type)}
-            </div>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ color: C.text, fontWeight: 800, lineHeight: 1.4, wordBreak: "break-word" }}>
-                {entry.summary || historyEventLabel(entry.event_type)}
-              </div>
-              <div style={{ marginTop: 3, color: C.textMut, lineHeight: 1.35 }}>
-                {entry.target_name || "Untitled row"} · {historyActorName(entry)}
-              </div>
-              {changes.length > 0 && (
-                <div className="grassroots-history-change-list">
-                  {changes.map((change) => (
-                    <div key={change.label} className="grassroots-history-change-row">
-                      <strong>{change.label}</strong>
-                      <span>{change.before}</span>
-                      <em>to</em>
-                      <span>{change.after}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div style={{ color: C.textMut, fontWeight: 800, textAlign: "right" }}>
-              {fmtDateTime(entry.event_at || entry.created_at)}
-            </div>
-          </div>
-        );
-      })}
+    <div style={{ minWidth: 124, border: "1px solid rgba(37, 99, 235, 0.12)", borderRadius: 8, background: "linear-gradient(135deg, rgba(239, 246, 255, 0.9), #ffffff 70%)", padding: "8px 10px", boxShadow: "0 10px 24px rgba(15, 23, 42, 0.04)" }}>
+      <span style={{ display: "block", color: C.textMut, fontSize: 10.5, fontWeight: 900, lineHeight: 1, textTransform: "uppercase" }}>{label}</span>
+      <strong style={{ display: "block", marginTop: 5, color: C.info, fontSize: 22, fontWeight: 950, lineHeight: 1 }}>{value}</strong>
+      {sub ? <em style={{ display: "block", marginTop: 4, color: C.textSec, fontSize: 10.5, fontStyle: "normal", fontWeight: 760 }}>{sub}</em> : null}
     </div>
   );
 }
 
-function HistoryPanel({ items, categoryConfig }) {
+// One row in the Marketing History table: When · Category · Action · Row / Change · Person.
+function MarketingHistoryRow({ entry }) {
+  const detail = getHistoryDetailLines(entry);
+  const categoryLabel = getGrassrootsCategoryConfig(entry.category).label;
+  const ts = entry.event_at || entry.created_at;
   return (
-    <Card style={{ padding: 0, borderRadius: 14, overflow: "hidden", marginBottom: 14 }}>
-      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+    <tr
+      style={{ borderBottom: `1px solid ${C.borderLight}` }}
+      onMouseEnter={(event) => { event.currentTarget.style.background = C.surfaceHover; }}
+      onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
+    >
+      <td style={{ ...HISTORY_TD_SECONDARY, whiteSpace: "nowrap" }}>
+        <div style={{ color: C.text, fontWeight: 800 }}>{fmtHistoryDate(ts)}</div>
+        <div style={{ fontSize: 11, color: C.textMut, fontWeight: 600 }}>{fmtHistoryTime(ts)}</div>
+      </td>
+      <td style={{ ...HISTORY_TD, whiteSpace: "nowrap" }}>{categoryLabel}</td>
+      <td style={{ ...HISTORY_TD, whiteSpace: "nowrap" }}>{historyEventLabel(entry.event_type)}</td>
+      <td style={{ ...HISTORY_TD_SECONDARY, minWidth: 280 }}>
+        <div style={{ color: C.text, fontWeight: 800 }}>{entry.target_name || "Untitled row"}</div>
+        {detail.length > 0 && (
+          <div style={{ marginTop: 5, display: "grid", gap: 4, maxWidth: 560 }}>
+            {detail.map((line, index) => (
+              <div key={`${line.label}-${index}`} style={{ fontSize: 11.5, color: C.textMut, lineHeight: 1.45, wordBreak: "break-word" }}>
+                {"before" in line ? (
+                  <>
+                    <span style={{ fontWeight: 800, color: C.textSec }}>{line.label}:</span>{" "}
+                    {line.before && line.before !== "None" && (
+                      <><span style={{ textDecoration: "line-through", opacity: 0.6 }}>{line.before}</span>{" → "}</>
+                    )}
+                    <span style={{ color: C.text, fontWeight: 700 }}>{line.after}</span>
+                  </>
+                ) : line.multiline ? (
+                  <>
+                    <span style={{ fontWeight: 800, color: C.textSec }}>{line.label}</span>
+                    <div style={{ marginTop: 1, color: C.text, fontWeight: 600, whiteSpace: "pre-wrap", display: "-webkit-box", WebkitLineClamp: 6, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{line.value}</div>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ fontWeight: 800, color: C.textSec }}>{line.label}:</span>{" "}
+                    <span style={{ color: C.text, fontWeight: 700 }}>{line.value}</span>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </td>
+      <td style={{ ...HISTORY_TD_SECONDARY, whiteSpace: "nowrap" }}>{historyActorName(entry)}</td>
+    </tr>
+  );
+}
+
+// The Marketing "History" tab: one cross-category audit table of every create /
+// edit / move / delete / logged visit. Mirrors the Training History table —
+// Card + header + filter toolbar + When · Category · Action · Row/Change · Person.
+function MarketingHistoryView({ history, search, categoryFilter, onCategoryFilter, actorFilter, onActorFilter, onClearFilters }) {
+  const sorted = useMemo(() => [...(history || [])].sort(compareGrassrootsHistoryDesc), [history]);
+
+  const categoryOptions = useMemo(() => {
+    const present = new Set(sorted.map((entry) => entry.category));
+    return [
+      { value: "all", label: "All categories" },
+      ...GRASSROOTS_CATEGORY_CONFIGS
+        .filter((config) => present.has(config.dbValue))
+        .map((config) => ({ value: config.dbValue, label: config.label })),
+    ];
+  }, [sorted]);
+
+  const actorOptions = useMemo(() => {
+    const names = [...new Set(sorted.map((entry) => historyActorName(entry)))].sort((a, b) => a.localeCompare(b));
+    return [{ value: "all", label: "All people" }, ...names.map((name) => ({ value: name, label: name }))];
+  }, [sorted]);
+
+  const filtered = useMemo(() => {
+    const base = filterGrassrootsHistory(sorted, { category: categoryFilter, search });
+    if (!actorFilter || actorFilter === "all") return base;
+    return base.filter((entry) => historyActorName(entry) === actorFilter);
+  }, [sorted, categoryFilter, search, actorFilter]);
+
+  const capped = useMemo(() => filtered.slice(0, HISTORY_RENDER_CAP), [filtered]);
+  const hiddenCount = filtered.length - capped.length;
+  const totalCount = sorted.length;
+  const peopleCount = Math.max(0, actorOptions.length - 1);
+  const filterCount = (categoryFilter && categoryFilter !== "all" ? 1 : 0) + (actorFilter && actorFilter !== "all" ? 1 : 0);
+
+  return (
+    <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap", padding: "16px 18px", borderBottom: `1px solid ${C.borderLight}` }}>
         <div>
-          <div style={{ fontSize: 11, fontWeight: 900, color: C.pri, textTransform: "uppercase", letterSpacing: "0.08em" }}>History</div>
-          <div style={{ fontSize: 13, color: C.textMut, marginTop: 2 }}>{categoryConfig.label}</div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: C.text }}>Marketing History</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: C.textMut, fontWeight: 700 }}>Who changed what, and what it changed to — across all marketing categories.</div>
         </div>
-        <div style={{ fontSize: 12, fontWeight: 900, color: C.text }}>{items.length}</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+          <HistoryMetric label="Changes" value={totalCount} sub="recorded" />
+          <HistoryMetric label="People" value={peopleCount} sub="contributors" />
+          <Badge color={filtered.length > 0 ? "info" : "default"}>{filtered.length} shown</Badge>
+        </div>
       </div>
-      <div style={{ padding: 16, maxHeight: 360, overflow: "auto" }}>
-        <HistoryList items={items} emptyText="No history for this view yet." />
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12, flexWrap: "wrap", padding: "12px 18px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ minWidth: 200 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, marginBottom: 4 }}>Category</div>
+            <CustomSelect value={categoryFilter || "all"} onChange={onCategoryFilter} options={categoryOptions} small />
+          </div>
+          <div style={{ minWidth: 200 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, marginBottom: 4 }}>Person</div>
+            <CustomSelect value={actorFilter || "all"} onChange={onActorFilter} options={actorOptions} small searchable searchPlaceholder="Search people" />
+          </div>
+        </div>
+        <Btn variant="ghost" size="sm" onClick={onClearFilters} disabled={filterCount === 0}>
+          Clear Filters{filterCount > 0 ? ` (${filterCount})` : ""}
+        </Btn>
       </div>
+
+      {totalCount === 0 ? (
+        <div style={{ padding: 28, textAlign: "center", color: C.textMut, fontSize: 13 }}>No marketing history has been logged yet.</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ padding: 28, textAlign: "center", color: C.textMut, fontSize: 13 }}>No marketing history matches the current filters.</div>
+      ) : (
+        <div style={{ maxHeight: "70vh", overflow: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={HISTORY_TH}>When</th>
+                <th style={HISTORY_TH}>Category</th>
+                <th style={HISTORY_TH}>Action</th>
+                <th style={HISTORY_TH}>Row / Change</th>
+                <th style={HISTORY_TH}>Person</th>
+              </tr>
+            </thead>
+            <tbody>
+              {capped.map((entry) => (
+                <MarketingHistoryRow key={entry.id} entry={entry} />
+              ))}
+            </tbody>
+          </table>
+          {hiddenCount > 0 && (
+            <div style={{ padding: "12px 14px", textAlign: "center", color: C.textMut, fontSize: 12 }}>
+              Showing the {HISTORY_RENDER_CAP} most recent of {filtered.length} matching changes. Narrow with the filters above.
+            </div>
+          )}
+        </div>
+      )}
     </Card>
   );
 }
@@ -3736,7 +3974,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [filters, setFilters] = useState(() => getGrassrootsDefaultFilters("events"));
   const [draftFilters, setDraftFilters] = useState(() => getGrassrootsDefaultFilters("events"));
   const [showFilterPanel, setShowFilterPanel] = useState(false);
-  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [historyCategoryFilter, setHistoryCategoryFilter] = useState("all");
+  const [historyActorFilter, setHistoryActorFilter] = useState("all");
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [configuringFilterKey, setConfiguringFilterKey] = useState(null);
   const [filterPickerReady, setFilterPickerReady] = useState(false);
@@ -3751,10 +3990,6 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const activitiesByTarget = useMemo(() => groupGrassrootsActivities(activities), [activities]);
   const attachmentsByActivity = useMemo(() => groupGrassrootsActivityAttachments(activityAttachments), [activityAttachments]);
   const categoryTargets = useMemo(() => targets.filter((target) => target.category === activeConfig.dbValue), [activeConfig.dbValue, targets]);
-  const categoryHistory = useMemo(
-    () => history.filter((entry) => entry.category === activeConfig.dbValue).sort(compareGrassrootsHistoryDesc),
-    [activeConfig.dbValue, history],
-  );
   const visibleTargets = useMemo(
     () => applyGrassrootsFilters(categoryTargets, activitiesByTarget, filters, todayStr()),
     [activitiesByTarget, categoryTargets, filters],
@@ -4038,7 +4273,6 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setFilters(defaults);
     setDraftFilters(defaults);
     setShowFilterPanel(false);
-    setShowHistoryPanel(false);
     setMovePopover(null);
     setLogModal(null);
     if (activeCategory === "drops") setDropSubview("activity");
@@ -6078,69 +6312,55 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             </div>
           )}
 
-          {/* Nicer pill-style segmented controls for History + Filter (matching old customer lifecycle feel) */}
-          <div style={{ display: "inline-flex", borderRadius: 999, border: `1px solid ${C.border}`, overflow: "hidden", background: "#fff" }}>
-            <button
-              onClick={() => setShowHistoryPanel((current) => !current)}
-              style={{
-                padding: "6px 14px",
-                fontSize: 12,
-                fontWeight: 700,
-                border: "none",
-                background: showHistoryPanel ? C.pri : "transparent",
-                color: showHistoryPanel ? "#fff" : C.text,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <I.Clock /> History{categoryHistory.length > 0 ? ` (${categoryHistory.length})` : ""}
-            </button>
-            <div style={{ width: 1, background: C.border, alignSelf: "stretch" }} />
-            <button
-              onClick={() => setShowFilterPanel((current) => !current)}
-              style={{
-                padding: "6px 14px",
-                fontSize: 12,
-                fontWeight: 700,
-                border: "none",
-                background: showFilterPanel ? C.pri : "transparent",
-                color: showFilterPanel ? "#fff" : C.text,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <FilterIcon /> Filter{filterCount > 0 ? ` (${filterCount})` : ""}
-            </button>
-          </div>
-
-          <Btn variant="ghost" size="md" onClick={exportVisibleToCSV}>
-            Export
-          </Btn>
-
-          {activeConfig.id === "drops" ? (
+          {/* Category-scoped actions (filter / export / create). The History tab is a
+              read-only cross-category feed, so these are hidden there. */}
+          {activeLifecycleTab !== "history" && (
             <>
-              <Btn variant="secondary" size="sm" icon={<I.Plus />} onClick={openNewDraft} disabled={!canEditTargets || !!newDraft || !!editDraft} style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}>
-                Add Business
+              <button
+                onClick={() => setShowFilterPanel((current) => !current)}
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: 999,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  border: `1px solid ${C.border}`,
+                  background: showFilterPanel ? C.pri : "#fff",
+                  color: showFilterPanel ? "#fff" : C.text,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <FilterIcon /> Filter{filterCount > 0 ? ` (${filterCount})` : ""}
+              </button>
+
+              <Btn variant="ghost" size="md" onClick={exportVisibleToCSV}>
+                Export
               </Btn>
-              <Btn variant="primary" size="sm" icon={<I.Plus />} onClick={() => openLogModal()} disabled={!canLogActivity} style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}>
-                Log Visit
-              </Btn>
+
+              {activeConfig.id === "drops" ? (
+                <>
+                  <Btn variant="secondary" size="sm" icon={<I.Plus />} onClick={openNewDraft} disabled={!canEditTargets || !!newDraft || !!editDraft} style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}>
+                    Add Business
+                  </Btn>
+                  <Btn variant="primary" size="sm" icon={<I.Plus />} onClick={() => openLogModal()} disabled={!canLogActivity} style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}>
+                    Log Visit
+                  </Btn>
+                </>
+              ) : (
+                <Btn
+                  variant="primary"
+                  size="sm"
+                  icon={<I.Plus />}
+                  onClick={openNewDraft}
+                  disabled={!canEditTargets || !!newDraft || !!editDraft}
+                  style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}
+                >
+                  New {activeConfig.singular}
+                </Btn>
+              )}
             </>
-          ) : (
-            <Btn 
-              variant="primary" 
-              size="sm" 
-              icon={<I.Plus />} 
-              onClick={openNewDraft} 
-              disabled={!canEditTargets || !!newDraft || !!editDraft}
-              style={{ padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}
-            >
-              New {activeConfig.singular}
-            </Btn>
           )}
         </div>
       </div>
@@ -6155,7 +6375,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           <div style={{display:"flex",alignItems:"center",padding:"0 16px"}}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={lifecycleSearch?C.pri:C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input value={lifecycleSearch} onChange={e=>setLifecycleSearch(e.target.value)}
-              placeholder="Search organizers, events, or notes…"
+              placeholder={activeLifecycleTab === 'history' ? "Search history by row, change, or person…" : "Search organizers, events, or notes…"}
               className="no-focus-ring"
               style={{border:"none",outline:"none",background:"transparent",fontSize:13,fontWeight:500,color:C.text,padding:"12px 10px",width:"100%",fontFamily:"inherit"}} />
             {lifecycleSearch && <button onClick={()=>setLifecycleSearch("")} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:2,display:"flex"}} title="Clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
@@ -6244,9 +6464,12 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             { id: 'ppp', label: 'Pet Professional Partnerships', color: C.pri },
             { id: 'apartments', label: 'Apartments', color: C.pri },
             { id: 'schools', label: 'Schools', color: C.pri },
+            { id: 'history', label: 'History', color: C.pri },
           ].map(tab => {
             const active = tab.id === activeLifecycleTab;
-            const count = tab.id === 'all'
+            const count = tab.id === 'history'
+              ? history.length
+              : tab.id === 'all'
               ? targets.filter(t => t.category === 'drops' || (t.category === 'events' && normalizeGrassrootsStatus(t.status) === 'booked')).length
               : targets.filter(t => {
                   // Events badge = current events only: not past its final day, not closed,
@@ -6265,6 +6488,9 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                 key={tab.id}
                 onClick={() => {
                   setActiveLifecycleTab(tab.id);
+                  // History is a cross-category view — keep the current category context
+                  // so returning to another tab lands where you left off.
+                  if (tab.id === 'history') return;
                   const map = { events: 'events', drops: 'drops', corporate: 'corporatePartnerships', apartments: 'apartments', ppp: 'petProfessionalPartnerships', localBusiness: 'localBusinessPartnerships', schools: 'schools', all: 'events' };
                   setActiveCategory(map[tab.id] || 'events');
                   if (tab.id !== 'events') setEventsStatusFilter(null);
@@ -6316,14 +6542,14 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           {activeLifecycleTab === 'ppp' && "Pet professional and service partner pipeline. Full status filtering and manual next-contact control."}
           {activeLifecycleTab === 'localBusiness' && "Local businesses — coffee shops, retailers, and other neighborhood partners. Same status + follow-up workflow as the other pipelines."}
           {activeLifecycleTab === 'schools' && "Schools and education partners. Track outreach status and manual follow-ups."}
+          {activeLifecycleTab === 'history' && "A complete audit trail of every change across all marketing categories — who did what, and when. Filter by category or use the search box to find a specific row or person."}
         </div>
       </div>
 
       {/* Drop subview pills now live inside the literal ported search bar row when activeLifecycleTab === 'drops' (no duplicate toolbar) */}
 
-      {showHistoryPanel && <HistoryPanel items={categoryHistory} categoryConfig={activeConfig} />}
 
-      {showFilterPanel && (
+      {showFilterPanel && activeLifecycleTab !== "history" && (
         <Card style={{ padding: 0, marginBottom: 16, borderRadius: 14, background: C.bg, boxShadow: "0 8px 40px rgba(15,23,42,0.08)", overflow: "hidden", animation: "grassrootsSlideIn 0.2s ease-out" }}>
           <div style={{ padding: "14px 18px", minHeight: 48 }}>
             {usedFilterKeys.length === 0 && !showFilterPicker && (
@@ -6497,6 +6723,16 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
         </Card>
       ) : loading ? (
         <Card style={{ padding: 36, textAlign: "center", color: C.textMut }}>Loading grassroots tracker...</Card>
+      ) : activeLifecycleTab === "history" ? (
+        <MarketingHistoryView
+          history={history}
+          search={lifecycleSearch}
+          categoryFilter={historyCategoryFilter}
+          onCategoryFilter={setHistoryCategoryFilter}
+          actorFilter={historyActorFilter}
+          onActorFilter={setHistoryActorFilter}
+          onClearFilters={() => { setHistoryCategoryFilter("all"); setHistoryActorFilter("all"); }}
+        />
       ) : (
         <div key={activeCategory} className="grassroots-category-stage" style={{ display: "grid", gap: 12 }}>
               {canEditTargets && newDraft && activeConfig.id !== "events" && (
