@@ -365,7 +365,7 @@ export function ListSurfaceTitle({ children, actions, style }) {
         ...style,
       }}
     >
-      <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: C.text, letterSpacing: "-0.01em" }}>
+      <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: C.text, letterSpacing: "-0.01em" }}>
         {children}
       </h2>
       {actions ? <div style={{ display: "flex", gap: 8, alignItems: "center" }}>{actions}</div> : null}
@@ -419,6 +419,20 @@ export function PillFilter({ active, onClick, children, color, count, variant = 
  * trailing slot for pill filters / view toggles (pass <PillFilter/>,
  * <PillSeparator/>, etc. as children).
  */
+// The standard list-surface frame: ONE perimeter border (1.5px), 10px radius,
+// clipped corners, around the whole surface (search row + tabs + explainer +
+// table). Every list page wraps its chrome in this so the framing is identical
+// app-wide and can never drift. The table inside should render borderless — pass
+// `style={{ border: "none", borderRadius: 0 }}` to DenseTable — so there is a
+// single frame, not a double border.
+export function ListSurface({ children, style }) {
+  return (
+    <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden", background: C.surface, ...style }}>
+      {children}
+    </div>
+  );
+}
+
 export function ListSearchRow({ value, onChange, placeholder = "Search…", children, style }) {
   const has = !!value;
   return (
@@ -448,7 +462,7 @@ export function ListSearchRow({ value, onChange, placeholder = "Search…", chil
             fontSize: 13,
             fontWeight: 500,
             color: C.text,
-            padding: "12px 10px",
+            padding: "9px 10px",
             width: "100%",
             fontFamily: "inherit",
           }}

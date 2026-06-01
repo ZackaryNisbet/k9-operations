@@ -50,6 +50,7 @@ import {
 } from "../resortUpkeepData";
 import {
   DenseTable,
+  ListSurface,
   ListSurfaceTitle,
   ListSearchRow,
   PillFilter,
@@ -560,6 +561,7 @@ function DuePanel({ tabsBar, explainer, locationId, actor, dashboard, canComplet
 
   return (
     <div>
+      <ListSurface>
       <ListSearchRow value={query} onChange={setQuery} placeholder="Search what's due">
         <PillFilter active={kind === "all"} count={counts.all} onClick={() => setKind("all")}>All</PillFilter>
         <PillFilter active={kind === "overdue"} count={counts.overdue} variant="solid" color={C.dan} onClick={() => setKind(kind === "overdue" ? "all" : "overdue")}>Overdue</PillFilter>
@@ -589,12 +591,14 @@ function DuePanel({ tabsBar, explainer, locationId, actor, dashboard, canComplet
             rows={visible}
             getRowKey={(r) => r.id}
             minWidth={660}
+            style={{ border: "none", borderRadius: 0 }}
             onRowClick={handleRow}
             defaultSort={{ key: "due", direction: "asc" }}
             emptyText={counts.overdue ? "Nothing matches these filters." : "You're current. Widen the window to look further ahead."}
           />
         )}
       </div>
+      </ListSurface>
 
       {openPeriod ? (
         <MaintenanceCompletionModal
@@ -1500,6 +1504,7 @@ function VendorsPanel({ tabsBar, explainer, locationId, actor, canManage, toast 
 
   return (
     <div>
+      <ListSurface>
       <ListSearchRow value={query} onChange={setQuery} placeholder="Search trade, company, contact…">
         <PillFilter active={includeArchived} onClick={() => setIncludeArchived((v) => !v)}>Archived</PillFilter>
         {canManage ? <button type="button" onClick={() => setImporting(true)} style={muSmallBtn}>Import</button> : null}
@@ -1517,12 +1522,14 @@ function VendorsPanel({ tabsBar, explainer, locationId, actor, canManage, toast 
             rows={rows}
             getRowKey={(r) => r.vendor.id}
             minWidth={820}
+            style={{ border: "none", borderRadius: 0 }}
             onRowClick={canManage ? (r) => setSelected(r.vendor) : undefined}
             rowStyle={(r) => (r.vendor.is_archived ? { opacity: 0.55 } : null)}
             emptyText="No vendors yet. Add HVAC, plumbing, electrical, fire, pest, and utility contacts."
           />
         )}
       </div>
+      </ListSurface>
 
       {selected ? (
         <VendorEditorModal

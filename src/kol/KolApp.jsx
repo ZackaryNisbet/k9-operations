@@ -333,6 +333,7 @@ const STAFF_NAV_ITEMS = [
 
 const MANAGER_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
+  { id: "crm", label: "CRM", icon: "Users" },
   { id: "role-page", label: "My Work", icon: "Clipboard" },
   { id: "scheduling", label: "Scheduling", icon: "Calendar" },
   { id: "enrichments", label: "Enrichments", icon: "Sparkle" },
@@ -353,6 +354,7 @@ const MANAGER_NAV_ITEMS = [
 // stays scannable in seconds. Anything pulled from the rail must have a Home card.
 const LEAN_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
+  { id: "crm", label: "CRM", icon: "Users" },
   { id: "calendar", label: "Calendar", icon: "Calendar" },
   { id: "training", label: "Labor", icon: "GraduationCap" },
   { id: "grassroots", label: "Marketing", icon: "TrendingUp" },
@@ -363,6 +365,7 @@ const LEAN_NAV_ITEMS = [
 // Full nav when ?mode=analytics is active (K9 Operations + Analytics)
 const ANALYTICS_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
+  { id: "crm", label: "CRM", icon: "Users" },
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
