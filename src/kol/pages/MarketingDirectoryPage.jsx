@@ -28,6 +28,7 @@ import {
 } from "../../shared/listSurface";
 import { hasLeanPermission } from "../../shared/permissions";
 import { normalizeOptionalUuid } from "../trainingData";
+import PlacesAddressInput from "../PlacesAddressInput";
 import {
   MARKETING_DIRECTORY_ATTACHMENT_ACCEPT,
   MARKETING_DIRECTORY_ATTACHMENT_BUCKET,
@@ -55,6 +56,7 @@ import {
   groupDirectoryAttachments,
   inferDirectoryAttachmentMimeType,
   isHeicFile,
+  isValidDirectoryEmail,
   makeBlankDirectoryContact,
   makeBlankDirectoryOrg,
   summarizeDirectory,
@@ -265,7 +267,23 @@ function DirectoryEditorModal({
               <Inp label="Website" value={draft.website} onChange={(v) => onChange("website", v)} placeholder="https://" />
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
-              <Inp label="Address" value={draft.address_line_1} onChange={(v) => onChange("address_line_1", v)} placeholder="Street address" />
+              <PlacesAddressInput
+                label="Address"
+                value={draft.address_line_1}
+                onChange={(v) => onChange("address_line_1", v)}
+                onSelect={(parts) => {
+                  onChange("address_line_1", parts.address_line_1 || "");
+                  onChange("address_city", parts.address_city || "");
+                  onChange("address_state", parts.address_state || "");
+                  onChange("address_postal_code", parts.address_postal_code || "");
+                  onChange("address_country", parts.address_country || "");
+                  onChange("address", parts.address || "");
+                  if (parts.google_place_id) onChange("google_place_id", parts.google_place_id);
+                  if (parts.phone && !draft.phone) onChange("phone", parts.phone.replace(/\D/g, "").slice(0, 10));
+                  if (parts.website && !draft.website) onChange("website", parts.website);
+                }}
+                placeholder="Start typing an address or business"
+              />
               <Inp label="Suite / unit" value={draft.address_line_2} onChange={(v) => onChange("address_line_2", v)} />
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12 }}>
@@ -678,6 +696,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
     const { mode, draft } = editor;
     if (mode === "org" && !String(draft.name || "").trim()) { toast("Organization name is required", "error"); return; }
     if (mode === "contact" && !String(draft.first_name || "").trim() && !String(draft.last_name || "").trim()) { toast("A contact name is required", "error"); return; }
+    if (!isValidDirectoryEmail(draft.email)) { toast("Enter a valid email address", "error"); return; }
 
     setSaving(true);
     try {
