@@ -313,20 +313,17 @@ describe("applyLaborRosterFilters", () => {
     expect(source).toContain("labor-roster-table");
   });
 
-  it("keeps the inline new employee composer compact and active-only", () => {
+  it("adds new employees via the shared modal, not the old inline composer", () => {
     const source = readFileSync(new URL("../kol/pages/TrainingPage.jsx", import.meta.url), "utf8");
-    const composerStart = source.indexOf("New roster row");
-    const composerEnd = source.indexOf("Your first employee", composerStart);
-    const composerSource = source.slice(composerStart, composerEnd);
-
-    expect(composerStart).toBeGreaterThan(0);
-    expect(composerEnd).toBeGreaterThan(composerStart);
-    expect(composerSource).toContain("labor-roster-new-grid");
-    expect(composerSource).toContain("LaborCommitmentSegmentedPicker");
-    expect(composerSource).toContain("labor-roster-new-field is-commitment");
-    expect(composerSource).not.toContain("End Date");
-    expect(source).not.toContain("newRosterEmployeeEndDate");
-    expect(source).toContain("endDate: null,");
+    // The bespoke inline "New roster row" composer was retired in favor of the
+    // shared Edit/Add Employee modal opened in create mode.
+    expect(source).not.toContain("New roster row");
+    expect(source).not.toContain("labor-roster-new-grid");
+    expect(source).not.toContain("LaborCommitmentSegmentedPicker");
+    expect(source).not.toContain("newRosterEmployee");
+    // The shared modal flips to create-mode labels for a new employee.
+    expect(source).toContain('editingLaborEmployeeId ? "Edit Employee" : "Add Employee"');
+    expect(source).toContain("Create Employee");
   });
 
   it("wires shirt size through the employee edit metadata and history path", () => {
