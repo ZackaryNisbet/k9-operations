@@ -20,6 +20,7 @@ import {
   groupUpdatesByLead,
   summarizeUpdates,
   deriveFollowUp,
+  localDay,
   receivedDate,
   receivedTime,
   leadAttachments,
@@ -156,6 +157,22 @@ describe("captured baseline — 1 log entry + follow-up = received date", () => 
   it("receivedDate is the date part of created_at", () => {
     expect(receivedDate(lead)).toBe("2026-05-20");
     expect(receivedDate({})).toBe("");
+  });
+  it("receivedDate uses the LOCAL day, not a UTC slice (evening leads don't jump a day)", () => {
+    // 02:42Z is the previous evening in US zones (10:42pm EDT) but already the
+    // next UTC calendar day — String(ts).slice(0,10) used to show tomorrow.
+    const created_at = "2026-06-01T02:42:00Z";
+    const d = new Date(created_at);
+    const expectLocal = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    expect(receivedDate({ created_at })).toBe(expectLocal);
+    expect(localDay(created_at)).toBe(expectLocal);
+    // Any zone behind UTC (e.g. US Eastern) lands on the 31st, not the UTC 1st.
+    if (d.getTimezoneOffset() > 0) expect(receivedDate({ created_at })).toBe("2026-05-31");
+  });
+  it("localDay returns '' for empty / invalid input", () => {
+    expect(localDay("")).toBe("");
+    expect(localDay(null)).toBe("");
+    expect(localDay("nonsense")).toBe("");
   });
   it("capturedUpdate records the source + seeds follow-up to the received date", () => {
     const u = capturedUpdate(lead);
