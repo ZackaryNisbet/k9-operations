@@ -35,6 +35,7 @@ import {
   getGrassrootsSplitAddress,
   groupGrassrootsActivityAttachments,
   groupGrassrootsHistory,
+  filterGrassrootsHistory,
   inferGrassrootsActivityAttachmentMimeType,
   filterGrassrootsDropActivityRowsByCategory,
   normalizeGrassrootsEventLinks,
@@ -650,6 +651,29 @@ describe("grassrootsData", () => {
 
     expect(grouped.a.map((entry) => entry.id)).toEqual(["new", "old"]);
     expect(grouped.b.map((entry) => entry.id)).toEqual(["other"]);
+  });
+
+  describe("marketing history tab feed", () => {
+    const sample = [
+      { id: "h1", category: "events", target_name: "Spring Fair", summary: "Edited row", actor_name: "Dana", event_at: "2026-04-16T12:00:00Z" },
+      { id: "h2", category: "schools", target_name: "Lincoln High", summary: "Created row", actor_name: "Reed", event_at: "2026-04-16T12:00:00Z" },
+      { id: "h3", category: "local_business_partnerships", target_name: "Bean Coffee", summary: "Moved row", actor_name: "Dana", event_at: "2026-04-14T12:00:00Z" },
+    ];
+
+    it("filterGrassrootsHistory returns everything for the 'all' category", () => {
+      expect(filterGrassrootsHistory(sample, { category: "all" })).toHaveLength(3);
+    });
+
+    it("filterGrassrootsHistory scopes to a single db category value (incl. new categories)", () => {
+      const rows = filterGrassrootsHistory(sample, { category: "local_business_partnerships" });
+      expect(rows.map((entry) => entry.id)).toEqual(["h3"]);
+    });
+
+    it("filterGrassrootsHistory searches name, summary, and actor case-insensitively", () => {
+      expect(filterGrassrootsHistory(sample, { search: "dana" }).map((e) => e.id)).toEqual(["h1", "h3"]);
+      expect(filterGrassrootsHistory(sample, { search: "moved" }).map((e) => e.id)).toEqual(["h3"]);
+      expect(filterGrassrootsHistory(sample, { search: "lincoln" }).map((e) => e.id)).toEqual(["h2"]);
+    });
   });
 
   describe("event closeout + past-event semantics", () => {
