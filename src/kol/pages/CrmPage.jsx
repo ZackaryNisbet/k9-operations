@@ -206,7 +206,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
           const time = receivedTime(r);
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 1, whiteSpace: "nowrap" }}>
-              <span style={{ color: C.textSec }}>{fmtDate(r.created_at)}</span>
+              <span style={{ color: C.textSec }}>{fmtDate(receivedDate(r))}</span>
               {time ? <span style={{ fontSize: 11, color: C.textMut }}>{time}</span> : null}
             </div>
           );
