@@ -4,7 +4,10 @@ import {
   buildDirectoryContactPayload,
   buildDirectoryEntries,
   buildDirectoryImportCandidates,
+  buildDirectoryNotePayload,
   buildDirectoryOrgPayload,
+  buildDirectoryUpdatesFeed,
+  groupDirectoryNotesByOrg,
   buildGrassrootsTargetWriteback,
   countDirectoryPairedTargets,
   getDirectoryLastInteractedAt,
@@ -321,6 +324,37 @@ describe("makeOrgDraftFromIndividual", () => {
     expect(draft.email).toBe("g@awanj.org");
     expect(draft.grassroots_target_id).toBe(TGT_A);
     expect(draft.notes).toBe("Organizer");
+  });
+});
+
+describe("directory notes / updates feed", () => {
+  it("builds a note payload parented to an org", () => {
+    const payload = buildDirectoryNotePayload("  Called them  ", LOC, { userId: CON_A, name: "Zoe" }, { orgId: ORG_A });
+    expect(payload).toMatchObject({ location_id: LOC, org_id: ORG_A, contact_id: null, body: "Called them", created_by_name: "Zoe" });
+  });
+  it("groups active notes by org, skipping deleted", () => {
+    const grouped = groupDirectoryNotesByOrg([
+      { id: "n1", org_id: ORG_A, body: "a" },
+      { id: "n2", org_id: ORG_A, body: "b", deleted_at: "2026-01-01" },
+      { id: "n3", org_id: ORG_B, body: "c" },
+    ]);
+    expect(grouped[ORG_A].map((n) => n.id)).toEqual(["n1"]);
+    expect(grouped[ORG_B].map((n) => n.id)).toEqual(["n3"]);
+  });
+  it("merges an org's notes + history into one newest-first feed", () => {
+    const org = { id: ORG_A };
+    const notes = [
+      { id: "n1", org_id: ORG_A, body: "Left a voicemail", created_at: "2026-05-05T10:00:00Z", created_by_name: "Zoe" },
+      { id: "n2", org_id: ORG_B, body: "other org", created_at: "2026-05-09T10:00:00Z" },
+    ];
+    const history = [
+      { id: "h1", entity_id: ORG_A, event_type: "created", event_at: "2026-05-01T10:00:00Z", changed_by_name: "Pat" },
+      { id: "h2", entity_id: ORG_B, event_type: "updated", event_at: "2026-05-08T10:00:00Z" },
+    ];
+    const feed = buildDirectoryUpdatesFeed(org, { notes, history });
+    expect(feed.map((f) => f.id)).toEqual(["note_n1", "evt_h1"]); // only ORG_A, newest first
+    expect(feed[0]).toMatchObject({ kind: "note", text: "Left a voicemail", by: "Zoe" });
+    expect(feed[1]).toMatchObject({ kind: "event", text: "Organization added" });
   });
 });
 

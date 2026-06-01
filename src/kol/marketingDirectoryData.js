@@ -664,6 +664,63 @@ export function getDirectoryLastInteractedAt(org = {}, { history = [], targets =
   return stamps.sort((a, b) => b.time - a.time)[0].raw;
 }
 
+// ─── Notes / per-org Updates feed ───────────────────────────────────────────
+export function buildDirectoryNotePayload(body, locationId, actor = {}, { orgId = null, contactId = null } = {}) {
+  return {
+    location_id: normalizeUuid(locationId),
+    org_id: normalizeUuid(orgId) || null,
+    contact_id: normalizeUuid(contactId) || null,
+    body: stringValue(body),
+    created_by_user_id: normalizeUuid(actor.userId) || null,
+    created_by_name: actor.name || null,
+  };
+}
+
+export function getActiveDirectoryNotes(notes = []) {
+  return (notes || []).filter((note) => note && !note.deleted_at);
+}
+
+export function groupDirectoryNotesByOrg(notes = []) {
+  return getActiveDirectoryNotes(notes).reduce((acc, note) => {
+    const key = normalizeUuid(note.org_id);
+    if (!key) return acc;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(note);
+    return acc;
+  }, {});
+}
+
+// Merged, newest-first feed of an org's updates: user notes + its own directory
+// history events. Drives the per-org Updates panel and its count — the directory's
+// analogue of the marketing tracker's updates column.
+export function buildDirectoryUpdatesFeed(org = {}, { notes = [], history = [] } = {}) {
+  const orgId = normalizeUuid(org.id);
+  if (!orgId) return [];
+  const feed = [];
+  getActiveDirectoryNotes(notes).forEach((note) => {
+    if (normalizeUuid(note.org_id) !== orgId) return;
+    feed.push({
+      id: `note_${note.id}`,
+      kind: "note",
+      at: note.created_at,
+      text: stringValue(note.body),
+      by: normalizeText(note.created_by_name) || "Unknown",
+      noteId: note.id,
+    });
+  });
+  (history || []).forEach((entry) => {
+    if (!entry || normalizeUuid(entry.entity_id) !== orgId) return;
+    feed.push({
+      id: `evt_${entry.id}`,
+      kind: "event",
+      at: entry.event_at,
+      text: `Organization ${getDirectoryHistoryEventLabel(entry.event_type).toLowerCase()}`,
+      by: normalizeText(entry.changed_by_name) || "Unknown",
+    });
+  });
+  return feed.filter((row) => row.at).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+}
+
 // ─── History (powers the History subtab) ────────────────────────────────────
 const HISTORY_EVENT_LABELS = {
   created: "Added",
