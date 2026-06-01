@@ -177,7 +177,7 @@ export function buildDirectoryOrgPayload(draft = {}, locationId = "", actor = {}
     google_place_id: normalizeText(draft.google_place_id) || null,
     phone: normalizeText(draft.phone) || null,
     email: normalizeText(draft.email) || null,
-    website: normalizeText(draft.website) || null,
+    website: normalizeWebsiteUrl(draft.website) || null,
     notes: stringValue(draft.notes) || null,
     grassroots_target_id: normalizeUuid(draft.grassroots_target_id) || null,
     details: draft.details && typeof draft.details === "object" ? draft.details : {},
@@ -257,6 +257,23 @@ export function makeOrgDraftFromIndividual(contact = {}, locationId = "") {
     grassroots_target_id: normalizeUuid(contact.grassroots_target_id) || "",
     org_type: normalizeText(contact.details?.org_type) || "",
   };
+}
+
+// Add an https:// scheme to a bare domain so links open; leaves full URLs and
+// anything that doesn't look like a domain untouched.
+export function normalizeWebsiteUrl(value) {
+  const text = normalizeText(value);
+  if (!text) return "";
+  if (/^https?:\/\//i.test(text)) return text;
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)+(\/|$)/i.test(text)) return `https://${text}`;
+  return text;
+}
+
+// Empty is allowed; otherwise a basic shape check (local@domain.tld).
+export function isValidDirectoryEmail(value) {
+  const text = normalizeText(value);
+  if (!text) return true;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text);
 }
 
 // ─── Attachment helpers (mirror the grassroots attachment helpers) ──────────
