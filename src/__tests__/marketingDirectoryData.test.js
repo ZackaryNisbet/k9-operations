@@ -6,6 +6,8 @@ import {
   buildDirectoryImportCandidates,
   buildDirectoryOrgPayload,
   buildGrassrootsTargetWriteback,
+  countDirectoryPairedTargets,
+  getDirectoryLastInteractedAt,
   diffDirectoryPeople,
   makeOrgDraftFromIndividual,
   filterDirectoryEntries,
@@ -242,23 +244,49 @@ describe("buildDirectoryImportCandidates", () => {
     { id: "t-misc", category: "events", name: "No Organizer Fair", organizer: "" },
   ];
 
-  it("maps org-like targets to org candidates and event organizers to individuals", () => {
+  it("maps org-like targets AND event organizers to org candidates (no individuals)", () => {
     const { orgs, individuals } = buildDirectoryImportCandidates({ targets });
-    expect(orgs.map((o) => o.name)).toEqual(["Globex", "Happy Paws"]);
+    expect(orgs.map((o) => o.name)).toEqual(["Globex", "Happy Paws", "Jordan Avery"]);
     const paws = orgs.find((o) => o.name === "Happy Paws");
     expect(paws.org_type).toBe("Groomer");
     expect(paws.grassroots_target_id).toBe(TGT_A);
     expect(paws.contact).toMatchObject({ first_name: "Pat", last_name: "Lee" });
-    expect(individuals.map((i) => i.displayName)).toEqual(["Jordan Avery"]);
-    expect(individuals[0].title).toBe("Event organizer");
+    expect(orgs.find((o) => o.name === "Jordan Avery").sourceLabel).toBe("Event organizer");
+    expect(individuals).toHaveLength(0);
   });
 
   it("skips targets already linked by id or matched by name", () => {
-    const existingOrgs = [{ id: ORG_A, name: "happy   paws", grassroots_target_id: null }];
-    const existingContacts = [{ id: CON_A, org_id: null, first_name: "Jordan", last_name: "Avery", grassroots_target_id: null }];
-    const { orgs, individuals } = buildDirectoryImportCandidates({ targets, existingOrgs, existingContacts });
-    expect(orgs.map((o) => o.name)).toEqual(["Globex"]); // Happy Paws deduped by name
-    expect(individuals).toHaveLength(0); // Jordan Avery deduped by name
+    const existingOrgs = [
+      { id: ORG_A, name: "happy   paws", grassroots_target_id: null },
+      { id: ORG_B, name: "Jordan Avery", grassroots_target_id: null },
+    ];
+    const { orgs } = buildDirectoryImportCandidates({ targets, existingOrgs });
+    expect(orgs.map((o) => o.name)).toEqual(["Globex"]); // Happy Paws + Jordan Avery deduped by name
+  });
+});
+
+describe("countDirectoryPairedTargets", () => {
+  it("counts tracker records linked by id or matched by name/organizer", () => {
+    const targets = [
+      { id: TGT_A, name: "Whatever", organizer: "" },
+      { id: "x", category: "events", name: "Spring Fair", organizer: "Acme Vet" },
+      { id: "y", category: "drops", name: "Acme Vet" },
+      { id: "z", category: "drops", name: "Unrelated" },
+    ];
+    expect(countDirectoryPairedTargets({ id: ORG_A, name: "Acme Vet", grassroots_target_id: TGT_A }, targets)).toBe(3);
+    expect(countDirectoryPairedTargets({ id: ORG_A, name: "Nobody" }, targets)).toBe(0);
+  });
+});
+
+describe("getDirectoryLastInteractedAt", () => {
+  it("returns the most recent of org / history / linked-target stamps", () => {
+    const org = { id: ORG_A, name: "Acme", grassroots_target_id: TGT_A, updated_at: "2026-05-01T00:00:00Z" };
+    const history = [{ entity_id: ORG_A, event_at: "2026-05-10T00:00:00Z" }, { entity_id: ORG_B, event_at: "2026-12-01T00:00:00Z" }];
+    const targets = [{ id: TGT_A, last_contact_date: "2026-05-20" }];
+    expect(getDirectoryLastInteractedAt(org, { history, targets })).toBe("2026-05-20");
+  });
+  it("returns empty when nothing is known", () => {
+    expect(getDirectoryLastInteractedAt({ id: ORG_A, name: "X" }, {})).toBe("");
   });
 });
 
