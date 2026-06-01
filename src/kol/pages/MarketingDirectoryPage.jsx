@@ -581,7 +581,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
     if (!locationId) { setLoading(false); return; }
     setLoading(true);
     setSchemaMissing(false);
-    const [orgRes, contactRes, attRes, histRes, targetRes] = await Promise.all([
+    const [orgRes, contactRes, attRes, histRes, targetRes, notesRes] = await Promise.all([
       supabase.from("marketing_directory_orgs").select("*").eq("location_id", locationId).order("name", { ascending: true }),
       supabase.from("marketing_directory_contacts").select("*").eq("location_id", locationId),
       supabase.from("marketing_directory_attachments").select("*").eq("location_id", locationId).is("deleted_at", null).order("uploaded_at", { ascending: false }),
