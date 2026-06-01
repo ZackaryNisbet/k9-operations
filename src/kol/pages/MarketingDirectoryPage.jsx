@@ -6,13 +6,26 @@
 // event organizers + visited/partnership businesses, and saving a linked org writes
 // its contact fields back to the tracker.
 //
-// All data/UI rules live in ../marketingDirectoryData (unit-tested); this file is
-// the React surface and Supabase I/O only.
+// The list surfaces (directory + history) compose the shared THE-STANDARD chrome
+// from ../../shared/listSurface (ListSurfaceTitle / ListTabBar / ListSearchRow /
+// PillFilter / ListExplainer / DenseTable) — the same primitives Labor, Resort
+// Upkeep, and Grassroots use. All data/UI rules live in ../marketingDirectoryData.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Badge, Btn, Inp, Modal } from "../../shared/ui";
+import { Btn, Inp, Modal } from "../../shared/ui";
+import {
+  DenseTable,
+  IconButton,
+  ListExplainer,
+  ListSearchRow,
+  ListSurfaceTitle,
+  ListTabBar,
+  PillFilter,
+  RowActionButton,
+  StatusPill,
+} from "../../shared/listSurface";
 import { hasLeanPermission } from "../../shared/permissions";
 import { normalizeOptionalUuid } from "../trainingData";
 import {
@@ -30,7 +43,6 @@ import {
   formatDirectoryFileSize,
   getDirectoryAttachmentPreviewKind,
   getDirectoryBusinessCard,
-  getDirectoryContactInitials,
   getDirectoryContactName,
   getDirectoryHistoryEventLabel,
   getDirectoryOrgAddressText,
@@ -64,12 +76,13 @@ async function normalizeUploadFile(file) {
   return new File([converted], newName, { type: "image/jpeg", lastModified: file.lastModified || Date.now() });
 }
 
-// Compact date + time stamp for history rows (matches the grassroots history style).
 function fmtDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
+
+const MUTED = { color: C.textMut, fontSize: 11 };
 
 const LABEL_STYLE = {
   display: "block",
@@ -90,88 +103,6 @@ function Glyph({ icon: IconCmp, size = 16, color, style }) {
   return (
     <span className="md-glyph" style={{ width: size, height: size, color, display: "inline-flex", flexShrink: 0, ...style }}>
       <IconCmp />
-    </span>
-  );
-}
-
-// Filter pill — matches the bordered "{label} {count}" pills in the grassroots /
-// customer-lifecycle header (active = primary tint, not a segmented control).
-function FilterPill({ active, onClick, children }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: "4px 9px",
-        borderRadius: 8,
-        border: `1.5px solid ${active ? C.pri : C.border}`,
-        background: active ? C.priLt : "transparent",
-        color: active ? C.pri : C.textMut,
-        fontSize: 11,
-        fontWeight: 700,
-        cursor: "pointer",
-        fontFamily: "inherit",
-        whiteSpace: "nowrap",
-        transition: "all 0.15s",
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-// ─── avatar (org tile or contact initials) with a business-card indicator ────
-function EntryAvatar({ kind, contact, hasCard }) {
-  const isOrg = kind === "org";
-  return (
-    <div style={{ position: "relative", flexShrink: 0 }}>
-      <div
-        style={{
-          width: 42,
-          height: 42,
-          borderRadius: isOrg ? 11 : "50%",
-          background: isOrg ? `${C.pri}12` : C.accLt,
-          color: isOrg ? C.pri : C.accDk,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontWeight: 800,
-          fontSize: 14,
-        }}
-      >
-        {isOrg ? <Glyph icon={I.Layers} size={20} /> : getDirectoryContactInitials(contact)}
-      </div>
-      {hasCard ? (
-        <div
-          title="Has a business card on file"
-          style={{
-            position: "absolute",
-            right: -4,
-            bottom: -4,
-            width: 18,
-            height: 18,
-            borderRadius: "50%",
-            background: C.surface,
-            border: `1px solid ${C.border}`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: C.textMut,
-          }}
-        >
-          <Glyph icon={I.CreditCard} size={11} />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function MetaLine({ icon, children }) {
-  if (!children) return null;
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: C.textMut, fontSize: 12.5 }}>
-      {icon}
-      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{children}</span>
     </span>
   );
 }
@@ -223,166 +154,6 @@ function AttachmentPreviewModal({ attachment, url, loading, onClose }) {
         )}
       </div>
     </Modal>
-  );
-}
-
-// ─── affiliated contact row inside an expanded org ──────────────────────────
-function ContactRow({ contact, canManage, onEdit, onDelete }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 10, background: C.surfaceHover }}>
-      <div style={{ width: 30, height: 30, borderRadius: "50%", background: C.accLt, color: C.accDk, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 11, flexShrink: 0 }}>
-        {getDirectoryContactInitials(contact)}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {getDirectoryContactName(contact)}
-          {contact.title ? <span style={{ color: C.textMut, fontWeight: 600 }}>{` · ${contact.title}`}</span> : null}
-        </div>
-        <div style={{ display: "flex", gap: 14, marginTop: 1, flexWrap: "wrap" }}>
-          {contact.email ? <span style={{ fontSize: 12, color: C.textMut }}>{contact.email}</span> : null}
-          {contact.phone ? <span style={{ fontSize: 12, color: C.textMut }}>{contact.phone}</span> : null}
-        </div>
-      </div>
-      {canManage ? (
-        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-          <button type="button" onClick={() => onEdit(contact)} title="Edit contact" style={iconBtnStyle}><Glyph icon={I.Pencil} size={13} /></button>
-          <button type="button" onClick={() => onDelete(contact)} title="Remove contact" style={iconBtnStyle}><Glyph icon={I.Trash} size={13} /></button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-const iconBtnStyle = {
-  border: `1px solid ${C.border}`,
-  background: C.surface,
-  borderRadius: 8,
-  cursor: "pointer",
-  color: C.textMut,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 28,
-  height: 28,
-  padding: 0,
-};
-
-// ─── one directory row (org with expandable contacts, or an individual) ─────
-function DirectoryRow({
-  entry,
-  expanded,
-  onToggle,
-  canManage,
-  onEditOrg,
-  onDeleteOrg,
-  onAddContact,
-  onEditContact,
-  onDeleteContact,
-  onPreviewAttachment,
-}) {
-  const isOrg = entry.kind === "org";
-  const hasCard = Boolean(getDirectoryBusinessCard(entry.attachments));
-  const contact = isOrg ? null : entry.contact;
-  const title = isOrg ? getDirectoryOrgName(entry.org) : getDirectoryContactName(contact);
-  const subtitle = isOrg ? entry.org.org_type : contact.title;
-  const address = isOrg ? getDirectoryOrgAddressText(entry.org) : "";
-  const phone = isOrg ? entry.org.phone : contact.phone;
-  const email = isOrg ? entry.org.email : contact.email;
-  const website = isOrg ? entry.org.website : "";
-  const contactCount = isOrg ? entry.contacts.length : 0;
-
-  return (
-    <div style={{ border: `1px solid ${C.border}`, borderRadius: 14, background: C.surface, overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: 14 }}>
-        {isOrg ? (
-          <button
-            type="button"
-            onClick={onToggle}
-            title={expanded ? "Collapse" : "Expand"}
-            style={{ ...iconBtnStyle, width: 26, height: 26, marginTop: 8, border: "none", background: "transparent", color: C.textMut }}
-          >
-            {expanded ? <Glyph icon={I.ChevronDown} size={16} /> : <Glyph icon={I.ChevronRight} size={16} />}
-          </button>
-        ) : (
-          <div style={{ width: 26, marginTop: 8, flexShrink: 0 }} />
-        )}
-
-        <EntryAvatar kind={entry.kind} contact={contact} hasCard={hasCard} />
-
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 15, fontWeight: 800, color: C.text, letterSpacing: "-0.01em" }}>{title}</span>
-            {subtitle ? <Badge color={isOrg ? "primary" : "accent"} size="sm">{subtitle}</Badge> : null}
-            {!isOrg ? <Badge color="default" size="sm">Individual</Badge> : null}
-            {isOrg && entry.org.grassroots_target_id ? <Badge color="info" size="sm" tip="Linked to a record in the marketing tracker">Tracker</Badge> : null}
-          </div>
-          <div style={{ display: "flex", gap: 16, marginTop: 6, flexWrap: "wrap" }}>
-            <MetaLine icon={<Glyph icon={I.Phone} size={13} />}>{phone}</MetaLine>
-            <MetaLine icon={<span style={{ fontSize: 12, fontWeight: 700 }}>@</span>}>{email}</MetaLine>
-            {website ? <MetaLine icon={<Glyph icon={I.Link} size={13} />}>{website}</MetaLine> : null}
-          </div>
-          {address ? (
-            <div style={{ marginTop: 4, color: C.textMut, fontSize: 12.5 }}>{address}</div>
-          ) : null}
-          {isOrg && entry.org.notes ? (
-            <div style={{ marginTop: 6, color: C.textSec, fontSize: 12.5, whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{entry.org.notes}</div>
-          ) : null}
-          {isOrg ? (
-            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10, color: C.textMut, fontSize: 12, fontWeight: 600 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><Glyph icon={I.Users} size={13} />{contactCount} contact{contactCount === 1 ? "" : "s"}</span>
-              {entry.attachments.length ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><Glyph icon={I.FileText} size={13} />{entry.attachments.length} file{entry.attachments.length === 1 ? "" : "s"}</span> : null}
-            </div>
-          ) : null}
-          {!isOrg && contact.notes ? (
-            <div style={{ marginTop: 6, color: C.textSec, fontSize: 12.5, whiteSpace: "pre-wrap", lineHeight: 1.4 }}>{contact.notes}</div>
-          ) : null}
-          {!isOrg && entry.attachments.length ? (
-            <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {entry.attachments.map((att) => (
-                <AttachmentChip key={att.id} attachment={att} onPreview={onPreviewAttachment} onDelete={() => {}} busy canManage={false} />
-              ))}
-            </div>
-          ) : null}
-        </div>
-
-        {canManage ? (
-          <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-            <Btn variant="secondary" size="sm" icon={<Glyph icon={I.Pencil} size={13} />} onClick={() => (isOrg ? onEditOrg(entry.org) : onEditContact(contact))} style={{ padding: "6px 10px" }}>Edit</Btn>
-            <button type="button" onClick={() => (isOrg ? onDeleteOrg(entry.org) : onDeleteContact(contact))} title="Delete" style={{ ...iconBtnStyle, width: 32, height: 32, color: C.dan }}><Glyph icon={I.Trash} size={14} /></button>
-          </div>
-        ) : null}
-      </div>
-
-      {isOrg && expanded ? (
-        <div style={{ borderTop: `1px solid ${C.borderLight}`, padding: 14, background: "#FCFDFE", display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={LABEL_STYLE}>Affiliated contacts</span>
-            {canManage ? (
-              <Btn variant="ghost" size="sm" icon={<Glyph icon={I.Plus} size={13} />} onClick={() => onAddContact(entry.org)} style={{ padding: "4px 8px", color: C.pri }}>Add contact</Btn>
-            ) : null}
-          </div>
-          {entry.contacts.length === 0 ? (
-            <div style={{ color: C.textMut, fontSize: 12.5, fontStyle: "italic" }}>No contacts yet.</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {entry.contacts.map((cnt) => (
-                <ContactRow key={cnt.id} contact={cnt} canManage={canManage} onEdit={onEditContact} onDelete={onDeleteContact} />
-              ))}
-            </div>
-          )}
-          {entry.attachments.length ? (
-            <>
-              <span style={{ ...LABEL_STYLE, marginTop: 4 }}>Business cards &amp; files</span>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {entry.attachments.map((att) => (
-                  <AttachmentChip key={att.id} attachment={att} onPreview={onPreviewAttachment} onDelete={() => {}} busy canManage={false} />
-                ))}
-              </div>
-            </>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
   );
 }
 
@@ -528,7 +299,7 @@ function ImportCandidateRow({ candidate, label, checked, onToggle }) {
         <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{candidate.kind === "org" ? candidate.name : candidate.displayName}</div>
         <div style={{ fontSize: 11.5, color: C.textMut }}>{candidate.sourceLabel}{candidate.kind === "org" && candidate.contact ? ` · contact: ${candidate.contact.first_name} ${candidate.contact.last_name}` : ""}</div>
       </div>
-      <Badge size="sm" color={candidate.kind === "org" ? "primary" : "accent"}>{label}</Badge>
+      <StatusPill tone={candidate.kind === "org" ? "primary" : "info"}>{label}</StatusPill>
     </label>
   );
 }
@@ -577,27 +348,57 @@ function ImportModal({ candidates, saving, onClose, onImport }) {
   );
 }
 
-// ─── history feed (matches the grassroots HistoryList row layout) ───────────
-function HistoryFeed({ history }) {
-  if (!history || history.length === 0) {
-    return <div style={{ fontSize: 13, color: C.textMut, padding: "8px 2px" }}>No changes recorded yet.</div>;
+// Affiliated-contact + attachment block shown beneath an expanded directory row.
+function DirectoryExpansion({ entry, canManage, onAddContact, onEditContact, onDeleteContact, onPreviewAttachment }) {
+  const stop = (fn) => (ev) => { ev.stopPropagation(); fn(); };
+  if (entry.kind === "org") {
+    return (
+      <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={LABEL_STYLE}>Affiliated contacts</span>
+          {canManage ? <RowActionButton tone="primary" onClick={stop(() => onAddContact(entry.org))}>Add contact</RowActionButton> : null}
+        </div>
+        {entry.contacts.length === 0 ? (
+          <div style={{ fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No contacts yet.</div>
+        ) : (
+          <div style={{ display: "grid", gap: 0 }}>
+            {entry.contacts.map((cnt) => (
+              <div key={cnt.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(0, 1.2fr) minmax(0, 0.9fr) auto", gap: 10, alignItems: "center", fontSize: 12, padding: "8px 0", borderTop: `1px solid ${C.borderLight}` }}>
+                <div style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <span style={{ fontWeight: 700, color: C.text }}>{getDirectoryContactName(cnt)}</span>
+                  {cnt.title ? <span style={{ color: C.textMut }}>{` · ${cnt.title}`}</span> : null}
+                </div>
+                <div style={{ color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cnt.email || ""}</div>
+                <div style={{ color: C.textMut, whiteSpace: "nowrap" }}>{cnt.phone || ""}</div>
+                {canManage ? (
+                  <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                    <RowActionButton onClick={stop(() => onEditContact(cnt))}>Edit</RowActionButton>
+                    <IconButton tone="danger" title="Remove contact" icon={<Glyph icon={I.Trash} size={12} />} onClick={stop(() => onDeleteContact(cnt))} />
+                  </div>
+                ) : <div />}
+              </div>
+            ))}
+          </div>
+        )}
+        {entry.org.notes ? <div style={{ fontSize: 12, color: C.textSec, whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{entry.org.notes}</div> : null}
+        {entry.attachments.length ? (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {entry.attachments.map((att) => <AttachmentChip key={att.id} attachment={att} onPreview={onPreviewAttachment} onDelete={() => {}} busy canManage={false} />)}
+          </div>
+        ) : null}
+      </div>
+    );
   }
   return (
-    <div style={{ display: "grid", gap: 8 }}>
-      {history.map((entry) => (
-        <div key={entry.id} style={{ display: "grid", gridTemplateColumns: "112px minmax(0, 1fr) 150px", gap: 10, alignItems: "start", fontSize: 12 }}>
-          <div style={{ display: "inline-flex", width: "fit-content", padding: "4px 8px", borderRadius: 8, background: C.priLt, color: C.pri, fontWeight: 900 }}>
-            {getDirectoryHistoryEventLabel(entry.event_type)}
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ color: C.text, fontWeight: 800, lineHeight: 1.4, wordBreak: "break-word" }}>{entry.entity_name || "Untitled record"}</div>
-            <div style={{ marginTop: 3, color: C.textMut, lineHeight: 1.35 }}>
-              {entry.entity_type === "org" ? "Organization" : "Contact"} · {entry.changed_by_name || "Unknown"}
-            </div>
-          </div>
-          <div style={{ color: C.textMut, fontWeight: 800, textAlign: "right" }}>{fmtDateTime(entry.event_at)}</div>
+    <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+      {entry.contact.notes
+        ? <div style={{ fontSize: 12, color: C.textSec, whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{entry.contact.notes}</div>
+        : <div style={{ fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No notes.</div>}
+      {entry.attachments.length ? (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {entry.attachments.map((att) => <AttachmentChip key={att.id} attachment={att} onPreview={onPreviewAttachment} onDelete={() => {}} busy canManage={false} />)}
         </div>
-      ))}
+      ) : null}
     </div>
   );
 }
@@ -622,7 +423,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   const [history, setHistory] = useState([]);
   const [targets, setTargets] = useState([]);
 
-  const [expandedOrgIds, setExpandedOrgIds] = useState(() => new Set());
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
   const [editor, setEditor] = useState(null); // { mode, draft }
   const [stagedCard, setStagedCard] = useState(null);
   const [stagedFiles, setStagedFiles] = useState([]);
@@ -682,11 +483,11 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   );
   const importCount = importCandidates.orgs.length + importCandidates.individuals.length;
 
-  const toggleOrg = (orgId) => setExpandedOrgIds((prev) => {
+  const toggleExpand = useCallback((id) => setExpandedIds((prev) => {
     const next = new Set(prev);
-    if (next.has(orgId)) next.delete(orgId); else next.add(orgId);
+    if (next.has(id)) next.delete(id); else next.add(id);
     return next;
-  });
+  }), []);
 
   // ── editor lifecycle ──
   const openOrgEditor = (org) => { setStagedCard(null); setStagedFiles([]); setEditor({ mode: "org", draft: org ? { ...org, isDraft: false } : makeBlankDirectoryOrg(locationId) }); };
@@ -786,7 +587,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
         await uploadAttachment({ entityType: mode, entityId, file, attachmentType: "attachment" });
       }
 
-      if (mode === "org" && draft.isDraft && entityId) setExpandedOrgIds((prev) => new Set(prev).add(entityId));
+      if (mode === "org" && draft.isDraft && entityId) setExpandedIds((prev) => new Set(prev).add(entityId));
       await loadDirectory();
       closeEditor();
       toast(mode === "org" ? "Organization saved" : "Contact saved");
@@ -860,123 +661,217 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
     }
   };
 
+  // Stop a row-level action from also toggling the row's expansion.
+  const rowAction = (fn) => (ev) => { if (ev) ev.stopPropagation(); fn(); };
+
+  // ── Directory table columns (shared DenseTable) ──
+  const directoryColumns = [
+    {
+      key: "name",
+      header: "Name",
+      width: "minmax(200px, 2.2fr)",
+      sortable: true,
+      sortValue: (e) => e.sortName,
+      render: (e) => {
+        const isOrg = e.kind === "org";
+        const name = isOrg ? getDirectoryOrgName(e.org) : getDirectoryContactName(e.contact);
+        const sub = isOrg ? getDirectoryOrgAddressText(e.org) : (e.contact.title || "");
+        return (
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, color: C.text, fontSize: 12, lineHeight: 1.25, wordBreak: "break-word" }}>{name}</div>
+            {sub ? <div style={{ marginTop: 2, fontSize: 11, color: C.textMut, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</div> : null}
+          </div>
+        );
+      },
+    },
+    {
+      key: "type",
+      header: "Type",
+      width: 132,
+      sortable: true,
+      sortValue: (e) => (e.kind === "org" ? (e.org.org_type || "~") : "Individual"),
+      render: (e) => (e.kind === "org"
+        ? (e.org.org_type ? <StatusPill tone="primary">{e.org.org_type}</StatusPill> : <span style={MUTED}>—</span>)
+        : <StatusPill tone="info">Individual</StatusPill>),
+    },
+    {
+      key: "contact",
+      header: "Contact",
+      width: "minmax(150px, 1.4fr)",
+      render: (e) => {
+        const phone = e.kind === "org" ? e.org.phone : e.contact.phone;
+        const email = e.kind === "org" ? e.org.email : e.contact.email;
+        if (!phone && !email) return <span style={MUTED}>—</span>;
+        return (
+          <div style={{ minWidth: 0, fontSize: 11, lineHeight: 1.4 }}>
+            {phone ? <div style={{ color: C.text, fontWeight: 600, whiteSpace: "nowrap" }}>{phone}</div> : null}
+            {email ? <div style={{ color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</div> : null}
+          </div>
+        );
+      },
+    },
+    {
+      key: "source",
+      header: "Source",
+      width: 96,
+      sortable: true,
+      sortValue: (e) => ((e.kind === "org" ? e.org.grassroots_target_id : e.contact.grassroots_target_id) ? "1" : "0"),
+      render: (e) => {
+        const linked = e.kind === "org" ? e.org.grassroots_target_id : e.contact.grassroots_target_id;
+        return linked ? <StatusPill tone="success" title="Linked to the marketing tracker">Tracker</StatusPill> : <span style={MUTED}>Manual</span>;
+      },
+    },
+    {
+      key: "contacts",
+      header: "Contacts",
+      width: 84,
+      align: "center",
+      sortable: true,
+      sortValue: (e) => (e.kind === "org" ? e.contacts.length : -1),
+      render: (e) => (e.kind === "org"
+        ? <span style={{ fontSize: 12, fontWeight: 700, color: e.contacts.length ? C.text : C.textMut }}>{e.contacts.length}</span>
+        : <span style={MUTED}>—</span>),
+    },
+    {
+      key: "actions",
+      header: "",
+      width: 108,
+      align: "end",
+      render: (e) => (canManage ? (
+        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+          <RowActionButton tone="primary" onClick={rowAction(() => (e.kind === "org" ? openOrgEditor(e.org) : openContactEditor(e.contact, e.contact.org_id)))}>Edit</RowActionButton>
+          <IconButton tone="danger" title="Delete" icon={<Glyph icon={I.Trash} size={12} />} onClick={rowAction(() => (e.kind === "org" ? deleteOrg(e.org) : deleteContact(e.contact)))} />
+        </div>
+      ) : null),
+    },
+  ];
+
+  // ── History table columns (shared DenseTable) ──
+  const historyColumns = [
+    {
+      key: "when",
+      header: "When",
+      width: 150,
+      sortable: true,
+      sortValue: (r) => r.event_at || "",
+      render: (r) => <span style={{ fontSize: 11, fontWeight: 700, color: C.textSec, whiteSpace: "nowrap" }}>{fmtDateTime(r.event_at)}</span>,
+    },
+    {
+      key: "action",
+      header: "Action",
+      width: 112,
+      sortable: true,
+      sortValue: (r) => r.event_type || "",
+      render: (r) => <StatusPill tone={r.event_type === "created" ? "success" : r.event_type === "deleted" ? "danger" : "info"}>{getDirectoryHistoryEventLabel(r.event_type)}</StatusPill>,
+    },
+    {
+      key: "record",
+      header: "Record",
+      width: "minmax(180px, 2fr)",
+      sortable: true,
+      sortValue: (r) => String(r.entity_name || "").toLowerCase(),
+      render: (r) => (
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, color: C.text, fontSize: 12, wordBreak: "break-word" }}>{r.entity_name || "Untitled record"}</div>
+          <div style={{ marginTop: 2, fontSize: 11, color: C.textMut }}>{r.entity_type === "org" ? "Organization" : "Contact"}</div>
+        </div>
+      ),
+    },
+    {
+      key: "by",
+      header: "By",
+      width: "minmax(120px, 1fr)",
+      sortable: true,
+      sortValue: (r) => String(r.changed_by_name || "").toLowerCase(),
+      render: (r) => <span style={{ fontSize: 11, color: C.textSec }}>{r.changed_by_name || "Unknown"}</span>,
+    },
+  ];
+
+  const titleActions = canManage && !schemaMissing ? (
+    <>
+      {importCount > 0 ? <Btn variant="secondary" icon={<Glyph icon={I.Download} size={15} />} onClick={() => setImportOpen(true)}>Import from tracker ({importCount})</Btn> : null}
+      <Btn variant="secondary" icon={<Glyph icon={I.Users} size={15} />} onClick={() => openContactEditor(null, null)}>Add individual</Btn>
+      <Btn variant="primary" icon={<Glyph icon={I.Plus} size={15} />} onClick={() => openOrgEditor(null)}>Add organization</Btn>
+    </>
+  ) : null;
+
+  const schemaNotice = (
+    <div style={{ marginTop: 12, padding: "20px 18px", border: `1px solid ${C.warn}55`, borderRadius: 12, background: C.warnLt, fontSize: 13, color: C.textSec }}>
+      <strong style={{ color: C.text }}>Directory tables aren’t set up yet.</strong> Run the latest database migration to create the marketing directory, then refresh.
+    </div>
+  );
+
   // ── render ──
   return (
     <div style={{ maxWidth: 1080, margin: "0 auto", padding: "8px 0 48px" }}>
       <style>{`.md-glyph > svg { width: 100%; height: 100%; display: block; }`}</style>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: C.text, letterSpacing: "-0.01em" }}>Marketing Directory</h1>
-          <p style={{ marginTop: 6, marginBottom: 0, fontSize: 14, color: C.textMut }}>Organizations and affiliated contacts for marketing outreach.</p>
-        </div>
-        {canManage && tab === "directory" && !schemaMissing ? (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {importCount > 0 ? (
-              <Btn variant="secondary" icon={<Glyph icon={I.Download} size={15} />} onClick={() => setImportOpen(true)}>Import from tracker ({importCount})</Btn>
-            ) : null}
-            <Btn variant="secondary" icon={<Glyph icon={I.Users} size={15} />} onClick={() => openContactEditor(null, null)}>Add individual</Btn>
-            <Btn variant="primary" icon={<Glyph icon={I.Plus} size={15} />} onClick={() => openOrgEditor(null)}>Add organization</Btn>
-          </div>
-        ) : null}
-      </div>
 
-      {/* Subtabs — standard underline tab bar with count pills */}
-      <div style={{ display: "flex", gap: 2, marginTop: 20, borderBottom: `1px solid ${C.borderLight}`, background: C.bg, padding: "0 4px" }}>
-        {[{ id: "directory", label: "Directory", count: counts.total }, { id: "history", label: "History", count: history.length }].map((t) => {
-          const active = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              style={{
-                padding: "10px 14px", fontSize: 13, fontWeight: active ? 700 : 600, color: active ? C.text : C.textSec,
-                background: "transparent", border: "none", borderBottom: active ? `3px solid ${C.pri}` : "3px solid transparent",
-                cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6, marginBottom: -1, whiteSpace: "nowrap",
-              }}
-            >
-              {t.label}
-              <span style={{ background: active ? C.pri : "#E5E7EB", color: active ? "#fff" : C.textSec, padding: "1px 7px", borderRadius: 999, fontSize: 11, fontWeight: 800, lineHeight: 1.1, minWidth: 18, textAlign: "center" }}>{t.count}</span>
-            </button>
-          );
-        })}
-      </div>
+      <ListSurfaceTitle actions={titleActions}>Marketing Directory</ListSurfaceTitle>
+
+      <ListTabBar
+        tabs={[{ id: "directory", label: "Directory", count: counts.total }, { id: "history", label: "History", count: history.length }]}
+        activeId={tab}
+        onChange={setTab}
+      />
 
       {schemaMissing ? (
-        <div style={{ marginTop: 24, padding: "40px 24px", border: `1.5px dashed ${C.warn}`, borderRadius: 16, background: C.warnLt, textAlign: "center" }}>
-          <Glyph icon={I.AlertTriangle} size={30} color={C.warn} />
-          <div style={{ marginTop: 10, fontSize: 16, fontWeight: 800, color: C.text }}>Directory tables aren’t set up yet</div>
-          <div style={{ marginTop: 6, fontSize: 13, color: C.textMut, maxWidth: 460, margin: "6px auto 0" }}>Run the latest database migration to create the marketing directory, then refresh.</div>
-        </div>
+        schemaNotice
       ) : loading ? (
-        <div style={{ padding: "60px 24px", textAlign: "center", color: C.textMut, fontSize: 14 }}>Loading directory…</div>
-      ) : tab === "history" ? (
-        <div style={{ marginTop: 24 }}><HistoryFeed history={history} /></div>
-      ) : (
-        <div style={{ marginTop: 16 }}>
-          {/* Search bar + filter pills — standard lifecycle-header layout */}
-          <div style={{ borderBottom: `1.5px solid ${C.borderLight}`, background: C.bg, marginBottom: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", padding: "0 4px" }}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={query ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search organizations, people, type…"
-                className="no-focus-ring"
-                style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }}
-              />
-              {query ? (
-                <button type="button" onClick={() => setQuery("")} title="Clear" style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex" }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                </button>
-              ) : null}
-              <div style={{ display: "flex", gap: 4, marginLeft: 8, flexShrink: 0 }}>
-                {MARKETING_DIRECTORY_ENTRY_TYPES.map((option) => {
-                  const count = option.value === "all" ? counts.total : option.value === "organizations" ? counts.organizations : counts.individuals;
-                  return (
-                    <FilterPill key={option.value} active={entryType === option.value} onClick={() => setEntryType(option.value)}>
-                      {option.label} {count}
-                    </FilterPill>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          {entries.length === 0 ? (
-            <div style={{ padding: "60px 24px", textAlign: "center", border: `1.5px dashed ${C.border}`, borderRadius: 16, background: C.surfaceHover }}>
-              <Glyph icon={I.Users} size={34} color={C.pri} style={{ opacity: 0.6 }} />
-              <div style={{ marginTop: 12, fontSize: 16, fontWeight: 800, color: C.text }}>Your directory is empty</div>
-              <div style={{ marginTop: 6, fontSize: 13, color: C.textMut, maxWidth: 440, margin: "6px auto 0" }}>Add an organization or individual, or import organizers and businesses you’ve already logged in the marketing tracker.</div>
-              {canManage ? (
-                <div style={{ marginTop: 18, display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-                  {importCount > 0 ? <Btn variant="secondary" icon={<Glyph icon={I.Download} size={15} />} onClick={() => setImportOpen(true)}>Import {importCount} from tracker</Btn> : null}
-                  <Btn variant="primary" icon={<Glyph icon={I.Plus} size={15} />} onClick={() => openOrgEditor(null)}>Add organization</Btn>
-                </div>
-              ) : null}
-            </div>
-          ) : visibleEntries.length === 0 ? (
-            <div style={{ padding: "48px 24px", textAlign: "center", color: C.textMut, fontSize: 14 }}>No matches for the current filter.</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {visibleEntries.map((entry) => (
-                <DirectoryRow
-                  key={`${entry.kind}:${entry.id}`}
-                  entry={entry}
-                  expanded={expandedOrgIds.has(entry.id)}
-                  onToggle={() => toggleOrg(entry.id)}
+        <div style={{ padding: "40px 16px", textAlign: "center", color: C.textMut, fontSize: 13 }}>Loading directory…</div>
+      ) : tab === "directory" ? (
+        <>
+          <ListSearchRow value={query} onChange={setQuery} placeholder="Search organizations, people, type…">
+            {MARKETING_DIRECTORY_ENTRY_TYPES.map((option) => {
+              const count = option.value === "all" ? counts.total : option.value === "organizations" ? counts.organizations : counts.individuals;
+              return (
+                <PillFilter key={option.value} active={entryType === option.value} count={count} onClick={() => setEntryType(option.value)}>
+                  {option.label}
+                </PillFilter>
+              );
+            })}
+          </ListSearchRow>
+          <ListExplainer>
+            Organizations and their affiliated contacts for marketing outreach. “Import from tracker” pulls in event organizers and visited businesses; saving a linked org syncs its contact info back.
+          </ListExplainer>
+          <div style={{ marginTop: 12 }}>
+            <DenseTable
+              columns={directoryColumns}
+              rows={visibleEntries}
+              getRowKey={(e) => `${e.kind}:${e.id}`}
+              minWidth={760}
+              onRowClick={(e) => toggleExpand(e.id)}
+              isRowExpanded={(e) => expandedIds.has(e.id)}
+              renderExpansion={(e) => (
+                <DirectoryExpansion
+                  entry={e}
                   canManage={canManage}
-                  onEditOrg={openOrgEditor}
-                  onDeleteOrg={deleteOrg}
                   onAddContact={(org) => openContactEditor(null, org.id)}
                   onEditContact={(contact) => openContactEditor(contact, contact.org_id)}
                   onDeleteContact={deleteContact}
                   onPreviewAttachment={previewAttachment}
                 />
-              ))}
-            </div>
-          )}
-        </div>
+              )}
+              defaultSort={{ key: "name", direction: "asc" }}
+              emptyText={entries.length === 0
+                ? "Your directory is empty — add an organization or individual, or import from the marketing tracker."
+                : "No matches for the current filter."}
+            />
+          </div>
+        </>
+      ) : (
+        <>
+          <ListExplainer>Every change to the directory — additions, edits, and removals, with who made each change and when.</ListExplainer>
+          <div style={{ marginTop: 12 }}>
+            <DenseTable
+              columns={historyColumns}
+              rows={history}
+              getRowKey={(r) => r.id}
+              minWidth={560}
+              defaultSort={{ key: "when", direction: "desc" }}
+              emptyText="No changes recorded yet."
+            />
+          </div>
+        </>
       )}
 
       {editor ? (
