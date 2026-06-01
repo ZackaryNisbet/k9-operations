@@ -16,7 +16,6 @@ import { C, fmtPhoneInput } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn, Inp, Modal } from "../../shared/ui";
 import {
-  CountButton,
   DenseTable,
   IconButton,
   ListExplainer,
@@ -501,45 +500,54 @@ function DirectoryExpansion({ entry, canManage, onAddContact, onEditContact, onD
   );
 }
 
-// ─── per-org Updates feed (notes + activity), like the tracker's updates column ─
-function UpdatesModal({ org, feed, noteDraft, onNoteDraftChange, onAddNote, onDeleteNote, savingNote, canManage, onClose }) {
+// Stamp like the tracker's update rows: "May 31, 2026 · 9:50 PM".
+function fmtUpdateStamp(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return fmtDate(value);
+  return `${fmtDate(value)} · ${date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}`;
+}
+
+// Inline updates area beneath an org row — a verbatim copy of the marketing
+// tracker's Updates expansion: an optional Log composer on top, then every
+// historical update (actor — date · time / text), newest first.
+function UpdatesExpansion({ feed, logging, logBody, onLogBodyChange, onCancelLog, onSaveLog, savingLog, canManage }) {
   return (
-    <Modal title={`Updates · ${getDirectoryOrgName(org)}`} onClose={onClose} wide>
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        {canManage ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <textarea
-              value={noteDraft}
-              onChange={(e) => onNoteDraftChange(e.target.value)}
-              placeholder="Leave an update — a call, a drop, a follow-up…"
-              rows={2}
-              style={{ ...INLINE_INPUT, resize: "vertical", minHeight: 56, padding: "10px 12px" }}
-            />
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <Btn variant="primary" size="sm" onClick={onAddNote} disabled={savingNote || !noteDraft.trim()}>{savingNote ? "Posting…" : "Post update"}</Btn>
+    <div style={{ background: C.bg, borderLeft: `3px solid ${C.pri}` }}>
+      {logging && canManage ? (
+        <div style={{ padding: "12px 14px", borderBottom: feed.length > 0 ? `1px solid ${C.borderLight}` : "none" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: C.pri, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            Log Update
+          </div>
+          <textarea
+            value={logBody}
+            onChange={(e) => onLogBodyChange(e.target.value)}
+            placeholder="Notes about this outreach / development..."
+            rows={5}
+            style={{ width: "100%", minHeight: 110, padding: "10px 12px", border: `1.5px solid ${C.pri}`, borderRadius: 6, fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none", boxSizing: "border-box" }}
+            autoFocus
+          />
+          <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
+            <button onClick={onCancelLog} style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+              Cancel
+            </button>
+            <button onClick={onSaveLog} disabled={savingLog || !logBody.trim()} style={{ padding: "6px 16px", borderRadius: 6, border: "none", background: C.pri, color: "#fff", fontSize: 12, fontWeight: 700, cursor: savingLog ? "default" : "pointer", fontFamily: "inherit", opacity: savingLog || !logBody.trim() ? 0.7 : 1 }}>
+              {savingLog ? "Saving..." : "Save Log"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {feed.length > 0 ? (
+        <div style={{ padding: "8px 14px 4px" }}>
+          {feed.map((row, idx, arr) => (
+            <div key={row.id} style={{ marginBottom: idx === arr.length - 1 ? 0 : 6, paddingBottom: idx === arr.length - 1 ? 0 : 6, borderBottom: idx === arr.length - 1 ? "none" : `1px solid ${C.borderLight}` }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.pri, marginBottom: 1 }}>{row.by} — {fmtUpdateStamp(row.at)}</div>
+              <div style={{ fontSize: 11, color: C.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{row.text || "—"}</div>
             </div>
-          </div>
-        ) : null}
-        {feed.length === 0 ? (
-          <div style={{ fontSize: 13, color: C.textMut, padding: "8px 2px" }}>No updates yet.</div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: "52vh", overflowY: "auto" }}>
-            {feed.map((row) => (
-              <div key={row.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 10, background: row.kind === "note" ? C.surface : C.surfaceHover }}>
-                <StatusPill tone={row.kind === "note" ? "primary" : "neutral"}>{row.kind === "note" ? "Note" : "System"}</StatusPill>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: C.text, whiteSpace: "pre-wrap", lineHeight: 1.4, wordBreak: "break-word" }}>{row.text}</div>
-                  <div style={{ marginTop: 3, fontSize: 11, color: C.textMut }}>{row.by} · {fmtDateTime(row.at)}</div>
-                </div>
-                {canManage && row.kind === "note" ? (
-                  <button type="button" onClick={() => onDeleteNote(row.noteId)} title="Remove update" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMut, display: "flex", padding: 2, flexShrink: 0 }}><Glyph icon={I.Trash} size={13} /></button>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </Modal>
+          ))}
+        </div>
+      ) : (!logging ? <div style={{ padding: "10px 14px", fontSize: 11, color: C.textMut }}>No updates yet — click Log to add one.</div> : null)}
+    </div>
   );
 }
 
@@ -563,7 +571,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   const [targets, setTargets] = useState([]);
   const [notes, setNotes] = useState([]);
 
-  const [expandedIds, setExpandedIds] = useState(() => new Set());
+  const [expandedRow, setExpandedRow] = useState(null); // { id, mode: "contacts"|"updates", logging }
   const [editor, setEditor] = useState(null); // { mode, draft }
   const [stagedCard, setStagedCard] = useState(null);
   const [stagedFiles, setStagedFiles] = useState([]);
@@ -571,9 +579,8 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   const [saving, setSaving] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [preview, setPreview] = useState(null); // { attachment, url, loading }
-  const [updatesOrg, setUpdatesOrg] = useState(null);
-  const [noteDraft, setNoteDraft] = useState("");
-  const [savingNote, setSavingNote] = useState(false);
+  const [logBody, setLogBody] = useState("");
+  const [savingLog, setSavingLog] = useState(false);
 
   const toast = useCallback((message, type = "success") => addGlobalToast(message, type), [addGlobalToast]);
 
@@ -631,11 +638,12 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   );
   const importCount = importCandidates.orgs.length + importCandidates.individuals.length;
 
-  const toggleExpand = useCallback((id) => setExpandedIds((prev) => {
-    const next = new Set(prev);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  }), []);
+  // One inline expansion per row, in either "contacts" or "updates" mode — the
+  // updates mode is a verbatim copy of the marketing tracker's updates column.
+  const toggleContacts = useCallback((id) => setExpandedRow((prev) => (prev && prev.id === id && prev.mode === "contacts" ? null : { id, mode: "contacts" })), []);
+  const openUpdates = useCallback((id) => setExpandedRow((prev) => (prev && prev.id === id && prev.mode === "updates" && !prev.logging ? null : { id, mode: "updates", logging: false })), []);
+  const openLog = useCallback((id) => { setLogBody(""); setExpandedRow((prev) => (prev && prev.id === id && prev.mode === "updates" && prev.logging ? null : { id, mode: "updates", logging: true })); }, []);
+  const cancelLog = useCallback(() => setExpandedRow((prev) => (prev ? { ...prev, logging: false } : prev)), []);
 
   // ── editor lifecycle ──
   const openOrgEditor = (org) => {
@@ -760,7 +768,6 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
         await uploadAttachment({ entityType: mode, entityId, file, attachmentType: "attachment" });
       }
 
-      if (mode === "org" && draft.isDraft && entityId) setExpandedIds((prev) => new Set(prev).add(entityId));
       await loadDirectory();
       closeEditor();
       toast(mode === "org" ? "Organization saved" : "Contact saved");
@@ -801,7 +808,6 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
       if (delErr) throw delErr;
       await loadDirectory();
       closeEditor();
-      setExpandedIds((prev) => new Set(prev).add(data.id));
       toast("Converted to organization");
     } catch (err) {
       console.error("Convert failed", err);
@@ -826,30 +832,25 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
     setPreview({ attachment, url: data?.signedUrl || "", loading: false });
   };
 
-  // ── per-org Updates feed (notes + activity) ──
-  const openUpdates = (org) => { setNoteDraft(""); setUpdatesOrg(org); };
-  const addNote = async () => {
-    const body = noteDraft.trim();
-    if (!body || !updatesOrg || !locationId) return;
-    setSavingNote(true);
+  // Save an inline Log Update (a directory note) for the expanded org.
+  const saveLog = async () => {
+    const body = logBody.trim();
+    const orgId = expandedRow?.id;
+    if (!body || !orgId || !locationId) return;
+    setSavingLog(true);
     try {
-      const { error } = await supabase.from("marketing_directory_notes").insert(buildDirectoryNotePayload(body, locationId, actor, { orgId: updatesOrg.id }));
+      const { error } = await supabase.from("marketing_directory_notes").insert(buildDirectoryNotePayload(body, locationId, actor, { orgId }));
       if (error) throw error;
-      setNoteDraft("");
+      setLogBody("");
+      setExpandedRow((prev) => (prev ? { ...prev, logging: false } : prev));
       await loadDirectory();
-      toast("Update added");
+      toast("Update logged");
     } catch (err) {
-      console.error("Add note failed", err);
-      toast(err?.message || "Failed to add update", "error");
+      console.error("Log update failed", err);
+      toast(err?.message || "Failed to log update", "error");
     } finally {
-      setSavingNote(false);
+      setSavingLog(false);
     }
-  };
-  const deleteNote = async (noteId) => {
-    const { error } = await supabase.from("marketing_directory_notes").update({ deleted_at: new Date().toISOString(), deleted_by_user_id: actor.userId || null, deleted_by_name: actor.name || null }).eq("id", noteId);
-    if (error) { toast(error.message || "Failed to remove update", "error"); return; }
-    setNotes((prev) => prev.filter((note) => note.id !== noteId));
-    toast("Update removed");
   };
 
   const importSelected = async (selected) => {
@@ -963,14 +964,37 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
     {
       key: "updates",
       header: "Updates",
-      width: 84,
-      align: "center",
+      width: 96,
+      align: "start",
       sortable: true,
       headerTitle: "Notes + activity on this organization",
       sortValue: (e) => buildDirectoryUpdatesFeed(e.org, { notes, history }).length,
       render: (e) => {
         const count = buildDirectoryUpdatesFeed(e.org, { notes, history }).length;
-        return <CountButton count={count} active={false} title="View / add updates" onClick={rowAction(() => openUpdates(e.org))} />;
+        const exp = expandedRow && expandedRow.id === e.id && expandedRow.mode === "updates";
+        const logging = Boolean(exp && expandedRow.logging);
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <button
+              onClick={rowAction(() => openUpdates(e.id))}
+              title={`${count} updates — click to ${exp && !logging ? "collapse" : "expand"}`}
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, padding: "0 4px", borderRadius: 5, fontSize: 10, fontWeight: 800, border: exp && !logging ? `1px solid ${C.pri}` : "none", cursor: "pointer", fontFamily: "inherit", background: exp && !logging ? C.pri : (count > 0 ? `${C.pri}14` : C.bg), color: exp && !logging ? "#fff" : (count > 0 ? C.pri : C.textMut) }}
+            >
+              {count}
+            </button>
+            {canManage ? (
+              <button
+                onClick={rowAction(() => openLog(e.id))}
+                title={logging ? "Close log composer" : "Log an update"}
+                style={logging
+                  ? { padding: "1px 6px", borderRadius: 5, border: `1px solid ${C.pri}`, background: C.pri, color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }
+                  : { padding: "1px 6px", borderRadius: 5, border: `1px solid ${C.pri}35`, background: `${C.pri}0A`, color: C.pri, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                Log
+              </button>
+            ) : null}
+          </div>
+        );
       },
     },
     {
@@ -1085,9 +1109,20 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
               rows={visibleEntries}
               getRowKey={(e) => `${e.kind}:${e.id}`}
               minWidth={1000}
-              onRowClick={(e) => toggleExpand(e.id)}
-              isRowExpanded={(e) => expandedIds.has(e.id)}
-              renderExpansion={(e) => (
+              onRowClick={(e) => toggleContacts(e.id)}
+              isRowExpanded={(e) => Boolean(expandedRow && expandedRow.id === e.id)}
+              renderExpansion={(e) => (expandedRow && expandedRow.mode === "updates" ? (
+                <UpdatesExpansion
+                  feed={buildDirectoryUpdatesFeed(e.org, { notes, history })}
+                  logging={Boolean(expandedRow.logging)}
+                  logBody={logBody}
+                  onLogBodyChange={setLogBody}
+                  onCancelLog={cancelLog}
+                  onSaveLog={saveLog}
+                  savingLog={savingLog}
+                  canManage={canManage}
+                />
+              ) : (
                 <DirectoryExpansion
                   entry={e}
                   canManage={canManage}
@@ -1096,7 +1131,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
                   onDeleteContact={deleteContact}
                   onPreviewAttachment={previewAttachment}
                 />
-              )}
+              ))}
               defaultSort={{ key: "name", direction: "asc" }}
               emptyText={entries.length === 0
                 ? "Your directory is empty — add an organization or individual, or import from the marketing tracker."
@@ -1153,19 +1188,6 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
         <AttachmentPreviewModal attachment={preview.attachment} url={preview.url} loading={preview.loading} onClose={() => setPreview(null)} />
       ) : null}
 
-      {updatesOrg ? (
-        <UpdatesModal
-          org={updatesOrg}
-          feed={buildDirectoryUpdatesFeed(updatesOrg, { notes, history })}
-          noteDraft={noteDraft}
-          onNoteDraftChange={setNoteDraft}
-          onAddNote={addNote}
-          onDeleteNote={deleteNote}
-          savingNote={savingNote}
-          canManage={canManage}
-          onClose={() => setUpdatesOrg(null)}
-        />
-      ) : null}
     </div>
   );
 }
