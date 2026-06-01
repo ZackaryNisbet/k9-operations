@@ -16,6 +16,7 @@ import { C, fmtPhoneInput } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn, Inp, Modal } from "../../shared/ui";
 import {
+  CountButton,
   DenseTable,
   IconButton,
   ListExplainer,
@@ -35,7 +36,9 @@ import {
   buildDirectoryContactPayload,
   buildDirectoryEntries,
   buildDirectoryImportCandidates,
+  buildDirectoryNotePayload,
   buildDirectoryOrgPayload,
+  buildDirectoryUpdatesFeed,
   buildGrassrootsTargetWriteback,
   countDirectoryPairedTargets,
   getDirectoryLastInteractedAt,
@@ -480,6 +483,48 @@ function DirectoryExpansion({ entry, canManage, onAddContact, onEditContact, onD
   );
 }
 
+// ─── per-org Updates feed (notes + activity), like the tracker's updates column ─
+function UpdatesModal({ org, feed, noteDraft, onNoteDraftChange, onAddNote, onDeleteNote, savingNote, canManage, onClose }) {
+  return (
+    <Modal title={`Updates · ${getDirectoryOrgName(org)}`} onClose={onClose} wide>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {canManage ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <textarea
+              value={noteDraft}
+              onChange={(e) => onNoteDraftChange(e.target.value)}
+              placeholder="Leave an update — a call, a drop, a follow-up…"
+              rows={2}
+              style={{ ...INLINE_INPUT, resize: "vertical", minHeight: 56, padding: "10px 12px" }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <Btn variant="primary" size="sm" onClick={onAddNote} disabled={savingNote || !noteDraft.trim()}>{savingNote ? "Posting…" : "Post update"}</Btn>
+            </div>
+          </div>
+        ) : null}
+        {feed.length === 0 ? (
+          <div style={{ fontSize: 13, color: C.textMut, padding: "8px 2px" }}>No updates yet.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: "52vh", overflowY: "auto" }}>
+            {feed.map((row) => (
+              <div key={row.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 10, background: row.kind === "note" ? C.surface : C.surfaceHover }}>
+                <StatusPill tone={row.kind === "note" ? "primary" : "neutral"}>{row.kind === "note" ? "Note" : "System"}</StatusPill>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: C.text, whiteSpace: "pre-wrap", lineHeight: 1.4, wordBreak: "break-word" }}>{row.text}</div>
+                  <div style={{ marginTop: 3, fontSize: 11, color: C.textMut }}>{row.by} · {fmtDateTime(row.at)}</div>
+                </div>
+                {canManage && row.kind === "note" ? (
+                  <button type="button" onClick={() => onDeleteNote(row.noteId)} title="Remove update" style={{ border: "none", background: "transparent", cursor: "pointer", color: C.textMut, display: "flex", padding: 2, flexShrink: 0 }}><Glyph icon={I.Trash} size={13} /></button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // ─── page ───────────────────────────────────────────────────────────────────
 export default function MarketingDirectoryPage({ profile, nav, locationId, addGlobalToast = () => {} }) {
   const canManage = hasLeanPermission(profile, "Marketing Directory Access");
@@ -498,6 +543,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   const [attachments, setAttachments] = useState([]);
   const [history, setHistory] = useState([]);
   const [targets, setTargets] = useState([]);
+  const [notes, setNotes] = useState([]);
 
   const [expandedIds, setExpandedIds] = useState(() => new Set());
   const [editor, setEditor] = useState(null); // { mode, draft }
@@ -507,6 +553,9 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   const [saving, setSaving] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [preview, setPreview] = useState(null); // { attachment, url, loading }
+  const [updatesOrg, setUpdatesOrg] = useState(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
 
   const toast = useCallback((message, type = "success") => addGlobalToast(message, type), [addGlobalToast]);
 
@@ -520,6 +569,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
       supabase.from("marketing_directory_attachments").select("*").eq("location_id", locationId).is("deleted_at", null).order("uploaded_at", { ascending: false }),
       supabase.from("marketing_directory_history").select("*").eq("location_id", locationId).order("event_at", { ascending: false }).limit(250),
       supabase.from("grassroots_targets").select("*").eq("location_id", locationId),
+      supabase.from("marketing_directory_notes").select("*").eq("location_id", locationId).is("deleted_at", null).order("created_at", { ascending: false }).limit(500),
     ]);
 
     const missing = (err) => err?.code === "42P01" || err?.code === "PGRST205" || /marketing_directory_/.test(err?.message || "");
@@ -530,7 +580,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
         console.error("Failed to load marketing directory", orgRes.error || contactRes.error);
         toast((orgRes.error || contactRes.error).message || "Failed to load directory", "error");
       }
-      setOrgs([]); setContacts([]); setAttachments([]); setHistory([]); setTargets([]);
+      setOrgs([]); setContacts([]); setAttachments([]); setHistory([]); setTargets([]); setNotes([]);
       setLoading(false);
       return;
     }
@@ -541,6 +591,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
     setHistory(histRes.error ? [] : (histRes.data || []));
     // Tracker read is best-effort: it only powers the Import dialog.
     setTargets(targetRes.error ? [] : (targetRes.data || []));
+    setNotes(notesRes.error ? [] : (notesRes.data || []));
     setLoading(false);
   }, [locationId, toast]);
 
@@ -756,6 +807,32 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
     setPreview({ attachment, url: data?.signedUrl || "", loading: false });
   };
 
+  // ── per-org Updates feed (notes + activity) ──
+  const openUpdates = (org) => { setNoteDraft(""); setUpdatesOrg(org); };
+  const addNote = async () => {
+    const body = noteDraft.trim();
+    if (!body || !updatesOrg || !locationId) return;
+    setSavingNote(true);
+    try {
+      const { error } = await supabase.from("marketing_directory_notes").insert(buildDirectoryNotePayload(body, locationId, actor, { orgId: updatesOrg.id }));
+      if (error) throw error;
+      setNoteDraft("");
+      await loadDirectory();
+      toast("Update added");
+    } catch (err) {
+      console.error("Add note failed", err);
+      toast(err?.message || "Failed to add update", "error");
+    } finally {
+      setSavingNote(false);
+    }
+  };
+  const deleteNote = async (noteId) => {
+    const { error } = await supabase.from("marketing_directory_notes").update({ deleted_at: new Date().toISOString(), deleted_by_user_id: actor.userId || null, deleted_by_name: actor.name || null }).eq("id", noteId);
+    if (error) { toast(error.message || "Failed to remove update", "error"); return; }
+    setNotes((prev) => prev.filter((note) => note.id !== noteId));
+    toast("Update removed");
+  };
+
   const importSelected = async (selected) => {
     if (!selected.length || !locationId) return;
     setSaving(true);
@@ -862,6 +939,19 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
       render: (e) => {
         const last = getDirectoryLastInteractedAt(e.org, { history, targets });
         return <span style={{ fontSize: 11, color: C.textMut, whiteSpace: "nowrap" }}>{last ? fmtDate(last) : "—"}</span>;
+      },
+    },
+    {
+      key: "updates",
+      header: "Updates",
+      width: 84,
+      align: "center",
+      sortable: true,
+      headerTitle: "Notes + activity on this organization",
+      sortValue: (e) => buildDirectoryUpdatesFeed(e.org, { notes, history }).length,
+      render: (e) => {
+        const count = buildDirectoryUpdatesFeed(e.org, { notes, history }).length;
+        return <CountButton count={count} active={false} title="View / add updates" onClick={rowAction(() => openUpdates(e.org))} />;
       },
     },
     {
@@ -975,7 +1065,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
               columns={directoryColumns}
               rows={visibleEntries}
               getRowKey={(e) => `${e.kind}:${e.id}`}
-              minWidth={880}
+              minWidth={1000}
               onRowClick={(e) => toggleExpand(e.id)}
               isRowExpanded={(e) => expandedIds.has(e.id)}
               renderExpansion={(e) => (
@@ -1042,6 +1132,20 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
 
       {preview ? (
         <AttachmentPreviewModal attachment={preview.attachment} url={preview.url} loading={preview.loading} onClose={() => setPreview(null)} />
+      ) : null}
+
+      {updatesOrg ? (
+        <UpdatesModal
+          org={updatesOrg}
+          feed={buildDirectoryUpdatesFeed(updatesOrg, { notes, history })}
+          noteDraft={noteDraft}
+          onNoteDraftChange={setNoteDraft}
+          onAddNote={addNote}
+          onDeleteNote={deleteNote}
+          savingNote={savingNote}
+          canManage={canManage}
+          onClose={() => setUpdatesOrg(null)}
+        />
       ) : null}
     </div>
   );
