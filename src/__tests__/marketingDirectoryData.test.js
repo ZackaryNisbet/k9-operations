@@ -346,9 +346,10 @@ describe("field validation/normalization", () => {
 });
 
 describe("directory notes / updates feed", () => {
-  it("builds a note payload parented to an org", () => {
-    const payload = buildDirectoryNotePayload("  Called them  ", LOC, { userId: CON_A, name: "Zoe" }, { orgId: ORG_A });
-    expect(payload).toMatchObject({ location_id: LOC, org_id: ORG_A, contact_id: null, body: "Called them", created_by_name: "Zoe" });
+  it("builds a note payload parented to an org with an optional follow-up date", () => {
+    const payload = buildDirectoryNotePayload("  Called them  ", LOC, { userId: CON_A, name: "Zoe" }, { orgId: ORG_A, nextContactDate: "2026-06-01" });
+    expect(payload).toMatchObject({ location_id: LOC, org_id: ORG_A, contact_id: null, body: "Called them", next_contact_date: "2026-06-01", created_by_name: "Zoe" });
+    expect(buildDirectoryNotePayload("x", LOC, {}, { orgId: ORG_A, nextContactDate: "bad" }).next_contact_date).toBe(null);
   });
   it("groups active notes by org, skipping deleted", () => {
     const grouped = groupDirectoryNotesByOrg([
@@ -362,7 +363,7 @@ describe("directory notes / updates feed", () => {
   it("merges an org's notes + history into one newest-first feed", () => {
     const org = { id: ORG_A };
     const notes = [
-      { id: "n1", org_id: ORG_A, body: "Left a voicemail", created_at: "2026-05-05T10:00:00Z", created_by_name: "Zoe" },
+      { id: "n1", org_id: ORG_A, body: "Left a voicemail", created_at: "2026-05-05T10:00:00Z", created_by_name: "Zoe", next_contact_date: "2026-06-01" },
       { id: "n2", org_id: ORG_B, body: "other org", created_at: "2026-05-09T10:00:00Z" },
     ];
     const history = [
@@ -371,7 +372,7 @@ describe("directory notes / updates feed", () => {
     ];
     const feed = buildDirectoryUpdatesFeed(org, { notes, history });
     expect(feed.map((f) => f.id)).toEqual(["note_n1", "evt_h1"]); // only ORG_A, newest first
-    expect(feed[0]).toMatchObject({ kind: "note", text: "Left a voicemail", by: "Zoe" });
+    expect(feed[0]).toMatchObject({ kind: "note", text: "Left a voicemail", by: "Zoe", next: "2026-06-01" });
     expect(feed[1]).toMatchObject({ kind: "event", text: "Organization added" });
   });
 });

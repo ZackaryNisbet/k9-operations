@@ -682,12 +682,18 @@ export function getDirectoryLastInteractedAt(org = {}, { history = [], targets =
 }
 
 // ─── Notes / per-org Updates feed ───────────────────────────────────────────
-export function buildDirectoryNotePayload(body, locationId, actor = {}, { orgId = null, contactId = null } = {}) {
+function parseDirectoryDate(value) {
+  const text = stringValue(value);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null;
+}
+
+export function buildDirectoryNotePayload(body, locationId, actor = {}, { orgId = null, contactId = null, nextContactDate = "" } = {}) {
   return {
     location_id: normalizeUuid(locationId),
     org_id: normalizeUuid(orgId) || null,
     contact_id: normalizeUuid(contactId) || null,
     body: stringValue(body),
+    next_contact_date: parseDirectoryDate(nextContactDate),
     created_by_user_id: normalizeUuid(actor.userId) || null,
     created_by_name: actor.name || null,
   };
@@ -723,6 +729,7 @@ export function buildDirectoryUpdatesFeed(org = {}, { notes = [], history = [] }
       text: stringValue(note.body),
       by: normalizeText(note.created_by_name) || "Unknown",
       noteId: note.id,
+      next: note.next_contact_date || "",
     });
   });
   (history || []).forEach((entry) => {
