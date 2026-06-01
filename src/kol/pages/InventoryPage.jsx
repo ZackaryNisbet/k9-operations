@@ -8,6 +8,7 @@ import { C, todayStr, addDays, gid, fmtDate } from "../../shared/theme";
 import { Btn, Modal, Card, Inp, Badge, CustomSelect } from "../../shared/ui";
 import { I } from "../../shared/icons";
 import { hasLeanPermission } from "../../shared/permissions";
+import { DenseTable } from "../../shared/listSurface";
 import { getInventoryWorkflow } from "./inventoryStatus";
 import {
   DEFAULT_INVENTORY_SCHEDULE,
@@ -33,7 +34,7 @@ import {
   getInventoryCategorySuggestions,
   getInventorySubcategorySuggestions,
   inventorySectionId,
-  moveInventoryCatalogItem,
+  moveInventoryCatalogItemByStep,
   moveInventoryCategory,
   normalizeInventoryVendorUrl,
   renameInventorySubcategory,
@@ -204,328 +205,200 @@ const fmtAuditTime = (ts) => {
   return `${day} ${time}`;
 };
 
-const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, canEditCounts, canMarkOrdered, onChange, onKeyDown, inputRef }) {
-  const [hovered, setHovered] = useState(false);
-  const [showNotes, setShowNotes] = useState(false);
+// ─── Standardized dense-table cells (the listSurface rebuild) ───────────────────
+// These render the inventory columns inside the shared <DenseTable>. They reuse
+// the exact count/ordered logic from the legacy ItemRow, but fix the product cell
+// so the link + note + edit affordances are always visible (never clipped by a
+// long name), per the Marketing Events table treatment.
 
-  const stockCount = count?.stock_count ?? "";
-  const inTransit = count?.in_transit ?? "";
-  const notes = count?.notes ?? "";
-  const ordered = count?.ordered ?? false;
-  const countedBy = count?.counted_by;
-  const countedAt = count?.counted_at;
-  const orderedBy = count?.ordered_by;
-  const orderedAt = count?.ordered_at;
-  const skipped = count?.skipped ?? false;
-  const skippedBy = count?.skipped_by;
-  const skippedAt = count?.skipped_at;
-  const hasFilled = stockCount !== "";
-  const toOrder = (item.par_level != null && hasFilled)
-    ? Math.max(0, (item.par_level || 0) - (parseInt(stockCount, 10) || 0) - (parseInt(inTransit, 10) || 0))
-    : "";
-  const stockValue = (hasFilled && item.unit_price != null)
-    ? (parseInt(stockCount, 10) || 0) * parseFloat(item.unit_price || 0)
-    : null;
-  const needsOrder = toOrder !== "" && toOrder > 0;
-  const countReadOnly = isReadOnly || !canEditCounts;
-  const orderReadOnly = isReadOnly || !canMarkOrdered;
-  const vendorHref = getInventoryVendorHref(item.vendor_link);
+const INV_DASH = <span style={{ color: C.textMut, fontSize: 12 }}>—</span>;
+const invMiniLinkStyle = { flexShrink: 0, color: C.info, display: "inline-flex", alignItems: "center" };
 
+// Hover-revealed pencil (Marketing Events affordance). Stays put via flex-shrink:0
+// so it never participates in the name's ellipsis truncation.
+function InvCellPencil({ onClick, title }) {
   return (
-    <>
-    <div
-      data-inventory-row-id={item.id}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        display: "grid",
-        gridTemplateColumns: INVENTORY_VIEW_COLS,
-        gap: 8,
-        alignItems: "center",
-        padding: "8px 16px",
-        borderBottom: showNotes ? "none" : `1px solid ${C.borderLight}`,
-        background: skipped ? (hovered ? "#FFFCF0" : "#FFFEF7") : (hovered ? C.surfaceHover : C.surface),
-        opacity: skipped ? 0.6 : 1,
-        transition: "background 0.15s, opacity 0.15s",
-      }}
+    <button
+      className="inv-hover-affordance"
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      title={title}
+      style={{ flexShrink: 0, padding: 0, width: 16, height: 16, border: "none", background: "transparent", color: C.pri, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
     >
-      <div className="inventory-edit-affordance is-placeholder" aria-hidden="true">
-        <I.GripVertical />
-      </div>
+      <I.Edit />
+    </button>
+  );
+}
 
-      {/* Product name + Product Link + Notes Icon */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {item.item_name}
-            {vendorHref && (
-              <a
-                href={vendorHref}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="Open product link"
-                style={{ marginLeft: 6, color: C.info, display: "inline-flex", alignItems: "center", verticalAlign: "middle" }}
-                onClick={e => e.stopPropagation()}
-              >
-                <I.Link />
-              </a>
-            )}
-            <button
-              onClick={e => { e.stopPropagation(); setShowNotes(!showNotes); }}
-              title={notes ? "Edit note" : "Add note"}
-              style={{
-                marginLeft: 6,
-                color: notes ? C.pri : C.textMut,
-                opacity: notes ? 1 : (hovered ? 0.6 : 0),
-                display: "inline-flex",
-                alignItems: "center",
-                verticalAlign: "middle",
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                padding: 0,
-                transition: "opacity 0.15s",
-              }}
-            >
-              <I.MessageSquare />
-            </button>
-          </div>
-          {item.size && (
-            <div style={{ fontSize: 11, color: C.textMut, marginTop: 1 }}>{item.size}</div>
-          )}
+// On Hand (emphasizeEmpty → amber until filled) and In Transit share this input.
+function InvCountInput({ value, readOnly, emphasizeEmpty = false, onChange, onKeyDown, registerInput, itemId, field, title }) {
+  const filled = value !== "" && value != null;
+  const idleBorder = emphasizeEmpty && !filled ? "#E6C200" : C.border;
+  return (
+    <input
+      ref={registerInput}
+      type="number"
+      min="0"
+      value={value ?? ""}
+      readOnly={readOnly}
+      title={title}
+      onChange={(e) => { if (!readOnly) onChange(clampPositive(e.target.value)); }}
+      onKeyDown={onKeyDown}
+      placeholder="0"
+      data-item-id={itemId}
+      data-field={field}
+      style={{
+        width: "100%", padding: "5px 6px", borderRadius: 8,
+        border: `${emphasizeEmpty ? 2 : 1.5}px solid ${readOnly ? C.border : idleBorder}`,
+        background: readOnly ? C.bg : (emphasizeEmpty && !filled ? "#FFFDE0" : C.surface),
+        fontSize: 13, fontWeight: emphasizeEmpty ? 600 : 400, color: C.text,
+        textAlign: "center", outline: "none", cursor: readOnly ? "default" : "text", boxSizing: "border-box",
+      }}
+      onFocus={(e) => { if (!readOnly) e.target.style.borderColor = C.pri; }}
+      onBlur={(e) => { if (!readOnly) e.target.style.borderColor = idleBorder; }}
+    />
+  );
+}
+
+const invUnderlineBtn = (color) => ({ background: "none", border: "none", color, fontSize: 10, cursor: "pointer", padding: 0, textDecoration: "underline" });
+
+// Ordered checkbox / Skip / Undo — only meaningful when the item needs reordering.
+function InvOrderedControl({ count, toOrder, readOnly, onChange }) {
+  const ordered = count?.ordered ?? false;
+  const skipped = count?.skipped ?? false;
+  const needsOrder = toOrder !== "" && toOrder > 0;
+  if (!needsOrder) return <span style={{ color: C.textMut, fontSize: 11 }}>{toOrder === "" ? "" : "—"}</span>;
+  if (skipped) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+        <span title={count?.skipped_by ? `Skipped by ${count.skipped_by} · ${fmtAuditTime(count.skipped_at)}` : ""}
+          style={{ padding: "2px 8px", borderRadius: 6, background: "#FFF3CD", color: "#856404", fontSize: 10, fontWeight: 700, letterSpacing: 0.3 }}>SKIPPED</span>
+        {!readOnly && <button onClick={() => onChange("skipped", false)} style={invUnderlineBtn(C.info)}>Undo</button>}
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+      <label style={{ display: "flex", alignItems: "center", cursor: readOnly ? "default" : "pointer" }}
+        title={ordered && count?.ordered_by ? `Ordered by ${count.ordered_by} · ${fmtAuditTime(count.ordered_at)}` : ""}>
+        <input type="checkbox" checked={ordered} disabled={readOnly}
+          onChange={(e) => { if (!readOnly) onChange("ordered", e.target.checked); }}
+          style={{ width: 18, height: 18, accentColor: C.suc, cursor: readOnly ? "default" : "pointer" }} />
+      </label>
+      {!ordered && !readOnly && <button onClick={() => onChange("skipped", true)} style={invUnderlineBtn(C.textMut)}>Skip</button>}
+    </div>
+  );
+}
+
+// Product cell — name IS the link; link/note/edit affordances are flex-shrink:0
+// siblings, so a long name truncates with an ellipsis but never hides them.
+function InvProductCell({ item, hasNote, notesActive, onToggleNotes, editMode, onEditMeta }) {
+  const vendorHref = getInventoryVendorHref(item.vendor_link);
+  const nameStyle = { fontSize: 13, fontWeight: 600, color: C.text, textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 };
+  return (
+    <div className="inv-product-cell" style={{ minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+        {vendorHref ? (
+          <a href={vendorHref} target="_blank" rel="noopener noreferrer" title="Open product link" onClick={(e) => e.stopPropagation()} style={nameStyle}>{item.item_name}</a>
+        ) : (
+          <span style={nameStyle}>{item.item_name}</span>
+        )}
+        {vendorHref && (
+          <a href={vendorHref} target="_blank" rel="noopener noreferrer" title="Open product link" onClick={(e) => e.stopPropagation()} style={invMiniLinkStyle}><I.Link /></a>
+        )}
+        <button
+          className={`inv-hover-affordance${hasNote || notesActive ? " is-active" : ""}`}
+          onClick={(e) => { e.stopPropagation(); onToggleNotes(); }}
+          title={hasNote ? "Edit note" : "Add note"}
+          style={{ flexShrink: 0, padding: 0, width: 16, height: 16, border: "none", background: "transparent", color: hasNote ? C.pri : C.textMut, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+        >
+          <I.MessageSquare />
+        </button>
+        {editMode && <InvCellPencil onClick={onEditMeta} title="Edit product details" />}
+      </div>
+      {item.size && <div style={{ fontSize: 11, color: C.textMut, marginTop: 1 }}>{item.size}</div>}
+    </div>
+  );
+}
+
+// Per-column micro-editor (Marketing Events pattern): a small modal scoped to one
+// field group — product (name/link/category/subcategory), GL code, par, or cost.
+const INV_EDITOR_TITLES = { product: "Edit product", gl: "Edit GL code", par: "Edit par level", cost: "Edit unit cost" };
+function InventoryCellEditorModal({ editor, item, categories, subcategorySuggestions, onClose, onSave }) {
+  const [draft, setDraft] = useState(() => ({
+    item_name: item.item_name || "",
+    vendor_link: item.vendor_link || "",
+    category: item.category || "",
+    subcategory: item.subcategory || "",
+    gl_account: item.gl_account || "",
+    par_level: item.par_level ?? "",
+    unit_price: item.unit_price ?? "",
+  }));
+  const set = (field, value) => setDraft((prev) => ({ ...prev, [field]: value }));
+  const save = () => {
+    if (editor.group === "product") {
+      onSave({ item_name: draft.item_name.trim() || item.item_name, vendor_link: draft.vendor_link, category: draft.category, subcategory: draft.subcategory });
+    } else if (editor.group === "gl") {
+      onSave({ gl_account: draft.gl_account });
+    } else if (editor.group === "par") {
+      onSave({ par_level: normalizeCatalogNumber(draft.par_level, true) });
+    } else if (editor.group === "cost") {
+      onSave({ unit_price: normalizeCatalogNumber(draft.unit_price, false) });
+    }
+    onClose();
+  };
+  const fieldLabel = { fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 };
+  return (
+    <Modal title={INV_EDITOR_TITLES[editor.group] || "Edit"} onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {editor.group === "product" && (
+          <>
+            <div><div style={fieldLabel}>Product name</div><Inp value={draft.item_name} onChange={(v) => set("item_name", v)} autoFocus /></div>
+            <div><div style={fieldLabel}>Product link</div><Inp value={draft.vendor_link} placeholder="amazon.com/…" onChange={(v) => set("vendor_link", v)} /></div>
+            <InventoryTaxonomySelect label="Category" value={draft.category} options={categories} onChange={(v) => set("category", v)} createLabel="New category" placeholder="Category" />
+            <InventoryTaxonomySelect label="Subcategory" value={draft.subcategory} options={subcategorySuggestions} onChange={(v) => set("subcategory", v)} createLabel="New subcategory" placeholder="Subcategory" />
+          </>
+        )}
+        {editor.group === "gl" && (
+          <div><div style={fieldLabel}>GL code</div><Inp value={draft.gl_account} onChange={(v) => set("gl_account", v)} autoFocus /></div>
+        )}
+        {editor.group === "par" && (
+          <div><div style={fieldLabel}>Par level</div><Inp type="number" value={draft.par_level} onChange={(v) => set("par_level", v)} autoFocus /></div>
+        )}
+        {editor.group === "cost" && (
+          <div><div style={fieldLabel}>Unit cost ($)</div><Inp type="number" value={draft.unit_price} onChange={(v) => set("unit_price", v)} autoFocus /></div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 2 }}>
+          <Btn variant="secondary" size="sm" onClick={onClose}>Cancel</Btn>
+          <Btn variant="primary" size="sm" onClick={save}>Save</Btn>
         </div>
       </div>
-
-      {/* GL Account */}
-      <div>
-        {item.gl_account ? (
-          <span style={{ display: "inline-block", padding: "2px 7px", borderRadius: 6, background: C.infoLt, color: C.info, fontSize: 10, fontWeight: 700 }}>
-            {item.gl_account}
-          </span>
-        ) : (
-          <span style={{ color: C.textMut, fontSize: 11 }}>—</span>
-        )}
-      </div>
-
-      {/* Par Level */}
-      <div style={{ fontSize: 12, color: C.textSec, textAlign: "center" }}>
-        {item.par_level != null ? item.par_level : <span style={{ color: C.textMut }}>—</span>}
-      </div>
-
-      {/* Stock Count — yellow when empty, neutral when filled */}
-      <div title={countedBy ? `Counted by ${countedBy} · ${fmtAuditTime(countedAt)}` : ""}>
-        <input
-          ref={inputRef}
-          type="number"
-          min="0"
-          value={stockCount}
-          readOnly={countReadOnly}
-          onChange={e => !countReadOnly && onChange("stock_count", clampPositive(e.target.value))}
-          onKeyDown={onKeyDown}
-          placeholder="0"
-          data-item-id={item.id}
-          data-field="stock_count"
-          style={{
-            width: "100%",
-            padding: "6px 8px",
-            borderRadius: 8,
-            border: `2px solid ${countReadOnly ? C.border : hasFilled ? C.border : "#E6C200"}`,
-            background: countReadOnly ? C.bg : hasFilled ? C.surface : "#FFFDE0",
-            fontSize: 13,
-            fontWeight: 600,
-            color: C.text,
-            textAlign: "center",
-            outline: "none",
-            cursor: countReadOnly ? "default" : "text",
-            boxSizing: "border-box",
-          }}
-          onFocus={e => { if (!countReadOnly) e.target.style.borderColor = C.pri; }}
-          onBlur={e => { if (!countReadOnly) e.target.style.borderColor = hasFilled ? C.border : "#E6C200"; }}
-        />
-      </div>
-
-      {/* In Transit */}
-      <div>
-        <input
-          type="number"
-          min="0"
-          value={inTransit}
-          readOnly={countReadOnly}
-          onChange={e => !countReadOnly && onChange("in_transit", clampPositive(e.target.value))}
-          placeholder="0"
-          style={{
-            width: "100%",
-            padding: "6px 8px",
-            borderRadius: 8,
-            border: `1.5px solid ${C.border}`,
-            background: countReadOnly ? C.bg : C.surface,
-            fontSize: 13,
-            color: C.text,
-            textAlign: "center",
-            outline: "none",
-            cursor: countReadOnly ? "default" : "text",
-            boxSizing: "border-box",
-          }}
-          onFocus={e => { if (!countReadOnly) e.target.style.borderColor = C.pri; }}
-          onBlur={e => { if (!countReadOnly) e.target.style.borderColor = C.border; }}
-        />
-      </div>
-
-      {/* To Order (auto-calc) */}
-      <div style={{ textAlign: "center" }}>
-        {toOrder !== "" ? (
-          <span style={{
-            display: "inline-block",
-            padding: "4px 10px",
-            borderRadius: 8,
-            background: toOrder > 0 ? C.warnLt : C.sucLt,
-            color: toOrder > 0 ? C.warn : C.suc,
-            fontSize: 12,
-            fontWeight: 700,
-          }}>
-            {toOrder}
-          </span>
-        ) : (
-          <span style={{ color: C.textMut, fontSize: 12 }}>—</span>
-        )}
-      </div>
-
-      {/* Ordered / Skip / Undo — only shown when item needs reordering */}
-      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 2 }}>
-        {needsOrder ? (
-          skipped ? (
-            /* State 3: Skipped */
-            <>
-              <span
-                title={skippedBy ? `Skipped by ${skippedBy} · ${fmtAuditTime(skippedAt)}` : ""}
-                style={{
-                  display: "inline-block",
-                  padding: "2px 8px",
-                  borderRadius: 6,
-                  background: "#FFF3CD",
-                  color: "#856404",
-                  fontSize: 10,
-                  fontWeight: 700,
-                  letterSpacing: 0.3,
-                }}
-              >
-                SKIPPED
-              </span>
-              {!orderReadOnly && (
-                <button
-                  onClick={() => onChange("skipped", false)}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: C.info,
-                    fontSize: 10,
-                    cursor: "pointer",
-                    padding: 0,
-                    textDecoration: "underline",
-                  }}
-                >
-                  Undo
-                </button>
-              )}
-            </>
-          ) : ordered ? (
-            /* State 2: Ordered */
-            <div title={orderedBy ? `Ordered by ${orderedBy} · ${fmtAuditTime(orderedAt)}` : ""}>
-              <label style={{ display: "flex", alignItems: "center", cursor: orderReadOnly ? "default" : "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={true}
-                  disabled={orderReadOnly}
-                  onChange={e => !orderReadOnly && onChange("ordered", e.target.checked)}
-                  style={{
-                    width: 18,
-                    height: 18,
-                    accentColor: C.suc,
-                    cursor: orderReadOnly ? "default" : "pointer",
-                  }}
-                />
-              </label>
-            </div>
-          ) : (
-            /* State 1: Needs ordering (not ordered, not skipped) */
-            <>
-              <label style={{ display: "flex", alignItems: "center", cursor: orderReadOnly ? "default" : "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={false}
-                  disabled={orderReadOnly}
-                  onChange={e => !orderReadOnly && onChange("ordered", e.target.checked)}
-                  style={{
-                    width: 18,
-                    height: 18,
-                    accentColor: C.suc,
-                    cursor: orderReadOnly ? "default" : "pointer",
-                  }}
-                />
-              </label>
-              {!orderReadOnly && (
-                <button
-                  onClick={() => onChange("skipped", true)}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: C.textMut,
-                    fontSize: 10,
-                    cursor: "pointer",
-                    padding: 0,
-                    textDecoration: "underline",
-                  }}
-                >
-                  Skip
-                </button>
-              )}
-            </>
-          )
-        ) : (
-          <span style={{ color: C.textMut, fontSize: 11 }}>{toOrder === "" ? "" : "—"}</span>
-        )}
-      </div>
-
-      {/* Unit Cost */}
-      <div style={{ fontSize: 12, color: C.textSec, textAlign: "right" }}>
-        {item.unit_price != null ? fmtCurrency(item.unit_price) : <span style={{ color: C.textMut }}>—</span>}
-      </div>
-
-      {/* Stock Value */}
-      <div style={{ fontSize: 12, fontWeight: 600, color: stockValue != null && stockValue > 0 ? C.suc : C.textSec, textAlign: "right" }}>
-        {stockValue != null ? fmtCurrency(stockValue) : <span style={{ color: C.textMut }}>—</span>}
-      </div>
-      <div className="inventory-edit-affordance is-placeholder" aria-hidden="true" />
-    </div>
-    {showNotes && (
-      <div style={{ padding: "4px 16px 8px", background: C.surface, borderBottom: `1px solid ${C.borderLight}` }}>
-        <textarea
-          value={notes}
-          readOnly={countReadOnly}
-          onChange={e => !countReadOnly && onChange("notes", e.target.value)}
-          placeholder="Add a note for this item..."
-          rows={2}
-          style={{
-            width: "100%",
-            padding: "8px 10px",
-            borderRadius: 8,
-            border: `1.5px solid ${C.border}`,
-            background: countReadOnly ? C.bg : C.surface,
-            fontSize: 12,
-            fontFamily: "inherit",
-            color: C.text,
-            resize: "none",
-            outline: "none",
-            boxSizing: "border-box",
-          }}
-          onFocus={e => { if (!countReadOnly) e.target.style.borderColor = C.pri; }}
-          onBlur={e => { if (!countReadOnly) e.target.style.borderColor = C.border; }}
-        />
-      </div>
-    )}
-    </>
+    </Modal>
   );
-});
+}
+
+// Inline-editable label for renaming a section/subcategory in Edit Catalog mode.
+function InvEditableLabel({ value, onCommit, style }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => { setDraft(value); }, [value]);
+  const commit = () => {
+    const next = draft.trim();
+    if (!next || next === value) { setDraft(value); return; }
+    onCommit(next);
+  };
+  return (
+    <input
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") { setDraft(value); e.currentTarget.blur(); }
+      }}
+      style={{ padding: "4px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, outline: "none", fontFamily: "inherit", ...style }}
+    />
+  );
+}
 
 // ─── Adhoc Item Row ───────────────────────────────────────────────────────────
 
@@ -631,754 +504,6 @@ function AdhocItemRow({ item, isReadOnly, canEditCounts, canMarkOrdered, onUpdat
         </button>
       )}
     </div>
-  );
-}
-
-// ─── Item Detail Drawer (Edit Mode) ──────────────────────────────────────────
-
-const ItemDetailDrawer = React.memo(function ItemDetailDrawer({ item, catalogItems, categories, onChange, onChangeFields, onToggleActive }) {
-  const visibleSubcategories = useMemo(() => (
-    item.category ? getInventorySubcategorySuggestions(catalogItems, item.category) : []
-  ), [catalogItems, item.category]);
-
-  const setCategoryValue = (nextCategory) => {
-    const scopedSubcategories = getInventorySubcategorySuggestions(catalogItems, nextCategory);
-    const nextUpdates = { category: nextCategory };
-    if (!scopedSubcategories.includes(item.subcategory || "")) {
-      nextUpdates.subcategory = "";
-    }
-    onChangeFields(nextUpdates);
-  };
-
-  const fieldStyle = {
-    fontSize: 12,
-    padding: "6px 8px",
-    borderRadius: 7,
-    border: `1.5px solid ${C.border}`,
-    background: C.surface,
-    fontFamily: "inherit",
-    color: C.text,
-    outline: "none",
-    width: "100%",
-    boxSizing: "border-box",
-  };
-
-  return (
-    <div style={{
-      padding: "12px 16px 12px 46px",
-      background: C.bg,
-      borderBottom: `1px solid ${C.borderLight}`,
-      animation: "invFadeIn 0.2s ease-out",
-    }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.5fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
-        <div>
-          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Size</div>
-          <input value={item.size || ""} onChange={e => onChange("size", e.target.value)} placeholder="Size" style={fieldStyle} />
-        </div>
-        <div>
-          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Vendor</div>
-          <input value={item.vendor || ""} onChange={e => onChange("vendor", e.target.value)} placeholder="Vendor" style={fieldStyle} />
-        </div>
-        <div>
-          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Product Link</div>
-          <input
-            value={item.vendor_link || ""}
-            onChange={e => onChange("vendor_link", e.target.value)}
-            onBlur={e => onChange("vendor_link", normalizeInventoryVendorUrl(e.target.value))}
-            placeholder="https://..."
-            style={{ ...fieldStyle, fontSize: 11 }}
-          />
-        </div>
-        <div>
-          <InventoryTaxonomySelect
-            label="Category"
-            value={item.category || ""}
-            options={categories}
-            onChange={setCategoryValue}
-            createLabel="Create new category"
-            placeholder="Select category"
-          />
-        </div>
-        <div>
-          <InventoryTaxonomySelect
-            label="Subcategory"
-            value={item.subcategory || ""}
-            options={visibleSubcategories}
-            onChange={(value) => onChange("subcategory", value)}
-            createLabel="Create new subcategory"
-            placeholder={item.category ? "Select subcategory" : "Choose category first"}
-            disabled={!item.category}
-          />
-        </div>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-        <div style={{ marginLeft: "auto" }}>
-          <button
-            onClick={onToggleActive}
-            style={{
-              display: "flex", alignItems: "center", gap: 6,
-              padding: "6px 14px", borderRadius: 8,
-              border: `1.5px solid ${item.is_active ? C.dan + "40" : C.suc + "40"}`,
-              background: item.is_active ? C.danLt : C.sucLt,
-              color: item.is_active ? C.dan : C.suc,
-              fontSize: 12, fontWeight: 600, fontFamily: "inherit",
-              cursor: "pointer", transition: "all 0.15s",
-            }}
-          >
-            {item.is_active ? <><I.X /> Remove Product</> : <><I.Check /> Restore Product</>}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-});
-
-// ─── Edit Mode Item Row ──────────────────────────────────────────────────────
-
-const EditModeItemRow = React.memo(function EditModeItemRow({
-  item, count, editingField, onEditField, onCatalogChange, expandedEditId, onToggleExpand,
-  onCatalogFieldsChange, catalogItems, categories, onDragStart, onDragOver, onDrop, onDragEnd, dragOverKey, targetContext, onToggleActive, onOpenDetails,
-}) {
-  const [hovered, setHovered] = useState(false);
-  const editRef = useRef(null);
-  const isExpanded = expandedEditId === item.id;
-
-  // Focus input when entering edit mode
-  useEffect(() => {
-    if (editingField?.itemId === item.id && editRef.current) {
-      editRef.current.focus();
-      editRef.current.select();
-    }
-  }, [editingField, item.id]);
-
-  const isEditing = (field) => editingField?.itemId === item.id && editingField?.field === field;
-
-  const renderEditableCell = (field, value, style = {}) => {
-    if (isEditing(field)) {
-      const isNumber = field === "par_level" || field === "unit_price";
-      return (
-        <input
-          ref={editRef}
-          type={isNumber ? "number" : "text"}
-          min={isNumber ? "0" : undefined}
-          step={field === "unit_price" ? "0.01" : undefined}
-          value={value ?? ""}
-          onChange={e => {
-            const v = isNumber
-              ? (e.target.value === "" ? null : field === "unit_price" ? parseFloat(e.target.value) : parseInt(e.target.value, 10))
-              : e.target.value;
-            onCatalogChange(item.id, field, v);
-          }}
-          onBlur={() => onEditField(null)}
-          onKeyDown={e => {
-            if (e.key === "Enter") onEditField(null);
-            if (e.key === "Escape") onEditField(null);
-          }}
-          style={{
-            width: "100%",
-            padding: "4px 6px",
-            borderRadius: 6,
-            border: `2px solid ${C.pri}`,
-            background: C.surface,
-            fontSize: 13,
-            fontWeight: 600,
-            color: C.text,
-            outline: "none",
-            boxSizing: "border-box",
-            ...style,
-          }}
-        />
-      );
-    }
-    return (
-      <div
-        onClick={() => onEditField({ itemId: item.id, field })}
-        style={{
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-          minHeight: 28,
-          padding: "2px 0",
-          borderRadius: 6,
-          transition: "background 0.15s",
-          background: hovered ? C.bg : "transparent",
-        }}
-      >
-        <span style={{ fontSize: 13, fontWeight: 600, color: value ? C.text : C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, ...style }}>
-          {value || "\u2014"}
-        </span>
-        {hovered && (
-          <span style={{ color: C.textMut, opacity: 0.5, flexShrink: 0 }}>
-            <I.Pencil />
-          </span>
-        )}
-      </div>
-    );
-  };
-
-  const stockCount = count?.stock_count ?? "";
-  const inTransit = count?.in_transit ?? "";
-  const hasFilled = stockCount !== "";
-  const toOrder = (item.par_level != null && hasFilled)
-    ? Math.max(0, (item.par_level || 0) - (parseInt(stockCount, 10) || 0) - (parseInt(inTransit, 10) || 0))
-    : "";
-
-  return (
-    <>
-      <div
-        data-inventory-row-id={item.id}
-        draggable
-        onDragStart={e => onDragStart(e, item.id)}
-        onDragOver={e => onDragOver(e, { ...targetContext, targetItemId: item.id })}
-        onDrop={e => onDrop(e, { ...targetContext, targetItemId: item.id })}
-        onDragEnd={onDragEnd}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        style={{
-          display: "grid",
-          gridTemplateColumns: INVENTORY_EDIT_COLS,
-          gap: 8,
-          alignItems: "center",
-          padding: "8px 16px",
-          borderTop: dragOverKey === item.id ? `2px solid ${C.pri}` : "none",
-          borderBottom: `1px solid ${C.borderLight}`,
-          background: hovered ? C.surfaceHover : !item.is_active ? C.bg + "80" : C.surface,
-          opacity: item.is_active ? 1 : 0.5,
-          transition: "background 0.15s, opacity 0.15s",
-          cursor: "grab",
-        }}
-      >
-        {/* Drag handle */}
-        <div className="inventory-edit-affordance is-visible" style={{ color: C.textMut, cursor: "grab", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <I.GripVertical />
-        </div>
-
-        {/* Item Name — editable */}
-        <div style={{ minWidth: 0 }}>
-          {renderEditableCell("item_name", item.item_name)}
-          {!item.is_active && (
-            <span style={{ fontSize: 10, color: C.dan, fontWeight: 600 }}>INACTIVE</span>
-          )}
-        </div>
-
-        {/* GL Account — editable */}
-        <div>{renderEditableCell("gl_account", item.gl_account, { fontSize: 11 })}</div>
-
-        {/* Par Level — editable */}
-        <div>{renderEditableCell("par_level", item.par_level, { textAlign: "center" })}</div>
-
-        {/* On Hand — muted in edit mode */}
-        <div style={{ fontSize: 12, color: C.textMut, textAlign: "center", opacity: 0.4 }}>
-          {hasFilled ? stockCount : "\u2014"}
-        </div>
-
-        {/* In Transit — muted */}
-        <div style={{ fontSize: 12, color: C.textMut, textAlign: "center", opacity: 0.4 }}>
-          {inTransit || "\u2014"}
-        </div>
-
-        {/* To Order — muted */}
-        <div style={{ fontSize: 12, color: C.textMut, textAlign: "center", opacity: 0.4 }}>
-          {toOrder !== "" ? toOrder : "\u2014"}
-        </div>
-
-        {/* Ordered — muted */}
-        <div style={{ opacity: 0.4 }} />
-
-        {/* Unit Cost — editable */}
-        <div>{renderEditableCell("unit_price", item.unit_price != null ? item.unit_price : null, { textAlign: "right", fontSize: 12 })}</div>
-
-        {/* Value — muted */}
-        <div style={{ fontSize: 12, color: C.textMut, textAlign: "right", opacity: 0.4 }}>
-          {"\u2014"}
-        </div>
-
-        {/* Row actions */}
-        <div className="inventory-edit-affordance is-visible" style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "flex-end",
-          gap: 6,
-          zIndex: 4,
-          background: hovered ? C.surfaceHover : !item.is_active ? C.bg : C.surface,
-          paddingLeft: 6,
-        }}>
-          <button
-            type="button"
-            onClick={() => onToggleExpand(isExpanded ? null : item.id)}
-            title={isExpanded ? "Hide row dropdown editors" : "Show row dropdown editors"}
-            style={{
-              width: 30,
-              height: 30,
-              background: isExpanded ? C.priLt : hovered ? C.priLt : C.bg,
-              border: `1px solid ${isExpanded || hovered ? C.pri + "30" : C.borderLight}`,
-              borderRadius: 8,
-              cursor: "pointer",
-              padding: 0,
-              color: isExpanded || hovered ? C.pri : C.textMut,
-              transition: "all 0.15s",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
-            }}
-          >
-            <I.ChevronDown />
-          </button>
-          <button
-            type="button"
-            onClick={() => onOpenDetails(item)}
-            title="Edit product details"
-            style={{
-              width: 30,
-              height: 30,
-              background: hovered ? C.priLt : C.bg,
-              border: `1px solid ${hovered ? C.pri + "30" : C.borderLight}`,
-              borderRadius: 8,
-              cursor: "pointer",
-              padding: 0,
-              color: hovered ? C.pri : C.textMut,
-              transition: "all 0.15s",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
-          >
-            <I.Pencil />
-          </button>
-          <button
-            type="button"
-            onClick={() => onToggleActive(item.id, item.is_active, item.item_name)}
-            title={item.is_active ? "Remove product from active inventory" : "Restore product"}
-            style={{
-              minWidth: 76,
-              height: 30,
-              background: item.is_active ? C.danLt : C.sucLt,
-              border: `1px solid ${item.is_active ? C.dan + "35" : C.suc + "35"}`,
-              borderRadius: 8,
-              cursor: "pointer",
-              padding: "0 8px",
-              color: item.is_active ? C.dan : C.suc,
-              fontSize: 11,
-              fontWeight: 800,
-              fontFamily: "inherit",
-              transition: "all 0.15s",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
-            }}
-          >
-            {item.is_active ? <><I.X /> Remove</> : <><I.Check /> Restore</>}
-          </button>
-        </div>
-      </div>
-      {isExpanded && (
-        <ItemDetailDrawer
-          item={item}
-          catalogItems={catalogItems}
-          categories={categories}
-          onChange={(field, val) => onCatalogChange(item.id, field, val)}
-          onChangeFields={(updates) => onCatalogFieldsChange(item.id, updates)}
-          onToggleActive={() => onToggleActive(item.id, item.is_active, item.item_name)}
-        />
-      )}
-    </>
-  );
-});
-
-// ─── Add Item Row (Edit Mode) ────────────────────────────────────────────────
-
-function AddItemRow({ category, subcategory, onAdd, onDragOver, onDrop, isDragOver }) {
-  return (
-    <button
-      onClick={() => onAdd(category, subcategory)}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      style={{
-        width: "100%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 8,
-        padding: "10px 16px",
-        border: `1.5px dashed ${isDragOver ? C.pri : C.border}`,
-        borderRadius: 0,
-        background: isDragOver ? C.priLt : "transparent",
-        color: isDragOver ? C.pri : C.textMut,
-        fontSize: 12,
-        fontWeight: 500,
-        fontFamily: "inherit",
-        cursor: "pointer",
-        transition: "all 0.15s",
-      }}
-      onMouseEnter={e => { e.currentTarget.style.background = C.surfaceHover; e.currentTarget.style.color = C.pri; e.currentTarget.style.borderColor = C.pri + "40"; }}
-      onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = C.textMut; e.currentTarget.style.borderColor = C.border; }}
-    >
-      <I.Plus /> Add product
-    </button>
-  );
-}
-
-function SubcategoryHeader({ category, subcategory, catalogEditMode, onRenameSubcategory, onDragOver, onDrop, isDragOver }) {
-  const [draft, setDraft] = useState(subcategory);
-
-  useEffect(() => {
-    setDraft(subcategory);
-  }, [subcategory]);
-
-  const commitRename = () => {
-    const nextName = draft.trim();
-    if (!nextName || nextName === subcategory) {
-      setDraft(subcategory);
-      return;
-    }
-    onRenameSubcategory(category, subcategory, nextName);
-  };
-
-  if (!subcategory) return null;
-
-  return (
-    <div
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      style={{
-        padding: "6px 16px",
-        background: isDragOver ? C.priLt : C.bg + "80",
-        borderBottom: `1px solid ${isDragOver ? C.pri + "55" : C.borderLight}`,
-        transition: "background 0.15s, border-color 0.15s",
-      }}
-    >
-      {catalogEditMode ? (
-        <input
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onBlur={commitRename}
-          onKeyDown={e => {
-            if (e.key === "Enter") e.currentTarget.blur();
-            if (e.key === "Escape") {
-              setDraft(subcategory);
-              e.currentTarget.blur();
-            }
-          }}
-          style={{
-            width: "min(320px, 100%)",
-            padding: "4px 6px",
-            borderRadius: 7,
-            border: `1.5px solid ${C.border}`,
-            background: C.surface,
-            color: C.textSec,
-            fontSize: 11,
-            fontWeight: 800,
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
-            fontFamily: "inherit",
-            outline: "none",
-          }}
-        />
-      ) : (
-        <span style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-          {subcategory}
-        </span>
-      )}
-    </div>
-  );
-}
-
-// ─── Category Section ─────────────────────────────────────────────────────────
-
-function CategorySection({ category, subcategories, counts, isReadOnly, canEditCounts, canMarkOrdered, onCountChange, onKeyDown, inputRefs, searchQuery,
-  catalogEditMode, editingField, onEditField, onCatalogChange, onCatalogFieldsChange, catalogItems, categories, expandedEditId, onToggleExpand,
-  onDragStart, onDragOver, onDrop, onDragEnd, dragState, onToggleCatalogActive, onAddCatalogItem,
-  onOpenCatalogItem, onRenameCategory, onRenameSubcategory, onMoveCategory, categoryIndex, categoryCount,
-}) {
-  const [collapsed, setCollapsed] = useState(false);
-  const [categoryDraft, setCategoryDraft] = useState(category);
-
-  useEffect(() => {
-    setCategoryDraft(category);
-  }, [category]);
-
-  const totalItems = subcategories.reduce((sum, sub) => sum + sub.items.length, 0);
-  const categoryValue = subcategories.reduce((sum, sub) =>
-    sum + sub.items.reduce((s, item) => {
-      const count = counts[item.id];
-      const sc = count?.stock_count;
-      if (sc != null && sc !== "" && item.unit_price != null) {
-        return s + (parseInt(sc, 10) || 0) * parseFloat(item.unit_price || 0);
-      }
-      return s;
-    }, 0), 0);
-
-  const commitCategoryRename = () => {
-    const nextName = categoryDraft.trim();
-    if (!nextName || nextName === category) {
-      setCategoryDraft(category);
-      return;
-    }
-    onRenameCategory(category, nextName);
-  };
-
-  return (
-    <div id={inventorySectionId(category)} style={{ marginBottom: 12, borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)", scrollMarginTop: 72 }}>
-      {/* Category Header */}
-      <div
-        style={{
-          width: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "12px 16px",
-          background: `linear-gradient(135deg, ${C.pri}08, ${C.priLt})`,
-          border: "none",
-          borderBottom: collapsed ? "none" : `1px solid ${C.borderLight}`,
-          fontFamily: "inherit",
-          gap: 12,
-          boxSizing: "border-box",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <button
-            onClick={() => setCollapsed(!collapsed)}
-            title={collapsed ? "Expand category" : "Collapse category"}
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: 8,
-              border: `1px solid ${C.borderLight}`,
-              background: C.surface,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)",
-              transition: "transform 0.2s",
-              color: C.pri,
-            }}
-          >
-            <I.ChevronDown />
-          </button>
-          {catalogEditMode ? (
-            <input
-              value={categoryDraft}
-              onChange={e => setCategoryDraft(e.target.value)}
-              onBlur={commitCategoryRename}
-              onKeyDown={e => {
-                if (e.key === "Enter") e.currentTarget.blur();
-                if (e.key === "Escape") {
-                  setCategoryDraft(category);
-                  e.currentTarget.blur();
-                }
-              }}
-              style={{
-                minWidth: 180,
-                maxWidth: 320,
-                padding: "6px 8px",
-                borderRadius: 8,
-                border: `1.5px solid ${C.border}`,
-                background: C.surface,
-                color: C.pri,
-                fontSize: 14,
-                fontWeight: 800,
-                fontFamily: "'Outfit', sans-serif",
-                outline: "none",
-              }}
-            />
-          ) : (
-            <span style={{ fontSize: 14, fontWeight: 700, color: C.pri, fontFamily: "'Outfit', sans-serif" }}>
-              {category}
-            </span>
-          )}
-          <span style={{ fontSize: 11, color: C.textMut, fontWeight: 500 }}>
-            {totalItems} item{totalItems !== 1 ? "s" : ""}
-          </span>
-        </div>
-        {catalogEditMode ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
-            <button
-              onClick={() => onMoveCategory(category, -1)}
-              disabled={categoryIndex === 0}
-              title="Move category up"
-              style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.surface, color: categoryIndex === 0 ? C.textMut : C.textSec, cursor: categoryIndex === 0 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", transform: "rotate(180deg)", opacity: categoryIndex === 0 ? 0.4 : 1 }}
-            >
-              <I.ChevronDown />
-            </button>
-            <button
-              onClick={() => onMoveCategory(category, 1)}
-              disabled={categoryIndex === categoryCount - 1}
-              title="Move category down"
-              style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${C.borderLight}`, background: C.surface, color: categoryIndex === categoryCount - 1 ? C.textMut : C.textSec, cursor: categoryIndex === categoryCount - 1 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: categoryIndex === categoryCount - 1 ? 0.4 : 1 }}
-            >
-              <I.ChevronDown />
-            </button>
-            <button
-              onClick={() => onAddCatalogItem(category, "")}
-              title="Add product to category"
-              style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderRadius: 8, border: `1px solid ${C.pri}25`, background: C.surface, color: C.pri, fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}
-            >
-              <I.Plus /> Product
-            </button>
-          </div>
-        ) : (
-          categoryValue > 0 && (
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.suc, marginLeft: "auto" }}>
-              {fmtCurrency(categoryValue)}
-            </span>
-          )
-        )}
-      </div>
-
-      {/* Items by Subcategory */}
-      {!collapsed && subcategories.map((sub, si) => {
-        const subDropKey = `${category}\u0000${sub.name}\u0000end`;
-        const headerDropKey = `${category}\u0000${sub.name}\u0000header`;
-        const dropContext = { category, subcategory: sub.name };
-        return (
-        <div key={si}>
-          <SubcategoryHeader
-            category={category}
-            subcategory={sub.name}
-            catalogEditMode={catalogEditMode}
-            onRenameSubcategory={onRenameSubcategory}
-            onDragOver={e => onDragOver(e, { ...dropContext, dropKey: headerDropKey, position: "before" })}
-            onDrop={e => onDrop(e, { ...dropContext, position: "before" })}
-            isDragOver={dragState.overKey === headerDropKey}
-          />
-          {catalogEditMode ? (
-            <>
-              {sub.items.map((item, idx) => (
-                <EditModeItemRow
-                  key={item.id}
-                  item={item}
-                  count={counts[item.id]}
-                  editingField={editingField}
-                  onEditField={onEditField}
-                  onCatalogChange={onCatalogChange}
-                  onCatalogFieldsChange={onCatalogFieldsChange}
-                  catalogItems={catalogItems}
-                  categories={categories}
-                  expandedEditId={expandedEditId}
-                  onToggleExpand={onToggleExpand}
-                  onDragStart={onDragStart}
-                  onDragOver={onDragOver}
-                  onDrop={onDrop}
-                  onDragEnd={onDragEnd}
-                  dragOverKey={dragState.overKey}
-                  targetContext={dropContext}
-                  onToggleActive={onToggleCatalogActive}
-                  onOpenDetails={onOpenCatalogItem}
-                />
-              ))}
-              <AddItemRow
-                category={category}
-                subcategory={sub.name}
-                onAdd={onAddCatalogItem}
-                onDragOver={e => onDragOver(e, { ...dropContext, dropKey: subDropKey, position: "after" })}
-                onDrop={e => onDrop(e, { ...dropContext, position: "after" })}
-                isDragOver={dragState.overKey === subDropKey}
-              />
-            </>
-          ) : (
-            sub.items.map(item => (
-              <ItemRow
-                key={item.id}
-                item={item}
-                count={counts[item.id]}
-                isReadOnly={isReadOnly}
-                canEditCounts={canEditCounts}
-                canMarkOrdered={canMarkOrdered}
-                onChange={(field, val) => onCountChange(item.id, field, val)}
-                onKeyDown={(e) => onKeyDown(e, item.id)}
-                inputRef={el => { if (el) inputRefs.current[item.id] = el; }}
-              />
-            ))
-          )}
-        </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function InventoryColumnHeader({ catalogEditMode }) {
-  const headers = catalogEditMode ? INVENTORY_EDIT_HEADERS : INVENTORY_VIEW_HEADERS;
-  return (
-    <div className="inventory-sticky-columns" style={{
-      display: "grid",
-      gridTemplateColumns: catalogEditMode ? INVENTORY_EDIT_COLS : INVENTORY_VIEW_COLS,
-      gap: 8,
-      padding: "9px 16px",
-      marginBottom: 8,
-      background: C.surface,
-      border: `1px solid ${C.border}`,
-      borderRadius: 10,
-      boxShadow: "0 6px 18px rgba(15,23,42,0.08)",
-    }}>
-      {headers.map((h, i) => (
-        <div key={`${h}-${i}`} style={{
-          fontSize: 10,
-          fontWeight: 800,
-          color: C.textMut,
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-          textAlign: i === 0 || i === 10 ? "center" : i >= 8 ? "right" : i >= 3 ? "center" : "left",
-        }}>
-          {h}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function InventorySectionNav({ groups, counts, catalogEditMode, onAddProduct }) {
-  return (
-    <aside className="inventory-sidebar">
-      <Card style={{ padding: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: C.text, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            Sections
-          </div>
-          {catalogEditMode && (
-            <button
-              onClick={() => onAddProduct("", "")}
-              title="Add product"
-              style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${C.pri}25`, background: C.priLt, color: C.pri, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-            >
-              <I.Plus />
-            </button>
-          )}
-        </div>
-        <div style={{ display: "grid", gap: 6 }}>
-          {groups.map(({ category, subcategories }) => {
-            const items = subcategories.flatMap((sub) => sub.items);
-            const counted = items.filter((item) => {
-              const stock = counts[item.id]?.stock_count;
-              return stock !== "" && stock != null;
-            }).length;
-            const total = items.length;
-            const progress = total ? Math.round((counted / total) * 100) : 0;
-            return (
-              <button
-                key={category}
-                onClick={() => document.getElementById(inventorySectionId(category))?.scrollIntoView({ behavior: "smooth", block: "start" })}
-                style={{
-                  width: "100%",
-                  border: `1px solid ${C.borderLight}`,
-                  background: C.surface,
-                  borderRadius: 8,
-                  padding: "9px 10px",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  fontFamily: "inherit",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                  <span style={{ fontSize: 12, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{category}</span>
-                  <span style={{ fontSize: 10, fontWeight: 800, color: progress === 100 ? C.suc : C.textMut }}>{counted}/{total}</span>
-                </div>
-                <div style={{ height: 4, borderRadius: 999, background: C.bg, marginTop: 7, overflow: "hidden" }}>
-                  <div style={{ width: `${progress}%`, height: "100%", borderRadius: 999, background: progress === 100 ? C.suc : C.pri }} />
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </Card>
-    </aside>
   );
 }
 
@@ -2599,7 +1724,9 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const [expandedEditId, setExpandedEditId] = useState(null);
   const [catalogSaveStatus, setCatalogSaveStatus] = useState("idle");
   const [catalogItemSaving, setCatalogItemSaving] = useState(false);
-  const [dragState, setDragState] = useState({ draggingId: null, overKey: null });
+  const [collapsedCats, setCollapsedCats] = useState(() => new Set()); // collapsed section keys
+  const [notesOpen, setNotesOpen] = useState(() => new Set()); // item ids with the note drawer open
+  const [cellEditor, setCellEditor] = useState(null); // { itemId, group } per-column micro-editor
   const currentCycleRef = useRef(thisWeekStart);
   const catalogEditModeRef = useRef(false);
 
@@ -3349,39 +2476,32 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     void persistCatalogSortOrder(nextItems);
   }, [addGlobalToast, canEditCatalog, catalogItems, persistCatalogSortOrder]);
 
-  // ── Drag and drop reorder ──
-  const handleDragStart = useCallback((e, itemId) => {
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", itemId);
-    setDragState(prev => ({ ...prev, draggingId: itemId }));
-  }, []);
-
-  const handleDragOver = useCallback((e, target = {}) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const overKey = target.dropKey || target.targetItemId || null;
-    setDragState(prev => ({ ...prev, overKey }));
-  }, []);
-
-  const handleDrop = useCallback(async (e, target = {}) => {
-    e.preventDefault();
+  // Reliable ▲▼ item reorder (replaces drag-and-drop) — moves one step within the
+  // item's own subcategory, mirroring the Training Requirements reorder.
+  const handleMoveItem = useCallback((itemId, direction) => {
     if (!canEditCatalog) {
       addGlobalToast?.("You do not have permission to edit the inventory catalog.", "error");
-      setDragState({ draggingId: null, overKey: null });
       return;
     }
-    const draggingId = dragState.draggingId || e.dataTransfer.getData("text/plain");
-    if (!draggingId) { setDragState({ draggingId: null, overKey: null }); return; }
-    if (target.targetItemId === draggingId) { setDragState({ draggingId: null, overKey: null }); return; }
-
-    const nextItems = moveInventoryCatalogItem(catalogItems, draggingId, target);
+    const nextItems = moveInventoryCatalogItemByStep(catalogItems, itemId, direction);
     setCatalogItems(nextItems);
-    setDragState({ draggingId: null, overKey: null });
     void persistCatalogSortOrder(nextItems);
-  }, [addGlobalToast, canEditCatalog, catalogItems, dragState, persistCatalogSortOrder]);
+  }, [addGlobalToast, canEditCatalog, catalogItems, persistCatalogSortOrder]);
 
-  const handleDragEnd = useCallback(() => {
-    setDragState({ draggingId: null, overKey: null });
+  const toggleCategoryCollapse = useCallback((category) => {
+    setCollapsedCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(category)) next.delete(category); else next.add(category);
+      return next;
+    });
+  }, []);
+
+  const toggleNotes = useCallback((itemId) => {
+    setNotesOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId); else next.add(itemId);
+      return next;
+    });
   }, []);
 
   // ── Keyboard navigation ──
@@ -3750,6 +2870,211 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     restoreInventoryScrollAnchor(scrollAnchor, scrollPosition);
   }, []);
 
+  // ── Standardized dense table: columns, groups, section headers ──
+  const countReadOnly = isReadOnly || !canEditCounts;
+  const orderReadOnly = isReadOnly || !canMarkOrdered;
+
+  const deriveRow = (item) => {
+    const count = counts[item.id];
+    const stockCount = count?.stock_count ?? "";
+    const inTransit = count?.in_transit ?? "";
+    const hasFilled = stockCount !== "";
+    const toOrder = (item.par_level != null && hasFilled)
+      ? Math.max(0, (item.par_level || 0) - (parseInt(stockCount, 10) || 0) - (parseInt(inTransit, 10) || 0))
+      : "";
+    const stockValue = (hasFilled && item.unit_price != null)
+      ? (parseInt(stockCount, 10) || 0) * parseFloat(item.unit_price || 0)
+      : null;
+    return { count, stockCount, inTransit, toOrder, stockValue };
+  };
+
+  // First/last flags per item within its subcategory → bounds-disable the ▲▼.
+  const itemBounds = useMemo(() => {
+    const map = {};
+    filteredGrouped.forEach(({ subcategories }) => {
+      subcategories.forEach((sub) => {
+        sub.items.forEach((it, i) => { map[it.id] = { isFirst: i === 0, isLast: i === sub.items.length - 1 }; });
+      });
+    });
+    return map;
+  }, [filteredGrouped]);
+
+  const invArrowBtn = (disabled) => ({ width: 26, height: 26, borderRadius: 7, border: `1px solid ${C.borderLight}`, background: C.surface, color: disabled ? C.textMut : C.textSec, cursor: disabled ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: disabled ? 0.4 : 1, flexShrink: 0 });
+  const invIconBtn = { width: 26, height: 26, borderRadius: 7, border: `1px solid ${C.borderLight}`, background: C.surface, color: C.textMut, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 };
+  const glPill = { display: "inline-block", padding: "2px 7px", borderRadius: 6, background: C.infoLt, color: C.info, fontSize: 10, fontWeight: 700 };
+
+  // In Edit Catalog mode, wrap a value cell with a hover pencil → micro-editor.
+  const editableCell = (content, item, group, justify = "flex-start") => (
+    catalogEditMode ? (
+      <div className="inv-product-cell" style={{ display: "flex", alignItems: "center", justifyContent: justify, gap: 4, minWidth: 0 }}>
+        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{content}</span>
+        <InvCellPencil onClick={() => setCellEditor({ itemId: item.id, group })} title="Edit" />
+      </div>
+    ) : content
+  );
+
+  const inventoryColumns = [
+    {
+      key: "product", header: "Product", width: "minmax(0, 2.4fr)", searchable: false,
+      render: (item) => {
+        const { count } = deriveRow(item);
+        return (
+          <InvProductCell
+            item={item}
+            hasNote={!!count?.notes}
+            notesActive={notesOpen.has(item.id)}
+            onToggleNotes={() => toggleNotes(item.id)}
+            editMode={catalogEditMode}
+            onEditMeta={() => setCellEditor({ itemId: item.id, group: "product" })}
+          />
+        );
+      },
+    },
+    { key: "gl", header: "GL Code", width: 92, render: (item) => editableCell(item.gl_account ? <span style={glPill}>{item.gl_account}</span> : INV_DASH, item, "gl") },
+    { key: "par", header: "Par", width: 54, align: "center", render: (item) => editableCell(item.par_level != null ? item.par_level : INV_DASH, item, "par", "center") },
+    {
+      key: "on_hand", header: "On Hand", width: 88, align: "center",
+      render: (item) => {
+        const { count, stockCount } = deriveRow(item);
+        return (
+          <InvCountInput
+            value={stockCount} readOnly={countReadOnly} emphasizeEmpty itemId={item.id} field="stock_count"
+            title={count?.counted_by ? `Counted by ${count.counted_by} · ${fmtAuditTime(count.counted_at)}` : ""}
+            onChange={(v) => handleCountChange(item.id, "stock_count", v)}
+            onKeyDown={(e) => handleKeyDown(e, item.id)}
+            registerInput={(el) => { if (el) inputRefs.current[item.id] = el; }}
+          />
+        );
+      },
+    },
+    {
+      key: "in_transit", header: "In Transit", width: 88, align: "center",
+      render: (item) => {
+        const { inTransit } = deriveRow(item);
+        return <InvCountInput value={inTransit} readOnly={countReadOnly} itemId={item.id} field="in_transit" onChange={(v) => handleCountChange(item.id, "in_transit", v)} />;
+      },
+    },
+    {
+      key: "to_order", header: "To Order", width: 82, align: "center",
+      render: (item) => {
+        const { toOrder } = deriveRow(item);
+        if (toOrder === "") return INV_DASH;
+        return <span style={{ display: "inline-block", padding: "3px 9px", borderRadius: 8, background: toOrder > 0 ? C.warnLt : C.sucLt, color: toOrder > 0 ? C.warn : C.suc, fontSize: 12, fontWeight: 700 }}>{toOrder}</span>;
+      },
+    },
+    {
+      key: "ordered", header: "Ordered", width: 78, align: "center",
+      render: (item) => {
+        const { count, toOrder } = deriveRow(item);
+        return <InvOrderedControl count={count} toOrder={toOrder} readOnly={orderReadOnly} onChange={(field, val) => handleCountChange(item.id, field, val)} />;
+      },
+    },
+    { key: "unit_cost", header: "Unit Cost", width: 86, align: "end", render: (item) => editableCell(item.unit_price != null ? fmtCurrency(item.unit_price) : INV_DASH, item, "cost", "flex-end") },
+    {
+      key: "value", header: "Value", width: 90, align: "end",
+      render: (item) => {
+        const { stockValue } = deriveRow(item);
+        return stockValue != null ? <span style={{ fontWeight: 600, color: stockValue > 0 ? C.suc : C.textSec }}>{fmtCurrency(stockValue)}</span> : INV_DASH;
+      },
+    },
+  ];
+  if (catalogEditMode) {
+    inventoryColumns.push({
+      key: "actions", header: "", width: 118, align: "end", searchable: false,
+      render: (item) => {
+        if (item.is_active === false) {
+          return <button onClick={() => handleToggleCatalogActive(item.id, false, item.item_name)} style={invUnderlineBtn(C.info)}>Restore</button>;
+        }
+        const bounds = itemBounds[item.id] || {};
+        return (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
+            <button title="Move up" disabled={bounds.isFirst} onClick={() => handleMoveItem(item.id, "up")} style={invArrowBtn(bounds.isFirst)}><span style={{ display: "inline-flex", transform: "rotate(180deg)" }}><I.ChevronDown /></span></button>
+            <button title="Move down" disabled={bounds.isLast} onClick={() => handleMoveItem(item.id, "down")} style={invArrowBtn(bounds.isLast)}><I.ChevronDown /></button>
+            <button title="Remove product" onClick={() => handleToggleCatalogActive(item.id, true, item.item_name)} style={invIconBtn}><I.X /></button>
+          </div>
+        );
+      },
+    });
+  }
+
+  const denseGroups = useMemo(() => (
+    filteredGrouped.map(({ category, subcategories }) => {
+      const collapsed = collapsedCats.has(category);
+      return {
+        key: category,
+        category,
+        subcategories,
+        collapsed,
+        subgroups: collapsed ? [] : subcategories.map((sub) => ({
+          key: `${category} ${sub.name}`,
+          name: sub.name,
+          category,
+          rows: sub.items,
+        })),
+      };
+    })
+  ), [filteredGrouped, collapsedCats]);
+
+  const renderInventorySubHeader = (sub) => {
+    if (!sub.name) {
+      // Unsubcategorized items: no label when viewing; a quiet add affordance when editing.
+      if (!catalogEditMode) return null;
+      return (
+        <div style={{ padding: "5px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut }}>Uncategorized</span>
+          <button onClick={() => openAddCatalogItem(sub.category, "")} title="Add product" style={{ ...invIconBtn, width: 22, height: 22 }}><I.Plus /></button>
+        </div>
+      );
+    }
+    return (
+      <div style={{ padding: "5px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+        {catalogEditMode ? (
+          <InvEditableLabel value={sub.name} onCommit={(next) => handleRenameSubcategory(sub.category, sub.name, next)} style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", color: C.textMut }} />
+        ) : (
+          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut }}>{sub.name}</span>
+        )}
+        {catalogEditMode && <button onClick={() => openAddCatalogItem(sub.category, sub.name)} title="Add product to subcategory" style={{ ...invIconBtn, width: 22, height: 22 }}><I.Plus /></button>}
+      </div>
+    );
+  };
+
+  const renderInventoryGroupHeader = (group) => {
+    const { category, subcategories, collapsed } = group;
+    const items = subcategories.flatMap((s) => s.items);
+    const total = items.length;
+    const counted = items.filter((it) => { const sc = counts[it.id]?.stock_count; return sc !== "" && sc != null; }).length;
+    const progress = total ? Math.round((counted / total) * 100) : 0;
+    const value = items.reduce((sum, it) => {
+      const sc = counts[it.id]?.stock_count;
+      return (sc != null && sc !== "" && it.unit_price != null) ? sum + (parseInt(sc, 10) || 0) * parseFloat(it.unit_price || 0) : sum;
+    }, 0);
+    const catIndex = filteredGrouped.findIndex((g) => g.category === category);
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", background: `linear-gradient(135deg, ${C.pri}08, ${C.priLt})` }}>
+        <button onClick={() => toggleCategoryCollapse(category)} title={collapsed ? "Expand section" : "Collapse section"} style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${C.borderLight}`, background: C.surface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.pri, transform: collapsed ? "rotate(-90deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }}><I.ChevronDown /></button>
+        {catalogEditMode ? (
+          <InvEditableLabel value={category} onCommit={(next) => handleRenameCategory(category, next)} style={{ fontSize: 14, fontWeight: 800, color: C.pri, minWidth: 160 }} />
+        ) : (
+          <span style={{ fontSize: 14, fontWeight: 700, color: C.pri }}>{category}</span>
+        )}
+        <span style={{ fontSize: 11, color: C.textMut, fontWeight: 500 }}>{total} item{total !== 1 ? "s" : ""}</span>
+        <span style={{ fontSize: 11, fontWeight: 800, color: progress === 100 ? C.suc : C.textMut }}>{counted}/{total}</span>
+        <div style={{ width: 84, height: 5, borderRadius: 999, background: C.bg, overflow: "hidden", flexShrink: 0 }}>
+          <div style={{ width: `${progress}%`, height: "100%", borderRadius: 999, background: progress === 100 ? C.suc : C.pri }} />
+        </div>
+        <div style={{ flex: 1 }} />
+        {catalogEditMode && (
+          <>
+            <button title="Move section up" disabled={catIndex === 0} onClick={() => handleMoveCategory(category, -1)} style={invArrowBtn(catIndex === 0)}><span style={{ display: "inline-flex", transform: "rotate(180deg)" }}><I.ChevronDown /></span></button>
+            <button title="Move section down" disabled={catIndex === filteredGrouped.length - 1} onClick={() => handleMoveCategory(category, 1)} style={invArrowBtn(catIndex === filteredGrouped.length - 1)}><I.ChevronDown /></button>
+            <button onClick={() => openAddCatalogItem(category, "")} title="Add product to section" style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 9px", borderRadius: 8, border: `1px solid ${C.pri}25`, background: C.surface, color: C.pri, fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}><I.Plus /> Product</button>
+          </>
+        )}
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.suc, whiteSpace: "nowrap" }}>{fmtCurrency(value)}</span>
+      </div>
+    );
+  };
+
   // ── Render ──
   return (
     <div style={{ fontFamily: "'Outfit', -apple-system, BlinkMacSystemFont, sans-serif", background: C.bg, minHeight: "100vh", padding: "24px 20px" }}>
@@ -3757,6 +3082,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         input[type=number]::-webkit-inner-spin-button,
         input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
         input[type=number] { -moz-appearance: textfield; }
+        .inv-hover-affordance { opacity: 0; transition: opacity 0.15s; }
+        .inv-product-cell:hover .inv-hover-affordance { opacity: 0.6; }
+        .inv-product-cell:hover .inv-hover-affordance:hover { opacity: 1; }
+        .inv-hover-affordance.is-active { opacity: 1; }
       `}</style>
 
       {/* ── Page Header ── */}
@@ -4194,64 +3523,36 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             </Card>
           )}
 
-          {/* Catalog Sections */}
-          {filteredGrouped.length === 0 && search ? (
-            <Card style={{ padding: 32, textAlign: "center" }}>
-              <div style={{ fontSize: 20, marginBottom: 8 }}>🔍</div>
-              <div style={{ fontSize: 15, fontWeight: 600, color: C.textSec }}>
-                No items match "{search}"
-              </div>
-            </Card>
-          ) : (
-            <div className="inventory-workspace">
-              <InventorySectionNav
-                groups={filteredGrouped}
-                counts={counts}
-                catalogEditMode={catalogEditMode}
-                onAddProduct={openAddCatalogItem}
-              />
-              <div style={{ minWidth: 0 }}>
-                <InventoryColumnHeader catalogEditMode={catalogEditMode} />
-                {filteredGrouped.map(({ category, subcategories }, index) => (
-                  <CategorySection
-                    key={category}
-                    category={category}
-                    subcategories={subcategories}
-                    counts={counts}
-                    isReadOnly={isReadOnly}
-                    canEditCounts={canEditCounts}
-                    canMarkOrdered={canMarkOrdered}
-                    onCountChange={handleCountChange}
-                    onKeyDown={handleKeyDown}
-                    inputRefs={inputRefs}
-                    searchQuery={search}
-                    catalogEditMode={catalogEditMode}
-                    editingField={editingField}
-                    onEditField={setEditingField}
-                    onCatalogChange={handleCatalogFieldChange}
-                    onCatalogFieldsChange={handleCatalogFieldsChange}
-                    catalogItems={catalogItems}
-                    categories={allCategories}
-                    expandedEditId={expandedEditId}
-                    onToggleExpand={setExpandedEditId}
-                    onDragStart={handleDragStart}
-                    onDragOver={handleDragOver}
-                    onDrop={handleDrop}
-                    onDragEnd={handleDragEnd}
-                    dragState={dragState}
-                    onToggleCatalogActive={handleToggleCatalogActive}
-                    onAddCatalogItem={openAddCatalogItem}
-                    onOpenCatalogItem={openEditCatalogItem}
-                    onRenameCategory={handleRenameCategory}
-                    onRenameSubcategory={handleRenameSubcategory}
-                    onMoveCategory={handleMoveCategory}
-                    categoryIndex={index}
-                    categoryCount={filteredGrouped.length}
+          {/* Catalog Sections — standardized dense table (shared listSurface) */}
+          <DenseTable
+            columns={inventoryColumns}
+            groups={denseGroups}
+            getRowKey={(item) => item.id}
+            renderGroupHeader={renderInventoryGroupHeader}
+            renderSubHeader={renderInventorySubHeader}
+            isRowExpanded={(item) => notesOpen.has(item.id)}
+            renderExpansion={(item) => {
+              const count = counts[item.id];
+              return (
+                <div style={{ padding: "8px 14px" }}>
+                  <textarea
+                    value={count?.notes ?? ""}
+                    readOnly={countReadOnly}
+                    onChange={(e) => { if (!countReadOnly) handleCountChange(item.id, "notes", e.target.value); }}
+                    placeholder="Add a note for this item…"
+                    rows={2}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: countReadOnly ? C.bg : C.surface, fontSize: 12, fontFamily: "inherit", color: C.text, resize: "none", outline: "none", boxSizing: "border-box" }}
                   />
-                ))}
-              </div>
-            </div>
-          )}
+                </div>
+              );
+            }}
+            rowStyle={(item) => {
+              if (item.is_active === false) return { opacity: 0.5, background: C.bg };
+              if (counts[item.id]?.skipped) return { opacity: 0.6, background: "#FFFEF7" };
+              return null;
+            }}
+            emptyText={search ? `No items match "${search}"` : "No inventory items yet."}
+          />
 
           {/* ── Ad-hoc Items Section ── */}
           {snapshot && (
@@ -4462,6 +3763,21 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           onClose={() => setShowDepletionModal(false)}
         />
       )}
+
+      {cellEditor && (() => {
+        const item = catalogItems.find((i) => i.id === cellEditor.itemId);
+        if (!item) return null;
+        return (
+          <InventoryCellEditorModal
+            editor={cellEditor}
+            item={item}
+            categories={allCategories}
+            subcategorySuggestions={getInventorySubcategorySuggestions(catalogItems, item.category)}
+            onClose={() => setCellEditor(null)}
+            onSave={(updates) => handleCatalogFieldsChange(item.id, updates)}
+          />
+        );
+      })()}
     </div>
   );
 }

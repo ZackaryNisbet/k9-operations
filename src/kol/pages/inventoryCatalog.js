@@ -237,6 +237,35 @@ export function moveInventoryCatalogItem(items = [], itemId, target = {}) {
   }));
 }
 
+// Move an item one step up/down within its own subcategory (the reliable ▲▼
+// reorder, replacing drag-and-drop). Bounded at the ends of the subcategory:
+// stepping past either edge is a no-op (returns the items re-sort-ordered).
+export function moveInventoryCatalogItemByStep(items = [], itemId, direction) {
+  const step = direction === "up" ? -1 : 1;
+  const groups = buildInventoryCatalogGroups(items, "");
+  let siblings = null;
+  for (const group of groups) {
+    for (const sub of group.subcategories) {
+      if (sub.items.some((item) => item?.id === itemId)) { siblings = sub.items; break; }
+    }
+    if (siblings) break;
+  }
+  if (!siblings) return assignInventoryCatalogSortOrder(items);
+  const index = siblings.findIndex((item) => item?.id === itemId);
+  const swapIndex = index + step;
+  if (index < 0 || swapIndex < 0 || swapIndex >= siblings.length) {
+    return assignInventoryCatalogSortOrder(items);
+  }
+  const moving = siblings[index];
+  const neighbor = siblings[swapIndex];
+  return moveInventoryCatalogItem(items, itemId, {
+    category: moving.category,
+    subcategory: moving.subcategory,
+    targetItemId: neighbor.id,
+    position: step < 0 ? "before" : "after",
+  });
+}
+
 export function inventorySectionId(category) {
   const safe = cleanText(category).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   return `inventory-category-${safe || "uncategorized"}`;
