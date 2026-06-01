@@ -2198,9 +2198,80 @@ function fmtHistoryTime(value) {
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
+// event_at is a full timestamptz (not a date-only string), so format it from a real
+// Date — using the date-only fmtDate() here would produce "Invalid Date".
+function fmtHistoryDate(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+// Notes can carry leftover rich-text markup — show clean readable text.
+function historyPlainText(value) {
+  return String(value == null ? "" : value)
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s*\n\s*/g, "\n")
+    .trim();
+}
+
+// The heart of the page: for every row, exactly WHAT changed and WHAT it became.
+// Edits -> field diffs (old -> new); logged visits/developments -> the note + what
+// was captured; moves -> from -> to category.
+function getHistoryDetailLines(entry) {
+  const changes = getHistoryChanges(entry);
+  if (changes.length > 0) {
+    return changes.map((change) => ({ label: change.label, before: change.before, after: change.after }));
+  }
+
+  const type = entry?.event_type;
+  const after = entry?.after_snapshot && typeof entry.after_snapshot === "object" ? entry.after_snapshot : {};
+  const meta = entry?.metadata && typeof entry.metadata === "object" ? entry.metadata : {};
+
+  if (type === "development_logged" || type === "drop_logged") {
+    const lines = [];
+    const note = historyPlainText(after.notes);
+    if (note) lines.push({ label: type === "drop_logged" ? "Visit note" : "Note", value: note, multiline: true });
+    const md = after.metadata && typeof after.metadata === "object" ? after.metadata : {};
+    if (md.outcome) lines.push({ label: "Outcome", value: historyPlainText(md.outcome) });
+    if (md.person_spoken_with) lines.push({ label: "Spoke with", value: historyPlainText(md.person_spoken_with) });
+    const materials = parseGrassrootsMaterialsLeft(md.materials_left);
+    if (materials.length) lines.push({ label: "Materials", value: materials.join(", ") });
+    const followUp = after.next_contact_date || meta.next_contact_date;
+    if (followUp) lines.push({ label: "Follow-up", value: fmtDate(followUp) });
+    return lines;
+  }
+
+  if (type === "target_moved" && meta.from_category && meta.to_category) {
+    return [{
+      label: "Category",
+      before: getGrassrootsCategoryConfig(meta.from_category).label,
+      after: getGrassrootsCategoryConfig(meta.to_category).label,
+    }];
+  }
+
+  return [];
+}
+
+// A metric card matching the Training History header (label / big value / sub).
+function HistoryMetric({ label, value, sub }) {
+  return (
+    <div style={{ minWidth: 124, border: "1px solid rgba(37, 99, 235, 0.12)", borderRadius: 8, background: "linear-gradient(135deg, rgba(239, 246, 255, 0.9), #ffffff 70%)", padding: "8px 10px", boxShadow: "0 10px 24px rgba(15, 23, 42, 0.04)" }}>
+      <span style={{ display: "block", color: C.textMut, fontSize: 10.5, fontWeight: 900, lineHeight: 1, textTransform: "uppercase" }}>{label}</span>
+      <strong style={{ display: "block", marginTop: 5, color: C.info, fontSize: 22, fontWeight: 950, lineHeight: 1 }}>{value}</strong>
+      {sub ? <em style={{ display: "block", marginTop: 4, color: C.textSec, fontSize: 10.5, fontStyle: "normal", fontWeight: 760 }}>{sub}</em> : null}
+    </div>
+  );
+}
+
 // One row in the Marketing History table: When · Category · Action · Row / Change · Person.
 function MarketingHistoryRow({ entry }) {
-  const changes = getHistoryChanges(entry);
+  const detail = getHistoryDetailLines(entry);
   const categoryLabel = getGrassrootsCategoryConfig(entry.category).label;
   const ts = entry.event_at || entry.created_at;
   return (
@@ -2210,22 +2281,36 @@ function MarketingHistoryRow({ entry }) {
       onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
     >
       <td style={{ ...HISTORY_TD_SECONDARY, whiteSpace: "nowrap" }}>
-        <div style={{ color: C.text, fontWeight: 800 }}>{fmtDate(ts)}</div>
+        <div style={{ color: C.text, fontWeight: 800 }}>{fmtHistoryDate(ts)}</div>
         <div style={{ fontSize: 11, color: C.textMut, fontWeight: 600 }}>{fmtHistoryTime(ts)}</div>
       </td>
       <td style={{ ...HISTORY_TD, whiteSpace: "nowrap" }}>{categoryLabel}</td>
       <td style={{ ...HISTORY_TD, whiteSpace: "nowrap" }}>{historyEventLabel(entry.event_type)}</td>
       <td style={{ ...HISTORY_TD_SECONDARY, minWidth: 280 }}>
         <div style={{ color: C.text, fontWeight: 800 }}>{entry.target_name || "Untitled row"}</div>
-        {changes.length > 0 && (
-          <div style={{ marginTop: 5, display: "grid", gap: 3 }}>
-            {changes.map((change) => (
-              <div key={change.label} style={{ fontSize: 11.5, color: C.textMut, lineHeight: 1.4 }}>
-                <span style={{ fontWeight: 800, color: C.textSec }}>{change.label}:</span>{" "}
-                {change.before !== "None" && (
-                  <><span style={{ textDecoration: "line-through", opacity: 0.6 }}>{change.before}</span>{" → "}</>
+        {detail.length > 0 && (
+          <div style={{ marginTop: 5, display: "grid", gap: 4, maxWidth: 560 }}>
+            {detail.map((line, index) => (
+              <div key={`${line.label}-${index}`} style={{ fontSize: 11.5, color: C.textMut, lineHeight: 1.45, wordBreak: "break-word" }}>
+                {"before" in line ? (
+                  <>
+                    <span style={{ fontWeight: 800, color: C.textSec }}>{line.label}:</span>{" "}
+                    {line.before && line.before !== "None" && (
+                      <><span style={{ textDecoration: "line-through", opacity: 0.6 }}>{line.before}</span>{" → "}</>
+                    )}
+                    <span style={{ color: C.text, fontWeight: 700 }}>{line.after}</span>
+                  </>
+                ) : line.multiline ? (
+                  <>
+                    <span style={{ fontWeight: 800, color: C.textSec }}>{line.label}</span>
+                    <div style={{ marginTop: 1, color: C.text, fontWeight: 600, whiteSpace: "pre-wrap", display: "-webkit-box", WebkitLineClamp: 6, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{line.value}</div>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ fontWeight: 800, color: C.textSec }}>{line.label}:</span>{" "}
+                    <span style={{ color: C.text, fontWeight: 700 }}>{line.value}</span>
+                  </>
                 )}
-                <span style={{ color: C.text, fontWeight: 700 }}>{change.after}</span>
               </div>
             ))}
           </div>
@@ -2266,16 +2351,21 @@ function MarketingHistoryView({ history, search, categoryFilter, onCategoryFilte
   const capped = useMemo(() => filtered.slice(0, HISTORY_RENDER_CAP), [filtered]);
   const hiddenCount = filtered.length - capped.length;
   const totalCount = sorted.length;
+  const peopleCount = Math.max(0, actorOptions.length - 1);
   const filterCount = (categoryFilter && categoryFilter !== "all" ? 1 : 0) + (actorFilter && actorFilter !== "all" ? 1 : 0);
 
   return (
     <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap", padding: "16px 18px", borderBottom: `1px solid ${C.borderLight}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap", padding: "16px 18px", borderBottom: `1px solid ${C.borderLight}` }}>
         <div>
           <div style={{ fontSize: 18, fontWeight: 900, color: C.text }}>Marketing History</div>
-          <div style={{ marginTop: 4, fontSize: 12, color: C.textMut, fontWeight: 700 }}>Create, edit, move, delete, and logged-visit activity across all marketing categories.</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: C.textMut, fontWeight: 700 }}>Who changed what, and what it changed to — across all marketing categories.</div>
         </div>
-        <Badge color={filtered.length > 0 ? "info" : "default"}>{filtered.length} shown</Badge>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+          <HistoryMetric label="Changes" value={totalCount} sub="recorded" />
+          <HistoryMetric label="People" value={peopleCount} sub="contributors" />
+          <Badge color={filtered.length > 0 ? "info" : "default"}>{filtered.length} shown</Badge>
+        </div>
       </div>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12, flexWrap: "wrap", padding: "12px 18px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
