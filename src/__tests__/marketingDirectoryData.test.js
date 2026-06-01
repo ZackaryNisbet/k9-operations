@@ -12,7 +12,9 @@ import {
   countDirectoryPairedTargets,
   getDirectoryLastInteractedAt,
   diffDirectoryPeople,
+  isValidDirectoryEmail,
   makeOrgDraftFromIndividual,
+  normalizeWebsiteUrl,
   filterDirectoryEntries,
   formatDirectoryFileSize,
   getDirectoryAttachmentPreviewKind,
@@ -324,6 +326,22 @@ describe("makeOrgDraftFromIndividual", () => {
     expect(draft.email).toBe("g@awanj.org");
     expect(draft.grassroots_target_id).toBe(TGT_A);
     expect(draft.notes).toBe("Organizer");
+  });
+});
+
+describe("field validation/normalization", () => {
+  it("adds https:// to bare domains, leaves URLs + non-domains alone", () => {
+    expect(normalizeWebsiteUrl("acme.com")).toBe("https://acme.com");
+    expect(normalizeWebsiteUrl("http://acme.com")).toBe("http://acme.com");
+    expect(normalizeWebsiteUrl("https://acme.com/x")).toBe("https://acme.com/x");
+    expect(normalizeWebsiteUrl("just text")).toBe("just text");
+    expect(normalizeWebsiteUrl("")).toBe("");
+  });
+  it("allows empty email, validates shape otherwise", () => {
+    expect(isValidDirectoryEmail("")).toBe(true);
+    expect(isValidDirectoryEmail("a@b.co")).toBe(true);
+    expect(isValidDirectoryEmail("nope")).toBe(false);
+    expect(isValidDirectoryEmail("a@b")).toBe(false);
   });
 });
 
