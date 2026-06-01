@@ -7,10 +7,13 @@ import {
   getInventoryCategorySuggestions,
   getInventorySubcategorySuggestions,
   moveInventoryCatalogItem,
+  moveInventoryCatalogItemByStep,
   moveInventoryCategory,
   normalizeInventoryVendorUrl,
   renameInventorySubcategory,
 } from "../kol/pages/inventoryCatalog";
+
+const orderIds = (items) => [...items].sort((a, b) => a.sort_order - b.sort_order).map((i) => i.id);
 
 const catalog = [
   { id: "a", item_name: "Disinfectant", category: "Cleaning", subcategory: "Chemicals", sort_order: 20 },
@@ -89,5 +92,33 @@ describe("inventory catalog helpers", () => {
     expect(getInventoryVendorHref("//amazon.com/foo")).toBe("//amazon.com/foo");
     expect(getInventoryVendorHref("javascript:alert(1)")).toBe("");
     expect(getInventoryVendorHref("not a url")).toBe("");
+  });
+});
+
+describe("moveInventoryCatalogItemByStep (▲▼ reorder)", () => {
+  const seq = [
+    { id: "x1", item_name: "One", category: "Food", subcategory: "Dry", sort_order: 10 },
+    { id: "x2", item_name: "Two", category: "Food", subcategory: "Dry", sort_order: 20 },
+    { id: "x3", item_name: "Three", category: "Food", subcategory: "Dry", sort_order: 30 },
+  ];
+
+  it("moves an item up by swapping with its previous sibling", () => {
+    expect(orderIds(moveInventoryCatalogItemByStep(seq, "x2", "up"))).toEqual(["x2", "x1", "x3"]);
+  });
+
+  it("moves an item down by swapping with its next sibling", () => {
+    expect(orderIds(moveInventoryCatalogItemByStep(seq, "x1", "down"))).toEqual(["x2", "x1", "x3"]);
+  });
+
+  it("is a no-op at the boundaries of the subcategory", () => {
+    expect(orderIds(moveInventoryCatalogItemByStep(seq, "x1", "up"))).toEqual(["x1", "x2", "x3"]);
+    expect(orderIds(moveInventoryCatalogItemByStep(seq, "x3", "down"))).toEqual(["x1", "x2", "x3"]);
+  });
+
+  it("keeps the item in its own subcategory and renumbers sort_order", () => {
+    const moved = moveInventoryCatalogItemByStep(seq, "x3", "up");
+    expect(orderIds(moved)).toEqual(["x1", "x3", "x2"]);
+    expect(moved.find((i) => i.id === "x3")).toMatchObject({ category: "Food", subcategory: "Dry" });
+    expect(moved.every((i) => i.sort_order % 10 === 0)).toBe(true);
   });
 });
