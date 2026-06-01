@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Btn, CalendarPicker, Card, Modal } from "../../shared/ui";
+import { Badge, Btn, CalendarPicker, Card, Modal } from "../../shared/ui";
 import { hasLeanPermission } from "../../shared/permissions";
 import {
   GRASSROOTS_CATEGORY_CONFIGS,
@@ -2186,6 +2186,9 @@ function FilterIcon() {
   );
 }
 
+// Standardized history row — matches the shared HistoryFeed pattern: a semantic
+// <Badge> event chip, a natural-language summary (+ optional category suffix and
+// field-level change lines), and a right-aligned time.
 function HistoryList({ items, emptyText = "No history yet.", showCategory = false }) {
   const rows = [...(items || [])].sort(compareGrassrootsHistoryDesc);
   if (rows.length === 0) {
@@ -2193,46 +2196,34 @@ function HistoryList({ items, emptyText = "No history yet.", showCategory = fals
   }
 
   return (
-    <div style={{ display: "grid", gap: 8 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {rows.map((entry) => {
         const changes = getHistoryChanges(entry);
-        const categoryConfig = showCategory ? getGrassrootsCategoryConfig(entry.category) : null;
+        const categoryLabel = showCategory ? getGrassrootsCategoryConfig(entry.category).label : null;
         return (
-          <div key={entry.id} style={{ display: "grid", gridTemplateColumns: "132px minmax(0, 1fr) 190px", gap: 10, alignItems: "start", fontSize: 12 }}>
-            <div style={{ display: "inline-flex", width: "fit-content", padding: "4px 8px", borderRadius: 8, background: C.priLt, color: C.pri, fontWeight: 900 }}>
-              {historyEventLabel(entry.event_type)}
-            </div>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ color: C.text, fontWeight: 800, lineHeight: 1.4, wordBreak: "break-word" }}>
-                {entry.summary || historyEventLabel(entry.event_type)}
-              </div>
-              <div style={{ marginTop: 3, color: C.textMut, lineHeight: 1.35, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                {showCategory && (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 800, color: C.textSec }}>
-                    <span style={{ width: 7, height: 7, borderRadius: 999, background: historyCategoryColor(entry.category), flexShrink: 0 }} />
-                    {categoryConfig.label}
-                  </span>
-                )}
-                {showCategory && <span style={{ color: C.border }}>·</span>}
-                <span style={{ fontWeight: 700, color: C.textSec }}>{entry.target_name || "Untitled row"}</span>
-                <span style={{ color: C.border }}>·</span>
-                <span>{historyActorName(entry)}</span>
+          <div key={entry.id} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "10px 14px", border: `1px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+            <Badge size="sm" color={historyEventBadgeColor(entry.event_type)}>{historyEventLabel(entry.event_type)}</Badge>
+            <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: C.text, lineHeight: 1.45 }}>
+              <div style={{ wordBreak: "break-word" }}>
+                {summarizeMarketingHistoryEntry(entry)}
+                {categoryLabel && <span style={{ color: C.textMut }}> · {categoryLabel}</span>}
               </div>
               {changes.length > 0 && (
-                <div className="grassroots-history-change-list">
+                <div style={{ marginTop: 4, display: "grid", gap: 2, fontSize: 12, color: C.textMut }}>
                   {changes.map((change) => (
-                    <div key={change.label} className="grassroots-history-change-row">
-                      <strong>{change.label}</strong>
-                      <span>{change.before}</span>
-                      <em>to</em>
-                      <span>{change.after}</span>
+                    <div key={change.label} style={{ wordBreak: "break-word" }}>
+                      <span style={{ fontWeight: 700, color: C.textSec }}>{change.label}:</span>{" "}
+                      {change.before !== "None" && (
+                        <><span style={{ textDecoration: "line-through", opacity: 0.6 }}>{change.before}</span>{" → "}</>
+                      )}
+                      <span style={{ color: C.text }}>{change.after}</span>
                     </div>
                   ))}
                 </div>
               )}
             </div>
-            <div style={{ color: C.textMut, fontWeight: 800, textAlign: "right" }}>
-              {fmtDateTime(entry.event_at || entry.created_at)}
+            <div style={{ fontSize: 12, color: C.textMut, flexShrink: 0, whiteSpace: "nowrap" }}>
+              {fmtHistoryTime(entry.event_at || entry.created_at)}
             </div>
           </div>
         );
@@ -2241,23 +2232,54 @@ function HistoryList({ items, emptyText = "No history yet.", showCategory = fals
   );
 }
 
-function historyLocalDayKey(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+// Map each tracker event type onto a shared Badge semantic color.
+const HISTORY_EVENT_BADGE_COLOR = {
+  target_created: "success",
+  target_updated: "info",
+  target_moved: "warning",
+  target_deleted: "danger",
+  development_logged: "primary",
+  drop_logged: "primary",
+  development_updated: "info",
+  drop_updated: "info",
+};
+
+function historyEventBadgeColor(eventType) {
+  return HISTORY_EVENT_BADGE_COLOR[eventType] || "default";
 }
 
-function historyDayLabel(dayKey, todayKey, yesterdayKey) {
+// Past-tense verb phrase per event type, for a natural-language row summary.
+const HISTORY_EVENT_VERB = {
+  target_created: "added",
+  target_updated: "edited",
+  target_moved: "moved",
+  target_deleted: "deleted",
+  development_logged: "logged development for",
+  drop_logged: "logged a visit to",
+  development_updated: "edited development for",
+  drop_updated: "edited a visit for",
+};
+
+function summarizeMarketingHistoryEntry(entry) {
+  const who = historyActorName(entry);
+  const name = (entry?.target_name || "").trim() || "a record";
+  const verb = HISTORY_EVENT_VERB[entry?.event_type] || "changed";
+  return `${who} ${verb} ${name}`;
+}
+
+// Full-date day heading, e.g. "Sunday, May 31, 2026" (matches the shared feed).
+function historyDayHeading(dayKey) {
   if (!dayKey) return "Earlier";
-  if (dayKey === todayKey) return "Today";
-  if (dayKey === yesterdayKey) return "Yesterday";
-  return new Date(`${dayKey}T12:00:00`).toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  const date = new Date(`${dayKey}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return dayKey;
+  return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+}
+
+function fmtHistoryTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
 const HISTORY_RENDER_CAP = 400;
@@ -2284,12 +2306,6 @@ function MarketingHistoryView({ history, search, categoryFilter, onCategoryFilte
   const hiddenCount = filtered.length - capped.length;
   const totalCount = (history || []).length;
 
-  const now = new Date();
-  const todayKey = historyLocalDayKey(now);
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayKey = historyLocalDayKey(yesterday);
-
   const pills = [
     { key: "all", label: "All", color: C.text, count: totalCount },
     ...GRASSROOTS_CATEGORY_CONFIGS
@@ -2303,90 +2319,71 @@ function MarketingHistoryView({ history, search, categoryFilter, onCategoryFilte
   ];
 
   return (
-    <Card style={{ padding: 0, borderRadius: 14, overflow: "hidden" }}>
-      <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 900, color: C.text }}>Activity history</div>
-            <div style={{ fontSize: 12, color: C.textMut, marginTop: 2 }}>
-              Every create, edit, move, delete, and logged visit across all marketing categories.
-            </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {pills.length > 1 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {pills.map((pill) => {
+            const on = (categoryFilter || "all") === pill.key;
+            return (
+              <button
+                key={pill.key}
+                onClick={() => onCategoryFilter(pill.key)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  border: `1.5px solid ${on ? C.pri : C.border}`,
+                  background: on ? C.pri : "transparent",
+                  color: on ? "#fff" : C.textSec,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {pill.key !== "all" && (
+                  <span style={{ width: 7, height: 7, borderRadius: 999, background: on ? "#fff" : pill.color, flexShrink: 0 }} />
+                )}
+                {pill.label}
+                <span style={{ fontWeight: 800, opacity: on ? 0.9 : 0.55 }}>{pill.count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {groups.length === 0 ? (
+        <div style={{ padding: "56px 24px", textAlign: "center", color: C.textMut }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
+            {totalCount === 0 ? "No changes recorded yet" : "No changes match your filters"}
           </div>
-          <div style={{ fontSize: 12, fontWeight: 800, color: C.textMut, whiteSpace: "nowrap" }}>
-            {filtered.length} {filtered.length === 1 ? "entry" : "entries"}
+          <div style={{ fontSize: 12.5, marginTop: 4 }}>
+            {totalCount === 0
+              ? "Adds, edits, moves, and logged visits will show up here as your team works the tracker."
+              : "Try a different category or clear the search."}
           </div>
         </div>
-        {pills.length > 1 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
-            {pills.map((pill) => {
-              const on = (categoryFilter || "all") === pill.key;
-              return (
-                <button
-                  key={pill.key}
-                  onClick={() => onCategoryFilter(pill.key)}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "4px 10px",
-                    borderRadius: 999,
-                    border: `1.5px solid ${on ? C.pri : C.border}`,
-                    background: on ? C.pri : "transparent",
-                    color: on ? "#fff" : C.textSec,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {pill.key !== "all" && (
-                    <span style={{ width: 7, height: 7, borderRadius: 999, background: on ? "#fff" : pill.color, flexShrink: 0 }} />
-                  )}
-                  {pill.label}
-                  <span style={{ fontWeight: 800, opacity: on ? 0.9 : 0.55 }}>{pill.count}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <div style={{ padding: 16 }}>
-        {groups.length === 0 ? (
-          <div style={{ padding: "28px 8px", textAlign: "center" }}>
-            <div style={{ fontSize: 14, fontWeight: 800, color: C.text }}>
-              {totalCount === 0 ? "No history yet" : "No changes match your filters"}
-            </div>
-            <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>
-              {totalCount === 0
-                ? "Edits, moves, and logged visits will appear here as your team works the tracker."
-                : "Try a different category or clear the search."}
-            </div>
-          </div>
-        ) : (
-          <div style={{ display: "grid", gap: 18 }}>
-            {groups.map((group) => (
-              <div key={group.dayKey || "unknown"}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                  <div style={{ fontSize: 11, fontWeight: 900, color: C.pri, textTransform: "uppercase", letterSpacing: "0.06em", whiteSpace: "nowrap" }}>
-                    {historyDayLabel(group.dayKey, todayKey, yesterdayKey)}
-                  </div>
-                  <div style={{ flex: 1, height: 1, background: C.borderLight }} />
-                  <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut }}>{group.entries.length}</div>
-                </div>
-                <HistoryList items={group.entries} showCategory />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+          {groups.map((group) => (
+            <div key={group.dayKey || "unknown"}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>
+                {historyDayHeading(group.dayKey)}
               </div>
-            ))}
-            {hiddenCount > 0 && (
-              <div style={{ textAlign: "center", fontSize: 12, color: C.textMut, fontWeight: 700, paddingTop: 4 }}>
-                Showing the {HISTORY_RENDER_CAP} most recent changes · {hiddenCount} older {hiddenCount === 1 ? "entry" : "entries"} hidden. Filter by category or search to narrow.
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </Card>
+              <HistoryList items={group.entries} showCategory />
+            </div>
+          ))}
+          {hiddenCount > 0 && (
+            <div style={{ textAlign: "center", fontSize: 12, color: C.textMut, fontWeight: 600, paddingTop: 4 }}>
+              Showing the {HISTORY_RENDER_CAP} most recent changes · {hiddenCount} older {hiddenCount === 1 ? "entry" : "entries"} hidden. Filter by category or search to narrow.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
