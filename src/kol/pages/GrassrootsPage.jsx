@@ -73,6 +73,7 @@ import {
   cleanGooglePlaceBusinessLabel,
 } from "../grassrootsAddress";
 import { normalizeOptionalUuid } from "../trainingData";
+import { ensureDirectoryOrgByName, fetchDirectoryOrgNames } from "../marketingDirectorySync";
 
 const INPUT_STYLE = {
   width: "100%",
@@ -3880,11 +3881,14 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [followUpSortDirection, setFollowUpSortDirection] = useState(null);
   const [costSortDirection, setCostSortDirection] = useState(null);
   const [targets, setTargets] = useState([]);
+  // Directory org names suggested in the organizer field (tracker ↔ directory sync).
+  const [directoryOrgNames, setDirectoryOrgNames] = useState([]);
   const organizerOptions = useMemo(() => {
     const set = new Set();
     targets.forEach((t) => { const o = String(t.organizer || "").trim(); if (o) set.add(o); });
+    directoryOrgNames.forEach((name) => { if (name) set.add(name); });
     return [...set].sort((a, b) => a.localeCompare(b));
-  }, [targets]);
+  }, [targets, directoryOrgNames]);
   const [activities, setActivities] = useState([]);
   const [activityAttachments, setActivityAttachments] = useState([]);
   const [attachmentsSchemaMissing, setAttachmentsSchemaMissing] = useState(false);
@@ -4221,6 +4225,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   useEffect(() => {
     loadGrassroots();
   }, [loadGrassroots]);
+
+  useEffect(() => { fetchDirectoryOrgNames(locationId).then(setDirectoryOrgNames); }, [locationId]);
 
   useEffect(() => () => {
     if (freshTargetTimer.current) window.clearTimeout(freshTargetTimer.current);
@@ -4593,6 +4599,9 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     if (error) throw error;
     setTargets((prev) => [data, ...prev]);
     markFreshTarget(data.id);
+    // Mirror the visited business into the Marketing Directory (best-effort).
+    ensureDirectoryOrgByName({ locationId, name: data.name, actor, orgType: data.business_category || data.drop_category || "Business", grassrootsTargetId: data.id, address: data.address || "", phone: data.contact_phone || "", email: data.contact_email || "" });
+    fetchDirectoryOrgNames(locationId).then(setDirectoryOrgNames);
     return data;
   };
 
@@ -4692,6 +4701,11 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     closeEditor();
     await loadGrassroots();
     if (draft.isDraft) markFreshTarget(data.id);
+    // Mirror an event's organizer into the Marketing Directory (best-effort).
+    if (isEventDraft && String(draft.organizer || "").trim()) {
+      ensureDirectoryOrgByName({ locationId, name: draft.organizer, actor, orgType: "Community Org", grassrootsTargetId: data.id });
+      fetchDirectoryOrgNames(locationId).then(setDirectoryOrgNames);
+    }
     setSaveState("saved");
     window.setTimeout(() => setSaveState("idle"), 1200);
     toast("Grassroots row saved");
