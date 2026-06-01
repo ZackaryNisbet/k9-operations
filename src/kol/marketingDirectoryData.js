@@ -225,6 +225,40 @@ export function buildGrassrootsTargetWriteback(org = {}) {
   return payload;
 }
 
+// Diff the org editor's inline people rows against the org's current contacts to
+// figure out what to insert / update / delete on save. A row counts as a real
+// person once it has a first or last name; an existing contact that's been removed
+// (or had its name cleared) lands in toDeleteIds.
+export function diffDirectoryPeople(originalContacts = [], peopleRows = []) {
+  const hasName = (row) => Boolean(normalizeText(row?.first_name) || normalizeText(row?.last_name));
+  const kept = (peopleRows || []).filter(hasName);
+  const keptIds = new Set(kept.map((row) => normalizeUuid(row.id)).filter(Boolean));
+  return {
+    toInsert: kept.filter((row) => !normalizeUuid(row.id)),
+    toUpdate: kept.filter((row) => normalizeUuid(row.id)),
+    toDeleteIds: (originalContacts || [])
+      .map((contact) => normalizeUuid(contact.id))
+      .filter(Boolean)
+      .filter((id) => !keptIds.has(id)),
+  };
+}
+
+// Build an organization draft from a standalone individual (so an imported
+// organizer that's really a company can be promoted and then hold people). The
+// person's name is recombined; their contact info + tracker link carry over.
+export function makeOrgDraftFromIndividual(contact = {}, locationId = "") {
+  return {
+    ...makeBlankDirectoryOrg(locationId),
+    isDraft: true,
+    name: normalizeText([contact.first_name, contact.last_name].filter(Boolean).join(" ")) || getDirectoryContactName(contact),
+    phone: normalizeText(contact.phone),
+    email: normalizeText(contact.email),
+    notes: stringValue(contact.notes),
+    grassroots_target_id: normalizeUuid(contact.grassroots_target_id) || "",
+    org_type: normalizeText(contact.details?.org_type) || "",
+  };
+}
+
 // ─── Attachment helpers (mirror the grassroots attachment helpers) ──────────
 export function isHeicFile(file = {}) {
   const type = stringValue(file?.type).toLowerCase();

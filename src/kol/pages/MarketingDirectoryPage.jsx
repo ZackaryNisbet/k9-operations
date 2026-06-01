@@ -39,6 +39,8 @@ import {
   buildDirectoryImportCandidates,
   buildDirectoryOrgPayload,
   buildGrassrootsTargetWriteback,
+  diffDirectoryPeople,
+  makeOrgDraftFromIndividual,
   filterDirectoryEntries,
   formatDirectoryFileSize,
   getDirectoryAttachmentPreviewKind,
@@ -92,6 +94,36 @@ const LABEL_STYLE = {
   marginBottom: 4,
   letterSpacing: "0.03em",
   textTransform: "uppercase",
+};
+
+const INLINE_INPUT = {
+  flex: 1,
+  minWidth: 0,
+  width: "100%",
+  padding: "7px 10px",
+  border: `1.5px solid ${C.border}`,
+  borderRadius: 8,
+  fontSize: 13,
+  fontFamily: "inherit",
+  color: C.text,
+  background: C.surface,
+  outline: "none",
+  boxSizing: "border-box",
+};
+
+const ICON_BTN_SM = {
+  border: `1px solid ${C.border}`,
+  background: C.surface,
+  borderRadius: 8,
+  cursor: "pointer",
+  color: C.textMut,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 32,
+  height: 32,
+  padding: 0,
+  flexShrink: 0,
 };
 
 // Icons in ../../shared/icons are fixed-size, prop-less SVGs. Glyph wraps one so a
@@ -194,6 +226,11 @@ function DirectoryEditorModal({
   onClearCard,
   onPickFiles,
   onRemoveStagedFile,
+  people,
+  onAddPerson,
+  onChangePerson,
+  onRemovePerson,
+  onConvertToOrg,
 }) {
   const isOrg = mode === "org";
   const cardInputRef = useRef(null);
@@ -202,6 +239,7 @@ function DirectoryEditorModal({
   const existingFiles = (existingAttachments || []).filter((att) => att.attachment_type !== "business_card");
   const title = draft.isDraft ? (isOrg ? "Add organization" : "Add contact") : (isOrg ? "Edit organization" : "Edit contact");
   const canSave = isOrg ? Boolean(String(draft.name || "").trim()) : Boolean(String(draft.first_name || "").trim() || String(draft.last_name || "").trim());
+  const canConvert = !isOrg && !draft.isDraft;
 
   return (
     <Modal title={title} onClose={onClose} wide>
@@ -225,6 +263,34 @@ function DirectoryEditorModal({
               <Inp label="City" value={draft.address_city} onChange={(v) => onChange("address_city", v)} />
               <Inp label="State" value={draft.address_state} onChange={(v) => onChange("address_state", v)} />
               <Inp label="ZIP" value={draft.address_postal_code} onChange={(v) => onChange("address_postal_code", v)} />
+            </div>
+
+            {/* People — add as many contacts at this organization as needed */}
+            <div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={LABEL_STYLE}>People{people.length ? ` (${people.length})` : ""}</span>
+                <Btn variant="secondary" size="sm" icon={<Glyph icon={I.Plus} size={13} />} onClick={onAddPerson} style={{ padding: "4px 10px" }}>Add person</Btn>
+              </div>
+              {people.length === 0 ? (
+                <div style={{ fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No people yet — add the contacts who work at this organization.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {people.map((p, i) => (
+                    <div key={p._key || p.id || i} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 10, background: C.surfaceHover, display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <input placeholder="First name" value={p.first_name || ""} onChange={(e) => onChangePerson(i, "first_name", e.target.value)} style={INLINE_INPUT} />
+                        <input placeholder="Last name" value={p.last_name || ""} onChange={(e) => onChangePerson(i, "last_name", e.target.value)} style={INLINE_INPUT} />
+                        <button type="button" onClick={() => onRemovePerson(i)} title="Remove person" style={ICON_BTN_SM}><Glyph icon={I.Trash} size={13} /></button>
+                      </div>
+                      <input placeholder="Title / role" value={p.title || ""} onChange={(e) => onChangePerson(i, "title", e.target.value)} style={INLINE_INPUT} />
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input placeholder="Email" value={p.email || ""} onChange={(e) => onChangePerson(i, "email", e.target.value)} style={INLINE_INPUT} />
+                        <input placeholder="Phone" value={p.phone || ""} onChange={(e) => onChangePerson(i, "phone", e.target.value)} style={INLINE_INPUT} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </>
         ) : (
@@ -281,9 +347,14 @@ function DirectoryEditorModal({
           </div>
         ) : null}
 
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, borderTop: `1px solid ${C.borderLight}`, paddingTop: 16 }}>
-          <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancel</Btn>
-          <Btn variant="primary" onClick={onSave} disabled={saving || !canSave} icon={saving ? null : <Glyph icon={I.Check} size={15} />}>{saving ? "Saving…" : "Save"}</Btn>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, borderTop: `1px solid ${C.borderLight}`, paddingTop: 16 }}>
+          <div>
+            {canConvert ? <Btn variant="secondary" onClick={onConvertToOrg} disabled={saving}>Convert to organization</Btn> : null}
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancel</Btn>
+            <Btn variant="primary" onClick={onSave} disabled={saving || !canSave} icon={saving ? null : <Glyph icon={I.Check} size={15} />}>{saving ? "Saving…" : "Save"}</Btn>
+          </div>
         </div>
       </div>
     </Modal>
@@ -427,6 +498,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   const [editor, setEditor] = useState(null); // { mode, draft }
   const [stagedCard, setStagedCard] = useState(null);
   const [stagedFiles, setStagedFiles] = useState([]);
+  const [editorPeople, setEditorPeople] = useState([]);
   const [saving, setSaving] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [preview, setPreview] = useState(null); // { attachment, url, loading }
@@ -490,10 +562,19 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   }), []);
 
   // ── editor lifecycle ──
-  const openOrgEditor = (org) => { setStagedCard(null); setStagedFiles([]); setEditor({ mode: "org", draft: org ? { ...org, isDraft: false } : makeBlankDirectoryOrg(locationId) }); };
-  const openContactEditor = (contact, orgId = null) => { setStagedCard(null); setStagedFiles([]); setEditor({ mode: "contact", draft: contact ? { ...contact, isDraft: false } : makeBlankDirectoryContact(locationId, orgId) }); };
-  const closeEditor = () => { setEditor(null); setStagedCard(null); setStagedFiles([]); };
+  const openOrgEditor = (org) => {
+    setStagedCard(null); setStagedFiles([]);
+    setEditorPeople(org
+      ? contacts.filter((c) => c.org_id === org.id).map((c) => ({ id: c.id, first_name: c.first_name || "", last_name: c.last_name || "", title: c.title || "", email: c.email || "", phone: c.phone || "" }))
+      : []);
+    setEditor({ mode: "org", draft: org ? { ...org, isDraft: false } : makeBlankDirectoryOrg(locationId) });
+  };
+  const openContactEditor = (contact, orgId = null) => { setStagedCard(null); setStagedFiles([]); setEditorPeople([]); setEditor({ mode: "contact", draft: contact ? { ...contact, isDraft: false } : makeBlankDirectoryContact(locationId, orgId) }); };
+  const closeEditor = () => { setEditor(null); setStagedCard(null); setStagedFiles([]); setEditorPeople([]); };
   const updateDraft = (key, value) => setEditor((prev) => (prev ? { ...prev, draft: { ...prev.draft, [key]: value } } : prev));
+  const addPerson = () => setEditorPeople((prev) => [...prev, { _key: `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`, first_name: "", last_name: "", title: "", email: "", phone: "" }]);
+  const changePerson = (index, key, value) => setEditorPeople((prev) => prev.map((p, i) => (i === index ? { ...p, [key]: value } : p)));
+  const removePerson = (index) => setEditorPeople((prev) => prev.filter((_, i) => i !== index));
 
   const pickStagedFiles = (fileList) => {
     const { acceptedFiles, errors } = validateDirectoryAttachmentFiles([...stagedFiles, ...Array.from(fileList || [])]);
@@ -563,6 +644,21 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
             if (wbError) console.warn("Tracker write-back skipped:", wbError.message);
           }
         }
+        // Persist the inline People list: insert new, update edited, delete removed.
+        const originalPeople = draft.isDraft ? [] : contacts.filter((c) => c.org_id === entityId);
+        const { toInsert, toUpdate, toDeleteIds } = diffDirectoryPeople(originalPeople, editorPeople);
+        for (const row of toInsert) {
+          const { error } = await supabase.from("marketing_directory_contacts").insert(buildDirectoryContactPayload({ ...row, org_id: entityId, isDraft: true }, locationId, actor));
+          if (error) throw error;
+        }
+        for (const row of toUpdate) {
+          const { error } = await supabase.from("marketing_directory_contacts").update(buildDirectoryContactPayload({ ...row, org_id: entityId, isDraft: false }, locationId, actor)).eq("id", row.id);
+          if (error) throw error;
+        }
+        if (toDeleteIds.length) {
+          const { error } = await supabase.from("marketing_directory_contacts").delete().in("id", toDeleteIds);
+          if (error) throw error;
+        }
       } else {
         const payload = buildDirectoryContactPayload(draft, locationId, actor);
         if (draft.isDraft) {
@@ -613,6 +709,29 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
     if (error) { toast(error.message || "Failed to delete contact", "error"); return; }
     await loadDirectory();
     toast("Contact deleted");
+  };
+
+  // Promote a standalone individual into an organization (so it can hold people).
+  const convertToOrg = async (contact) => {
+    if (!contact?.id || !locationId) return;
+    if (typeof window !== "undefined" && !window.confirm(`Convert “${getDirectoryContactName(contact)}” into an organization? You can then add people to it.`)) return;
+    setSaving(true);
+    try {
+      const payload = buildDirectoryOrgPayload(makeOrgDraftFromIndividual(contact, locationId), locationId, actor);
+      const { data, error } = await supabase.from("marketing_directory_orgs").insert(payload).select("*").single();
+      if (error) throw error;
+      const { error: delErr } = await supabase.from("marketing_directory_contacts").delete().eq("id", contact.id);
+      if (delErr) throw delErr;
+      await loadDirectory();
+      closeEditor();
+      setExpandedIds((prev) => new Set(prev).add(data.id));
+      toast("Converted to organization");
+    } catch (err) {
+      console.error("Convert failed", err);
+      toast(err?.message || "Failed to convert", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const deleteAttachment = async (attachment) => {
@@ -891,6 +1010,11 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
           onClearCard={() => setStagedCard(null)}
           onPickFiles={pickStagedFiles}
           onRemoveStagedFile={(index) => setStagedFiles((prev) => prev.filter((_, i) => i !== index))}
+          people={editorPeople}
+          onAddPerson={addPerson}
+          onChangePerson={changePerson}
+          onRemovePerson={removePerson}
+          onConvertToOrg={() => convertToOrg(editor.draft)}
         />
       ) : null}
 
