@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Badge, Btn, CalendarPicker, Card, CustomSelect, Modal } from "../../shared/ui";
+import { Badge, Btn, CalendarPicker, Card, CustomSelect, Modal, LogEntryModal, RecordActivityModal } from "../../shared/ui";
 import { hasLeanPermission } from "../../shared/permissions";
 import {
   GRASSROOTS_CATEGORY_CONFIGS,
@@ -1907,7 +1907,7 @@ function FormSection({ title, children }) {
   );
 }
 
-function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsByActivity = {}, canLog = false, onChange, onSave, onCancel, onDelete, onLog, onPreviewAttachment, previewingAttachmentId, organizerOptions = [] }) {
+function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsByActivity = {}, canLog = false, onChange, onSave, onCancel, onDelete, onLog, onPreviewAttachment, previewingAttachmentId, organizerOptions = [], inModal = false }) {
   const changeStatus = (value) => {
     const status = normalizeGrassrootsStatus(value);
     onChange("status", status);
@@ -1936,7 +1936,8 @@ function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsBy
     const dates = Array.isArray(draft.event_dates) ? draft.event_dates : [];
 
     return (
-      <div className={rootClassName}>
+      <div className={inModal ? "grassroots-event-dense" : rootClassName}>
+        {!inModal && (
         <div className="grassroots-event-inline-header" style={{ background: 'transparent', borderBottom: `1px solid ${C.borderLight}` }}>
           <div>
             <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.06em" }}>
@@ -1947,8 +1948,9 @@ function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsBy
             <I.X />
           </button>
         </div>
+        )}
 
-        <div style={{ padding: "14px 16px 8px" }}>
+        <div style={{ padding: inModal ? "2px 0 0" : "14px 16px 8px" }}>
           {/* Consistent 3-column grid for both rows so everything lines up */}
           <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr", gap: "12px", marginBottom: "14px" }}>
             {/* Event Name */}
@@ -2356,7 +2358,7 @@ function MarketingHistoryView({ history, search, categoryFilter, onCategoryFilte
   const filterCount = (categoryFilter && categoryFilter !== "all" ? 1 : 0) + (actorFilter && actorFilter !== "all" ? 1 : 0);
 
   return (
-    <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
+    <Card style={{ padding: 0, overflow: "hidden", borderRadius: 0, border: "none", boxShadow: "none" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14, flexWrap: "wrap", padding: "16px 18px", borderBottom: `1px solid ${C.borderLight}` }}>
         <div>
           <div style={{ fontSize: 18, fontWeight: 900, color: C.text }}>Marketing History</div>
@@ -2752,7 +2754,7 @@ function CellEditButton({ onClick, label, needed = false, onShowTip, onHideTip }
 }
 
 function DenseGrassrootsTable({
-  targets, activitiesByTarget, categoryConfig, columnMap, onLog, onEdit, onUpdateFollowUp, onToggleUpdates,
+  targets, activitiesByTarget, categoryConfig, columnMap, onLog, onEdit, onUpdateFollowUp, onToggleUpdates, onOpenRecord,
   expandedUpdates, eventDateSortDirection, onToggleEventDateSort, followUpSortDirection, onToggleFollowUpSort, costSortDirection, onToggleCostSort, onShowFollowUpInfo,
   inlineLoggingId, inlineLogNotes, inlineLogNextDate, onStartInlineLog, onInlineLogNotesChange, onInlineLogNextDateChange, onSaveInlineLog, onCancelInlineLog,
   savingLog, isEventsTable = false, onOpenCellEditor, onCloseEvent, onSetStatus
@@ -2820,7 +2822,7 @@ function DenseGrassrootsTable({
 
   return (
     <>
-    <div style={{ background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
+    <div style={{ background: C.surface, border: "none", borderRadius: 0, overflow: "hidden" }}>
       {/* Exact clients-style dense header — tightened per variant 1 choice */}
       <div style={{ display: "grid", gridTemplateColumns: grid, columnGap: "8px", padding: "6px 12px", background: "rgb(255,255,255)", borderBottom: "1px solid rgb(226,232,240)", fontSize: 10, fontWeight: 700, color: "rgb(71,85,105)", textTransform: "uppercase", letterSpacing: "0.06em", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", minHeight: 18 }}>{cm.headers.organizer}</div>
@@ -3176,9 +3178,9 @@ function DenseGrassrootsTable({
               ) : (
               <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
                 <button
-                  onClick={(e) => handleCountClick(target.id, e)}
+                  onClick={(e) => { e.stopPropagation(); if (onOpenRecord) { onOpenRecord(target); } else { handleCountClick(target.id, e); } }}
                   style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, padding: "0 4px", borderRadius: 5, fontSize: 10, fontWeight: 800, border: isExp ? `1px solid ${C.pri}` : "none", cursor: "pointer", fontFamily: "inherit", background: isExp ? C.pri : (targetActivities.length > 0 ? `${C.pri}14` : C.bg), color: isExp ? "#fff" : (targetActivities.length > 0 ? C.pri : C.textMut) }}
-                  title={`${targetActivities.length} updates — click to ${isExp ? "collapse" : "expand"}`}
+                  title={onOpenRecord ? "View record & activity" : `${targetActivities.length} updates — click to ${isExp ? "collapse" : "expand"}`}
                 >
                   {targetActivities.length}
                 </button>
@@ -3234,59 +3236,9 @@ function DenseGrassrootsTable({
               )}
             </div>
 
-            {/* Expanded area: composer (when logging) + history */}
-            {cm.updatesMode !== "edit" && (isExp || inlineLoggingId === target.id) && (
-              <div style={{ background: C.bg, borderBottom: `1px solid ${C.borderLight}`, borderLeft: `3px solid ${C.pri}` }}>
-                {/* Inline Log Composer — dominant textarea + date picker right underneath (no big modal) */}
-                {inlineLoggingId === target.id && (
-                  <div style={{ padding: "12px 14px", borderBottom: targetActivities.length > 0 ? `1px solid ${C.borderLight}` : "none" }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: C.pri, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                      Log Update
-                    </div>
-
-                    <textarea
-                      value={inlineLogNotes}
-                      onChange={(e) => onInlineLogNotesChange(e.target.value)}
-                      placeholder="Notes about this outreach / development..."
-                      rows={5}
-                      style={{
-                        width: "100%",
-                        minHeight: 110,
-                        padding: "10px 12px",
-                        border: `1.5px solid ${C.pri}`,
-                        borderRadius: 6,
-                        fontSize: 13,
-                        fontFamily: "inherit",
-                        resize: "vertical",
-                        outline: "none",
-                        boxSizing: "border-box",
-                      }}
-                      autoFocus
-                    />
-
-                    <div style={{ marginTop: 6 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                        Next Follow-Up Date <span style={{ fontWeight: 600, color: C.textMut, textTransform: "none", letterSpacing: 0 }}>(optional)</span>
-                      </div>
-                      <CalendarPicker
-                        value={inlineLogNextDate || ""}
-                        min={today}
-                        onChange={(val) => onInlineLogNextDateChange(val)}
-                      />
-                    </div>
-
-                    <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
-                      <button onClick={onCancelInlineLog}
-                        style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-                        Cancel
-                      </button>
-                      <button onClick={onSaveInlineLog} disabled={savingLog}
-                        style={{ padding: "6px 16px", borderRadius: 6, border: "none", background: C.pri, color: "#fff", fontSize: 12, fontWeight: 700, cursor: savingLog ? "default" : "pointer", fontFamily: "inherit", opacity: savingLog ? 0.7 : 1 }}>
-                        {savingLog ? "Saving..." : "Save Log"}
-                      </button>
-                    </div>
-                  </div>
-                )}
+            {/* Expanded area: the activity history. Logging happens in the shared LogEntryModal. */}
+            {cm.updatesMode !== "edit" && isExp && (
+              <div style={{ background: C.bg, borderBottom: `1px solid ${C.borderLight}` }}>
 
                 {/* Existing history entries */}
                 {targetActivities.length > 0 && (
@@ -3907,6 +3859,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [expandedUpdates, setExpandedUpdates] = useState(new Set());
   const [expandedDropActivities, setExpandedDropActivities] = useState(new Set());
   const [logModal, setLogModal] = useState(null);
+  const [recordModalTarget, setRecordModalTarget] = useState(null);
   const [movePopover, setMovePopover] = useState(null);
   const [followUpInfo, setFollowUpInfo] = useState(null); // {targetId, followUpDate, setOn, x, y} — positioned from real click coords now
   const [logNotes, setLogNotes] = useState("");
@@ -3948,12 +3901,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
     setInlineLoggingId(target.id);
     setInlineLogNotes("");
     setInlineLogNextDate(target.next_contact_date || "");
-    // Make sure the updates section is open so the composer is visible
-    setExpandedUpdates((prev) => {
-      const next = new Set(prev);
-      next.add(target.id);
-      return next;
-    });
+  }, []);
+  // Open the shared record + activity modal (the clean white pop-up log view).
+  const openRecordModal = useCallback((target) => {
+    setRecordModalTarget(target);
   }, []);
   const toggleEventDateSort = useCallback(() => {
     setFollowUpSortDirection(null);
@@ -6381,8 +6332,10 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
 
       {/* Metrics cards removed per feedback — they were adding too much visual weight and whitespace */}
 
+      {/* Standardized list-surface frame — one perimeter border around search + tabs + table (matches CRM). */}
+      <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden", background: C.surface, marginBottom: 16 }}>
       {/* ═══ LITERAL PORT of Customer Lifecycle header from ClientsPage — search bar + pills + connected tabs + banner (not a recreation) ═══ */}
-      <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 0 }}>
         {/* Search Bar — exact structure, padding, SVG, input, pills placement, | separator, and pill styles copied from ClientsPage.jsx:1428 */}
         <div style={{borderBottom:`1.5px solid ${C.borderLight}`,background:C.bg,transition:"border-color 0.15s"}}
           onFocus={e=>e.currentTarget.style.borderBottomColor=C.pri} onBlur={e=>e.currentTarget.style.borderBottomColor=C.borderLight}>
@@ -6391,7 +6344,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
             <input value={lifecycleSearch} onChange={e=>setLifecycleSearch(e.target.value)}
               placeholder={activeLifecycleTab === 'history' ? "Search history by row, change, or person…" : "Search organizers, events, or notes…"}
               className="no-focus-ring"
-              style={{border:"none",outline:"none",background:"transparent",fontSize:13,fontWeight:500,color:C.text,padding:"12px 10px",width:"100%",fontFamily:"inherit"}} />
+              style={{border:"none",outline:"none",background:"transparent",fontSize:13,fontWeight:500,color:C.text,padding:"9px 10px",width:"100%",fontFamily:"inherit"}} />
             {lifecycleSearch && <button onClick={()=>setLifecycleSearch("")} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:2,display:"flex"}} title="Clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
             {/* Filter pills area — exact layout/placement from reference */}
             <div style={{display:"flex",gap:4,marginLeft:8,flexShrink:0}}>
@@ -6399,7 +6352,8 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                 const val = label.toLowerCase();
                 const on = eventsStatusFilter === val;
                 const col = val==='identified'?C.acc : val==='corresponding'?'#1E40AF' : val==='booked'?C.suc : C.dan;
-                return <button key={val} onClick={()=>setEventsStatusFilter(on?null:val)} style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${on?col:C.border}`,background:on?col:"transparent",color:on?"#fff":C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{label}</button>;
+                const cnt = categoryTargets.filter(t => normalizeGrassrootsStatus(t.status) === val && (showPastEvents || !isGrassrootsEventInPastView(t, todayStr()))).length;
+                return <button key={val} onClick={()=>setEventsStatusFilter(on?null:val)} style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${on?col:C.border}`,background:on?col:"transparent",color:on?"#fff":C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{label} {cnt}</button>;
               })}
               {/* Drops: business category filters (All + types with counts) + | + Business toggle (user spec) */}
               {activeLifecycleTab === 'drops' && (
@@ -6822,19 +6776,18 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                     <>
                       {/* New event — quick-capture in a shared modal (not an inline row). */}
                       {canEditTargets && newDraft && (
-                        <div onClick={(e) => { if (e.target === e.currentTarget) closeEditor(); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", backdropFilter: "blur(6px)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 1000, padding: "40px 20px", overflowY: "auto" }}>
-                          <div style={{ width: "100%", maxWidth: 640 }}>
-                            <EventTargetInlineEditor
-                              key="new-event-draft"
-                              draft={newDraft}
-                              saving={savingDraft}
-                              onChange={updateDraft}
-                              onSave={saveDraft}
-                              onCancel={closeEditor}
-                              organizerOptions={organizerOptions}
-                            />
-                          </div>
-                        </div>
+                        <Modal title="New Event" onClose={closeEditor} wide>
+                          <EventTargetInlineEditor
+                            inModal
+                            key="new-event-draft"
+                            draft={newDraft}
+                            saving={savingDraft}
+                            onChange={updateDraft}
+                            onSave={saveDraft}
+                            onCancel={closeEditor}
+                            organizerOptions={organizerOptions}
+                          />
+                        </Modal>
                       )}
                       {/* Editing an existing event happens via the per-column cell pencils
                           (organizer / event / date), and closing via the Close button — both
@@ -6849,6 +6802,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                         onOpenCellEditor={openCellEditor}
                         onCloseEvent={openCloseout}
                         onSetStatus={setTargetStatus}
+                        onOpenRecord={openRecordModal}
                         onUpdateFollowUp={updateFollowUpDate}
                         onToggleUpdates={toggleUpdates}
                         expandedUpdates={expandedUpdates}
@@ -6948,6 +6902,67 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
                           setInlineLogNextDate("");
                         }}
                       />
+                      {inlineLoggingId && (() => {
+                        const logTarget = inlineLogTargetRef.current
+                          || lifecycleDisplayTargets.find((t) => t.id === inlineLoggingId)
+                          || targets.find((t) => t.id === inlineLoggingId);
+                        const logTargetName = logTarget?.name || logTarget?.organizer || "event";
+                        const closeInlineLog = () => {
+                          setExpandedUpdates((prev) => {
+                            if (!inlineLoggingId || !prev.has(inlineLoggingId)) return prev;
+                            const next = new Set(prev);
+                            next.delete(inlineLoggingId);
+                            return next;
+                          });
+                          setInlineLoggingId(null);
+                        };
+                        return (
+                          <LogEntryModal
+                            title={`Log update — ${logTargetName}`}
+                            notesLabel="Notes"
+                            notesPlaceholder="Notes about this outreach / development…"
+                            followUpLabel="Next follow-up date"
+                            followUpOptional
+                            today={todayStr()}
+                            initialDate={logTarget?.next_contact_date || ""}
+                            saveLabel="Save log"
+                            saving={savingLog}
+                            onClose={closeInlineLog}
+                            onSave={async ({ notes, date }) => {
+                              if (!logTarget) { toast("Could not find the row to log against", "error"); return; }
+                              const trimmed = (notes || "").trim();
+                              const nextDate = date || null;
+                              setSavingLog(true);
+                              try {
+                                const activityId = createGrassrootsClientUuid ? createGrassrootsClientUuid() : crypto.randomUUID();
+                                const { error: insertErr } = await supabase.from("grassroots_activity").insert({
+                                  id: activityId,
+                                  location_id: locationId,
+                                  target_id: logTarget.id,
+                                  activity_type: getGrassrootsActivityType(logTarget.category || activeConfig.id),
+                                  activity_date: todayStr(),
+                                  notes: trimmed || "Logged",
+                                  next_contact_date: nextDate,
+                                  created_by_user_id: actor.userId,
+                                  created_by_name: actor.name,
+                                });
+                                if (insertErr) throw insertErr;
+                                if ((nextDate || null) !== (logTarget.next_contact_date || null)) {
+                                  await updateFollowUpDate(logTarget, nextDate || null);
+                                }
+                                await loadGrassroots();
+                                setInlineLoggingId(null);
+                                toast("Log saved");
+                              } catch (err) {
+                                console.error("inline log save failed", err);
+                                toast(err?.message || "Failed to save log", "error");
+                              } finally {
+                                setSavingLog(false);
+                              }
+                            }}
+                          />
+                        );
+                      })()}
                     </>
                   ) : (
                     <>
@@ -7056,6 +7071,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           </div>
         </div>
       )}
+      </div>
 
       {/* Small "set/created" info popover for Follow-up column — matches Customer Lifecycle reference click behavior (no direct edit prompt) */}
       {followUpInfo && (
@@ -7093,6 +7109,61 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
       )}
 
       {!isDropLogActive && logActivityEditor}
+
+      {/* Shared record + activity modal — the clean white pop-up log view (the
+          standard focused record/history surface, shared with the CRM). */}
+      {recordModalTarget && (() => {
+        const t = recordModalTarget;
+        const acts = [...(activitiesByTarget[t.id] || [])]
+          .sort((a, b) => String(b.created_at || b.activity_date || "").localeCompare(String(a.created_at || a.activity_date || "")))
+          .map((act) => ({
+            id: act.id,
+            actor: activityActorName(act),
+            timestamp: `${fmtDate(act.activity_date || act.created_at)}${act.created_at ? ` · ${new Date(act.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}` : ""}`,
+            body: act.notes,
+            meta: act.next_contact_date ? <span>Follow-up: {fmtDate(act.next_contact_date)}</span> : null,
+          }));
+        const eventDates = normalizeGrassrootsEventDates(t);
+        const dateStr = eventDates.length
+          ? eventDates.map((d) => fmtDate(d.event_date || d)).filter(Boolean).join(" · ")
+          : (t.event_date ? fmtDate(t.event_date) : "—");
+        const closed = isGrassrootsEventClosed(t);
+        const closeout = closed ? getGrassrootsEventCloseout(t) : null;
+        const statusText = closed ? (closeout?.disposition === "cancelled" ? "Cancelled" : "Finished") : getGrassrootsStatusLabel(t.status);
+        const statusKey = closed ? (closeout?.disposition === "cancelled" ? "cancelled" : "finished") : t.status;
+        const sty = { identified: { bg: "#FEF3C7", fg: "#92400E" }, corresponding: { bg: "#DBEAFE", fg: "#1E40AF" }, booked: { bg: "#DCFCE7", fg: "#166534" }, finished: { bg: "#DCFCE7", fg: "#166534" }, abandoned: { bg: "#FEE2E2", fg: "#991B1B" }, cancelled: { bg: "#F1F5F9", fg: "#475569" } }[statusKey] || { bg: C.priLt, fg: C.pri };
+        const costStr = (t.cost !== null && t.cost !== undefined && t.cost !== "") ? fmtCurrencyNumber(t.cost) : null;
+        const contact = [t.contact_phone, t.contact_email].filter(Boolean).join(" · ");
+        const Field = ({ label, value }) => (
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut, marginBottom: 3 }}>{label}</div>
+            <div style={{ fontSize: 13.5, color: C.text, fontWeight: 600 }}>{value || "—"}</div>
+          </div>
+        );
+        const ctx = (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: "14px 24px" }}>
+            <Field label="Organizer" value={t.organizer} />
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut, marginBottom: 4 }}>Status</div>
+              <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: sty.bg, color: sty.fg }}>{statusText}</span>
+            </div>
+            <Field label="Date" value={dateStr} />
+            <Field label="Follow-up" value={t.next_contact_date ? fmtDate(t.next_contact_date) : "—"} />
+            {costStr && <Field label="Cost" value={costStr} />}
+            {contact && <Field label="Contact" value={contact} />}
+          </div>
+        );
+        return (
+          <RecordActivityModal
+            title={t.name || t.organizer || "Record"}
+            context={ctx}
+            activities={acts}
+            emptyText="No activity logged yet."
+            onLog={() => { setRecordModalTarget(null); startInlineLog(t); }}
+            onClose={() => setRecordModalTarget(null)}
+          />
+        );
+      })()}
 
       {/* Per-column micro-editor — a small modal scoped to the cell's field group. */}
       {cellEditor && editDraft && (

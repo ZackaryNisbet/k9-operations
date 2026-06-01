@@ -242,9 +242,9 @@ const CONTACT_FIELDS = [
   { key: "email", label: "Email", group: "contact", resolve: leadEmail },
   { key: "phone", label: "Phone", group: "contact", resolve: leadPhone, format: formatPhonePretty },
   { key: "preferred_time", label: "Preferred time to reach", group: "contact", from: ["preferred_time_to_be_reached"] },
-  { key: "zip", label: "ZIP", group: "location", from: ["zip_code", "zip"] },
-  { key: "city", label: "City", group: "location", from: ["city"] },
   { key: "state", label: "State", group: "location", from: ["state"] },
+  { key: "city", label: "City", group: "location", from: ["city"] },
+  { key: "zip", label: "ZIP", group: "location", from: ["zip_code", "zip"] },
   { key: "desired_service", label: "Desired service", group: "request", emphasis: true, from: ["desired_service", "service_interest"] },
   { key: "desired_dates", label: "Desired date(s)", group: "request", emphasis: true, from: ["desired_date_of_boarding_or_day_care"] },
   { key: "details", label: "Details", group: "request", long: true, from: ["details", "how_can_we_help_you", "message"] },
@@ -253,15 +253,45 @@ const CONTACT_FIELDS = [
 const EMPLOYMENT_FIELDS = [
   { key: "email", label: "Email", group: "contact", resolve: leadEmail },
   { key: "phone", label: "Phone", group: "contact", resolve: leadPhone, format: formatPhonePretty },
-  { key: "zip", label: "ZIP", group: "location", from: ["zip_code", "zip"] },
-  { key: "city", label: "City", group: "location", from: ["city"] },
   { key: "state", label: "State", group: "location", from: ["state"] },
+  { key: "city", label: "City", group: "location", from: ["city"] },
+  { key: "zip", label: "ZIP", group: "location", from: ["zip_code", "zip"] },
   { key: "position", label: "Position of interest", group: "request", emphasis: true, from: ["what_type_of_position_are_you_interested_in"] },
   { key: "availability", label: "Full-time or part-time", group: "request", emphasis: true, from: ["are_you_interested_in_full_time_or_part_time"] },
   { key: "reason", label: "Reason for contact", group: "request", from: ["reason_for_contact"] },
   { key: "skills", label: "Special skills", group: "request", long: true, from: ["what_are_some_special_skills_you_may_have"] },
   { key: "about", label: "About the applicant", group: "request", long: true, from: ["tell_us_a_bit_about_yourself"] },
 ];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRM outreach pipeline statuses (ignite_leads.lead_status). App-controlled
+// vocabulary — NULL/empty means the first stage. `short` renders in the dense
+// pill + filters; `label` in the dropdown. `closed` = terminal outcome, hidden
+// from the default worklist. Funnel order top→bottom.
+// ─────────────────────────────────────────────────────────────────────────────
+export const CRM_LEAD_STATUSES = [
+  { value: "new_lead_action_needed", label: "New",            short: "New",            bg: "#FEF3C7", fg: "#92400E" },
+  { value: "contacted_talking",      label: "Talking",        short: "Talking",        bg: "#DBEAFE", fg: "#1E40AF" },
+  { value: "tour_eval_scheduled",    label: "Tour Scheduled", short: "Tour Sched.",    bg: "#DDD6FE", fg: "#5B21B6" },
+  { value: "on_fence",               label: "On Fence",       short: "On Fence",       bg: "#FFEDD5", fg: "#9A3412" },
+  { value: "booked_reservation",     label: "Booked",         short: "Booked",         bg: "#DCFCE7", fg: "#166534", closed: true },
+  { value: "lost_not_interested",    label: "Not Interested", short: "Not Interested", bg: "#FEE2E2", fg: "#991B1B", closed: true },
+  { value: "lost_unreachable",       label: "Unresponsive",   short: "Unresponsive",   bg: "#F1F5F9", fg: "#475569", closed: true },
+];
+
+export const CRM_DEFAULT_STATUS = CRM_LEAD_STATUSES[0].value;
+export const CRM_OPEN_STATUSES = CRM_LEAD_STATUSES.filter((s) => !s.closed).map((s) => s.value);
+export const CRM_CLOSED_STATUSES = CRM_LEAD_STATUSES.filter((s) => s.closed).map((s) => s.value);
+const CRM_KNOWN_STATUSES = new Set(CRM_LEAD_STATUSES.map((s) => s.value));
+
+// Unknown / retired values (e.g. a status we removed) gracefully read as the first stage.
+export function leadStatusValue(lead) {
+  const v = lead && lead.lead_status;
+  return v && CRM_KNOWN_STATUSES.has(v) ? v : CRM_DEFAULT_STATUS;
+}
+export function getLeadStatusMeta(value) {
+  return CRM_LEAD_STATUSES.find((s) => s.value === (value || CRM_DEFAULT_STATUS)) || CRM_LEAD_STATUSES[0];
+}
 
 const FORM_FIELD_GROUP_ORDER = ["contact", "location", "request"];
 const FORM_FIELD_GROUP_LABELS = {

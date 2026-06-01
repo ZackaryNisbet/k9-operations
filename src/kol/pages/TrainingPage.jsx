@@ -588,7 +588,6 @@ function LaborSortControl({ sort, columns = [], defaultSort, onChange }) {
   );
 }
 
-const INLINE_ROSTER_COMPOSER_TRANSITION_MS = 240;
 const TRAINING_GRACE_PERIOD_DAYS = 14;
 const REVIEW_WARNING_WINDOW_DAYS = 7;
 const LABOR_ROSTER_VIEWS_SETTING_KEY = "labor_roster_views";
@@ -1523,37 +1522,6 @@ function LaborCommitmentBadge({ value, compact = false }) {
     >
       {getLaborEmploymentCommitmentLabel(value, { short: compact })}
     </span>
-  );
-}
-
-function LaborCommitmentSegmentedPicker({ value, onChange }) {
-  const normalizedValue = readLaborEmploymentCommitment({ employment_commitment: value }) || "";
-  const options = [
-    ...LABOR_COMMITMENT_SELECT_OPTIONS.filter((option) => option.value),
-    ...LABOR_COMMITMENT_SELECT_OPTIONS.filter((option) => !option.value),
-  ];
-
-  return (
-    <div className="labor-commitment-picker" role="radiogroup" aria-label="Commitment">
-      {options.map((option) => {
-        const optionValue = option.value || "";
-        const isActive = normalizedValue === optionValue;
-        return (
-          <button
-            key={option.value || "unassigned"}
-            type="button"
-            role="radio"
-            aria-checked={isActive}
-            data-tone={option.value || "unassigned"}
-            className={`labor-commitment-picker-option${isActive ? " is-active" : ""}`}
-            onClick={() => onChange(optionValue)}
-          >
-            <span aria-hidden="true" className="labor-commitment-picker-dot" />
-            <span>{option.label}</span>
-          </button>
-        );
-      })}
-    </div>
   );
 }
 
@@ -7591,16 +7559,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [laborEmployeeStartDate, setLaborEmployeeStartDate] = useState("");
   const [laborEmployeeEndDate, setLaborEmployeeEndDate] = useState("");
   const [savingLaborEmployee, setSavingLaborEmployee] = useState(false);
-  const [showInlineLaborEmployeeComposer, setShowInlineLaborEmployeeComposer] = useState(false);
-  const [inlineLaborEmployeeComposerEntered, setInlineLaborEmployeeComposerEntered] = useState(false);
-  const [newRosterEmployeeFirstName, setNewRosterEmployeeFirstName] = useState("");
-  const [newRosterEmployeeLastName, setNewRosterEmployeeLastName] = useState("");
-  const [newRosterEmployeePhone, setNewRosterEmployeePhone] = useState("");
-  const [newRosterEmployeeEmail, setNewRosterEmployeeEmail] = useState("");
-  const [newRosterEmployeeRole, setNewRosterEmployeeRole] = useState("");
-  const [newRosterEmployeeCommitment, setNewRosterEmployeeCommitment] = useState("");
-  const [newRosterEmployeeStartDate, setNewRosterEmployeeStartDate] = useState(todayStr());
-  const [savingInlineLaborEmployee, setSavingInlineLaborEmployee] = useState(false);
   const [justCreatedLaborEmployeeId, setJustCreatedLaborEmployeeId] = useState(null);
   const [employeeRecordTab, setEmployeeRecordTab] = useState("training");
   const [employeeNoteText, setEmployeeNoteText] = useState("");
@@ -7771,7 +7729,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
   const [whatIfCommitment, setWhatIfCommitment] = useState("full_time");
   const [whatIfHourOverrides, setWhatIfHourOverrides] = useState({});
   const [whatIfNote, setWhatIfNote] = useState("");
-  const firstRosterNameInputRef = useRef(null);
   const prevRosterFilterOpen = useRef(false);
   const pendingEmployeeRecordTabRef = useRef("");
   const hourAnalysisLoadedSnapshotRef = useRef("");
@@ -10914,51 +10871,19 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setLaborEmployeeEndDate("");
   }, []);
 
-  const resetInlineLaborEmployeeComposer = useCallback(() => {
-    setNewRosterEmployeeFirstName("");
-    setNewRosterEmployeeLastName("");
-    setNewRosterEmployeePhone("");
-    setNewRosterEmployeeEmail("");
-    setNewRosterEmployeeRole("");
-    setNewRosterEmployeeCommitment("");
-    setNewRosterEmployeeStartDate(todayStr());
-  }, []);
-
-  const closeInlineLaborEmployeeComposer = useCallback(({ immediate = false } = {}) => {
-    setInlineLaborEmployeeComposerEntered(false);
-    if (immediate) {
-      setShowInlineLaborEmployeeComposer(false);
-      resetInlineLaborEmployeeComposer();
-      return;
-    }
-    window.setTimeout(() => {
-      setShowInlineLaborEmployeeComposer(false);
-      resetInlineLaborEmployeeComposer();
-    }, INLINE_ROSTER_COMPOSER_TRANSITION_MS);
-  }, [resetInlineLaborEmployeeComposer]);
-
-  const openInlineLaborEmployeeComposer = useCallback(() => {
-    if (!canEditRoster) {
-      addGlobalToast?.("You do not have permission to edit the labor roster", "error");
-      return;
-    }
-    setShowLaborEmployeeEditor(false);
-    resetLaborEmployeeEditor();
-    resetInlineLaborEmployeeComposer();
-    setShowInlineLaborEmployeeComposer(true);
-  }, [addGlobalToast, canEditRoster, resetInlineLaborEmployeeComposer, resetLaborEmployeeEditor]);
-
   const openLaborEmployeeEditor = useCallback((employee = null) => {
     if (!canEditRoster) {
       addGlobalToast?.("You do not have permission to edit the labor roster", "error");
       return;
     }
     if (!employee) {
-      openInlineLaborEmployeeComposer();
+      resetLaborEmployeeEditor();
+      setLaborEmployeeStartDate(todayStr());
+      setEditingLaborEmployeeId(null);
+      setShowLaborEmployeeEditor(true);
       return;
     }
 
-    closeInlineLaborEmployeeComposer({ immediate: true });
     setEditingLaborEmployeeId(employee.id);
     setLaborEmployeeName(employee.full_name || "");
     setLaborEmployeePhone(readLaborEmployeeContact(employee, "contact_phone"));
@@ -10970,7 +10895,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setLaborEmployeeStartDate(employee.start_date || "");
     setLaborEmployeeEndDate(employee.end_date || "");
     setShowLaborEmployeeEditor(true);
-  }, [addGlobalToast, canEditRoster, closeInlineLaborEmployeeComposer, openInlineLaborEmployeeComposer]);
+  }, [addGlobalToast, canEditRoster, resetLaborEmployeeEditor]);
 
   const persistLaborEmployeeContact = useCallback(async (employeeId, existingMetadata = {}, updates = {}) => {
     const hasShirtSizeUpdate = Object.prototype.hasOwnProperty.call(updates, "shirtSize");
@@ -11010,25 +10935,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
       .eq("id", employeeId);
     return { error, metadata: nextMetadata };
   }, [actorUserId]);
-
-  useEffect(() => {
-    if (!showInlineLaborEmployeeComposer) return undefined;
-
-    setInlineLaborEmployeeComposerEntered(false);
-
-    const frameId = window.requestAnimationFrame(() => {
-      setInlineLaborEmployeeComposerEntered(true);
-    });
-    const focusTimer = window.setTimeout(() => {
-      firstRosterNameInputRef.current?.focus();
-      firstRosterNameInputRef.current?.select?.();
-    }, 120);
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-      window.clearTimeout(focusTimer);
-    };
-  }, [showInlineLaborEmployeeComposer]);
 
   useEffect(() => {
     if (!justCreatedLaborEmployeeId) return undefined;
@@ -11112,6 +11018,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           return;
         }
       }
+      setJustCreatedLaborEmployeeId(createdEmployee?.id || null);
       addGlobalToast("Employee added to labor roster", "success");
     }
 
@@ -11120,71 +11027,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     setShowLaborEmployeeEditor(false);
     resetLaborEmployeeEditor();
   }, [actorName, actorUserId, addGlobalToast, canEditRoster, editingLaborEmployeeId, laborEmployeeCommitment, laborEmployeeEmail, laborEmployeeEndDate, laborEmployeeName, laborEmployeePhone, laborEmployeeReviewTemplateRole, laborEmployeeRole, laborEmployeeShirtSize, laborEmployeeStartDate, laborEmployees, laborLocationRef, persistLaborEmployeeContact, resetLaborEmployeeEditor, refreshLaborData]);
-
-  const handleCreateLaborEmployeeInline = useCallback(async () => {
-    if (!canEditRoster) {
-      addGlobalToast("You do not have permission to edit the labor roster", "error");
-      return;
-    }
-    const fullName = `${newRosterEmployeeFirstName} ${newRosterEmployeeLastName}`.replace(/\s+/g, " ").trim();
-    if (!newRosterEmployeeFirstName.trim() || !newRosterEmployeeLastName.trim() || !newRosterEmployeeRole.trim() || !newRosterEmployeeStartDate) {
-      addGlobalToast("First name, last name, position title, and start date are required", "error");
-      return;
-    }
-
-    setSavingInlineLaborEmployee(true);
-
-    const { data, error } = await supabase.rpc("create_labor_employee", buildCreateLaborEmployeeRpcArgs({
-      locationRef: laborLocationRef,
-      fullName,
-      positionTitle: formatLaborPositionTitle(newRosterEmployeeRole),
-      startDate: newRosterEmployeeStartDate,
-      endDate: null,
-      employmentCommitment: newRosterEmployeeCommitment,
-      actorUserId,
-      actorName,
-    }));
-
-    if (error) {
-      addGlobalToast("Failed to create employee: " + (error.message || "Unknown error"), "error");
-      setSavingInlineLaborEmployee(false);
-      return;
-    }
-
-    const createdEmployee = Array.isArray(data) ? data[0] : data;
-    if (createdEmployee?.id) {
-      const { error: contactError } = await persistLaborEmployeeContact(createdEmployee.id, createdEmployee.metadata, {
-        email: newRosterEmployeeEmail,
-        phone: newRosterEmployeePhone,
-      });
-      if (contactError) {
-        addGlobalToast("Employee added, but contact info did not save", "error");
-        setSavingInlineLaborEmployee(false);
-        return;
-      }
-    }
-    await refreshLaborData();
-    setSavingInlineLaborEmployee(false);
-    setJustCreatedLaborEmployeeId(createdEmployee?.id || null);
-    closeInlineLaborEmployeeComposer();
-    addGlobalToast("Employee added to labor roster", "success");
-  }, [
-    actorName,
-    actorUserId,
-    addGlobalToast,
-    canEditRoster,
-    closeInlineLaborEmployeeComposer,
-    laborLocationRef,
-    refreshLaborData,
-    newRosterEmployeeEmail,
-    newRosterEmployeeFirstName,
-    newRosterEmployeeCommitment,
-    newRosterEmployeeLastName,
-    newRosterEmployeePhone,
-    newRosterEmployeeRole,
-    newRosterEmployeeStartDate,
-    persistLaborEmployeeContact,
-  ]);
 
   const openTemplatePreview = useCallback((templateId, versionId = null, kind = "training") => {
     setPreviewTemplateKind(kind);
@@ -16403,9 +16245,9 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
     );
   }, [commitRequiredTemplateTextInput, handleDeleteTemplateItem, handleMoveTemplateItemOrder, handleMoveTemplateItemSection, handleUpdateTemplateItem, previewTemplate, previewTemplateKind]);
 
-  const laborEmployeeEditorModal = canEditRoster && showLaborEmployeeEditor && editingLaborEmployeeId ? (
+  const laborEmployeeEditorModal = canEditRoster && showLaborEmployeeEditor ? (
     <Modal
-      title="Edit Employee"
+      title={editingLaborEmployeeId ? "Edit Employee" : "Add Employee"}
       onClose={() => {
         setShowLaborEmployeeEditor(false);
         resetLaborEmployeeEditor();
@@ -16489,7 +16331,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             Cancel
           </Btn>
           <Btn variant="primary" onClick={handleSaveLaborEmployee} disabled={savingLaborEmployee}>
-            {savingLaborEmployee ? "Saving..." : "Save Employee"}
+            {savingLaborEmployee ? "Saving..." : (editingLaborEmployeeId ? "Save Employee" : "Create Employee")}
           </Btn>
         </div>
       </div>
@@ -18803,15 +18645,11 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
             <I.FileText />
             <span>{contactCardDownloadKey === "bulk" ? "Downloading..." : "Download Active Contacts"}</span>
           </button>
-          {canEditRoster && (showInlineLaborEmployeeComposer ? (
-            <button type="button" className="labor-roster-action-button" onClick={() => closeInlineLaborEmployeeComposer()}>
-              <I.X /><span>Cancel Add</span>
-            </button>
-          ) : (
-            <button type="button" className="labor-roster-action-button is-primary" onClick={openInlineLaborEmployeeComposer}>
+          {canEditRoster && (
+            <button type="button" className="labor-roster-action-button is-primary" onClick={() => openLaborEmployeeEditor()}>
               <I.Plus /><span>Add Employee</span>
             </button>
-          ))}
+          )}
         </div>
       );
     }
@@ -18913,19 +18751,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
         html { scrollbar-gutter: stable; }
         body { overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }
         body::-webkit-scrollbar { width: 0; height: 0; }
-	        @keyframes laborRosterComposerIn {
-          0% { opacity: 0; transform: translateY(-18px) scale(0.985); filter: blur(4px); }
-          65% { opacity: 1; transform: translateY(2px) scale(1.002); filter: blur(0); }
-          100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
-        }
-        @keyframes laborRosterComposerSweep {
-          0% { transform: translate3d(-200%, 0, 0) skewX(-18deg); opacity: 0; }
-          12% { opacity: 0; }
-          24% { opacity: 0.38; }
-          48% { opacity: 0.86; }
-          72% { opacity: 0.26; }
-          100% { transform: translate3d(420%, 0, 0) skewX(-18deg); opacity: 0; }
-        }
 	        @keyframes laborRosterFreshRow {
 	          0% { background: rgba(132, 204, 22, 0.22); }
 	          100% { background: transparent; }
@@ -19786,147 +19611,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 		          color: ${C.pri};
 		          animation: laborRosterCopyConfirm 260ms ease-out;
 		        }
-	        .labor-roster-new-grid {
-	          display: grid;
-	          grid-template-columns: repeat(12, minmax(0, 1fr));
-	          gap: 10px;
-	          align-items: end;
-	        }
-	        .labor-roster-new-field {
-	          display: grid;
-	          gap: 6px;
-	          min-width: 0;
-	        }
-	        .labor-roster-new-field-label {
-	          font-size: 11px;
-	          font-weight: 800;
-	          color: ${C.textMut};
-	          text-transform: uppercase;
-	          letter-spacing: 0;
-	        }
-	        .labor-roster-new-field.is-first,
-	        .labor-roster-new-field.is-last,
-	        .labor-roster-new-field.is-phone {
-	          grid-column: span 2;
-	        }
-	        .labor-roster-new-field.is-email,
-	        .labor-roster-new-field.is-position {
-	          grid-column: span 3;
-	        }
-	        .labor-roster-new-field.is-commitment {
-	          grid-column: span 4;
-	        }
-	        .labor-roster-new-field.is-start {
-	          grid-column: span 2;
-	        }
-	        .labor-roster-new-actions {
-	          grid-column: span 6;
-	          display: flex;
-	          gap: 8px;
-	          justify-content: flex-end;
-	          flex-wrap: wrap;
-	          min-width: 0;
-	        }
-	        .labor-commitment-picker {
-	          display: grid;
-	          grid-template-columns: repeat(3, minmax(0, 1fr));
-	          gap: 4px;
-	          min-height: 45px;
-	          padding: 4px;
-	          border-radius: 12px;
-	          border: 1.5px solid ${C.border};
-	          background: rgba(255,255,255,0.92);
-	          box-sizing: border-box;
-	        }
-	        .labor-commitment-picker:focus-within {
-	          border-color: ${C.acc};
-	          box-shadow: 0 0 0 4px rgba(132,204,22,0.16);
-	        }
-	        .labor-commitment-picker-option {
-	          position: relative;
-	          min-width: 0;
-	          min-height: 35px;
-	          display: inline-flex;
-	          align-items: center;
-	          justify-content: center;
-	          gap: 6px;
-	          border: 1px solid transparent;
-	          border-radius: 8px;
-	          background: transparent;
-	          color: ${C.textSec};
-	          font-family: inherit;
-	          font-size: 12px;
-	          font-weight: 950;
-	          line-height: 1;
-	          white-space: nowrap;
-	          cursor: pointer;
-	          transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
-	        }
-	        .labor-commitment-picker-option:hover {
-	          background: #f8fafc;
-	          color: ${C.text};
-	          transform: translateY(-1px);
-	        }
-	        .labor-commitment-picker-option.is-active {
-	          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
-	        }
-	        .labor-commitment-picker-option.is-active[data-tone="full_time"] {
-	          border-color: #a7f3d0;
-	          background: #ecfdf5;
-	          color: #047857;
-	        }
-	        .labor-commitment-picker-option.is-active[data-tone="part_time"] {
-	          border-color: #bfdbfe;
-	          background: #eff6ff;
-	          color: #1d4ed8;
-	        }
-	        .labor-commitment-picker-option.is-active[data-tone="unassigned"] {
-	          border-color: #fed7aa;
-	          background: #fff7ed;
-	          color: #c2410c;
-	        }
-	        .labor-commitment-picker-dot {
-	          width: 6px;
-	          height: 6px;
-	          border-radius: 999px;
-	          background: currentColor;
-	          opacity: 0.45;
-	        }
-	        .labor-commitment-picker-option.is-active .labor-commitment-picker-dot {
-	          opacity: 1;
-	          box-shadow: 0 0 0 3px rgba(255,255,255,0.82);
-	        }
-	        @media (max-width: 1180px) {
-	          .labor-roster-new-field.is-first,
-	          .labor-roster-new-field.is-last,
-	          .labor-roster-new-field.is-phone,
-	          .labor-roster-new-field.is-email {
-	            grid-column: span 3;
-	          }
-	          .labor-roster-new-field.is-position {
-	            grid-column: span 5;
-	          }
-	          .labor-roster-new-field.is-commitment {
-	            grid-column: span 4;
-	          }
-	          .labor-roster-new-field.is-start {
-	            grid-column: span 3;
-	          }
-	          .labor-roster-new-actions {
-	            grid-column: span 12;
-	          }
-	        }
 	        @media (max-width: 760px) {
-	          .labor-roster-new-field.is-first,
-	          .labor-roster-new-field.is-last,
-	          .labor-roster-new-field.is-phone,
-	          .labor-roster-new-field.is-email,
-	          .labor-roster-new-field.is-position,
-	          .labor-roster-new-field.is-commitment,
-		          .labor-roster-new-field.is-start,
-		          .labor-roster-new-actions {
-		            grid-column: span 12;
-		          }
 		          .labor-roster-pdf-toggle-grid {
 		            grid-template-columns: 1fr;
 		          }
@@ -25560,7 +25245,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
           )}
 
           {/* Roster search bar + status pills + intro now live in the search region above the module tabs. */}
-	          {sortedRosterRows.length === 0 && !showInlineLaborEmployeeComposer ? (
+	          {sortedRosterRows.length === 0 ? (
             <EmptyState icon="Users" title="No employees yet" subtitle="Add your first employee to start using labor management." />
           ) : (
 	            <Card className="labor-roster-table-card" style={{ padding: 0, overflowX: "auto", overflowY: "hidden", marginBottom: 24 }}>
@@ -25591,187 +25276,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
                   ))}
 	                </tr></thead>
                 <tbody>
-                  {canEditRoster && showInlineLaborEmployeeComposer && (
-                    <tr>
-	                      <td colSpan={5} style={{ padding: 12, borderBottom: `1px solid ${C.borderLight}`, background: `${C.priLt}66` }}>
-                        <form
-                          onSubmit={(event) => {
-                            event.preventDefault();
-                            handleCreateLaborEmployeeInline();
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape") {
-                              event.preventDefault();
-                              closeInlineLaborEmployeeComposer();
-                            }
-                          }}
-                          style={{
-                            position: "relative",
-                            overflow: "hidden",
-                            borderRadius: 8,
-                            border: `1px solid ${C.acc}55`,
-                            background: "linear-gradient(135deg, rgba(132,204,22,0.14), rgba(20,83,45,0.08) 55%, rgba(255,255,255,0.92))",
-                            boxShadow: "0 24px 50px rgba(20, 83, 45, 0.12)",
-                            padding: "16px 16px 14px",
-                            opacity: inlineLaborEmployeeComposerEntered ? 1 : 0,
-                            transform: inlineLaborEmployeeComposerEntered ? "translateY(0) scale(1)" : "translateY(-18px) scale(0.985)",
-                            filter: inlineLaborEmployeeComposerEntered ? "blur(0)" : "blur(4px)",
-                            transition: `opacity ${INLINE_ROSTER_COMPOSER_TRANSITION_MS}ms ease, transform ${INLINE_ROSTER_COMPOSER_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1), filter ${INLINE_ROSTER_COMPOSER_TRANSITION_MS}ms ease`,
-                            animation: inlineLaborEmployeeComposerEntered ? "laborRosterComposerIn 380ms cubic-bezier(0.22, 1, 0.36, 1)" : "none",
-                          }}
-                        >
-                          <div
-                            aria-hidden="true"
-                            style={{
-                              position: "absolute",
-                              inset: "-24% auto -24% -16%",
-                              width: "34%",
-                              background: "linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.26), rgba(190,242,100,0.28), rgba(255,255,255,0.88), rgba(255,255,255,0))",
-                              transform: "translate3d(-200%, 0, 0) skewX(-18deg)",
-                              opacity: 0,
-                              animation: inlineLaborEmployeeComposerEntered ? "laborRosterComposerSweep 1850ms cubic-bezier(0.22, 1, 0.36, 1) infinite" : "none",
-                              willChange: "transform, opacity",
-                              mixBlendMode: "screen",
-                              filter: "blur(2px)",
-                              pointerEvents: "none",
-                            }}
-                          />
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
-                            <div>
-                              <div style={{ fontSize: 15, fontWeight: 800, color: C.pri }}>New roster row</div>
-                              <div style={{ fontSize: 12, color: C.textMut }}>Start typing immediately. Tab moves left-to-right across the row.</div>
-                            </div>
-                            <div style={{ fontSize: 11, color: C.textMut, fontWeight: 700 }}>Esc to cancel · Enter to save</div>
-                          </div>
-	                          <div className="labor-roster-new-grid">
-                            <label className="labor-roster-new-field is-first">
-                              <span className="labor-roster-new-field-label">First Name</span>
-                              <input
-                                ref={firstRosterNameInputRef}
-                                value={newRosterEmployeeFirstName}
-                                onChange={(event) => setNewRosterEmployeeFirstName(event.target.value)}
-                                placeholder="First name"
-                                style={{ width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", color: C.text, background: "rgba(255,255,255,0.92)", outline: "none", boxSizing: "border-box" }}
-                                onFocus={(event) => { event.target.style.borderColor = C.acc; event.target.style.boxShadow = "0 0 0 4px rgba(132,204,22,0.16)"; }}
-                                onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
-                              />
-                            </label>
-                            <label className="labor-roster-new-field is-last">
-                              <span className="labor-roster-new-field-label">Last Name</span>
-                              <input
-                                value={newRosterEmployeeLastName}
-                                onChange={(event) => setNewRosterEmployeeLastName(event.target.value)}
-                                placeholder="Last name"
-                                style={{ width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", color: C.text, background: "rgba(255,255,255,0.92)", outline: "none", boxSizing: "border-box" }}
-                                onFocus={(event) => { event.target.style.borderColor = C.acc; event.target.style.boxShadow = "0 0 0 4px rgba(132,204,22,0.16)"; }}
-                                onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
-                              />
-                            </label>
-                            <label className="labor-roster-new-field is-phone">
-                              <span className="labor-roster-new-field-label">Phone</span>
-                              <input
-                                type="tel"
-                                value={fmtPhoneInput(newRosterEmployeePhone)}
-                                onChange={(event) => setNewRosterEmployeePhone(event.target.value.replace(/\D/g, "").slice(0, 10))}
-                                placeholder="(555) 123-4567"
-                                style={{ width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", color: C.text, background: "rgba(255,255,255,0.92)", outline: "none", boxSizing: "border-box" }}
-                                onFocus={(event) => { event.target.style.borderColor = C.acc; event.target.style.boxShadow = "0 0 0 4px rgba(132,204,22,0.16)"; }}
-                                onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
-                              />
-                            </label>
-                            <label className="labor-roster-new-field is-email">
-                              <span className="labor-roster-new-field-label">Email</span>
-                              <input
-                                type="email"
-                                value={newRosterEmployeeEmail}
-                                onChange={(event) => setNewRosterEmployeeEmail(event.target.value)}
-                                placeholder="name@k9resorts.com"
-                                style={{ width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", color: C.text, background: "rgba(255,255,255,0.92)", outline: "none", boxSizing: "border-box" }}
-                                onFocus={(event) => { event.target.style.borderColor = C.acc; event.target.style.boxShadow = "0 0 0 4px rgba(132,204,22,0.16)"; }}
-                                onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
-                              />
-                            </label>
-	                            <div className="labor-roster-new-field is-position">
-                              <HourAnalysisAnimatedPicker
-                                label="Position Title"
-                                value={newRosterEmployeeRole}
-                                onChange={setNewRosterEmployeeRole}
-                                options={approvedLaborPositionOptions}
-                                placeholder="Choose approved title"
-                              />
-	                            </div>
-	                            <div className="labor-roster-new-field is-commitment">
-	                              <span className="labor-roster-new-field-label">Commitment</span>
-	                              <LaborCommitmentSegmentedPicker
-	                                value={newRosterEmployeeCommitment}
-	                                onChange={setNewRosterEmployeeCommitment}
-	                              />
-	                            </div>
-	                            <label className="labor-roster-new-field is-start">
-	                              <span className="labor-roster-new-field-label">Start Date</span>
-                              <input
-                                type="date"
-                                value={newRosterEmployeeStartDate}
-                                onChange={(event) => setNewRosterEmployeeStartDate(event.target.value)}
-                                style={{ width: "100%", padding: "12px 14px", borderRadius: 14, border: `1.5px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", color: C.text, background: "rgba(255,255,255,0.92)", outline: "none", boxSizing: "border-box" }}
-                                onFocus={(event) => { event.target.style.borderColor = C.acc; event.target.style.boxShadow = "0 0 0 4px rgba(132,204,22,0.16)"; }}
-                                onBlur={(event) => { event.target.style.borderColor = C.border; event.target.style.boxShadow = "none"; }}
-                              />
-                            </label>
-                            <div className="labor-roster-new-actions">
-                              <button
-                                type="button"
-                                onClick={() => closeInlineLaborEmployeeComposer()}
-                                disabled={savingInlineLaborEmployee}
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  padding: "10px 16px",
-                                  borderRadius: 12,
-                                  border: "none",
-                                  background: "transparent",
-                                  color: C.textSec,
-                                  fontSize: 14,
-                                  fontWeight: 700,
-                                  fontFamily: "inherit",
-                                  cursor: savingInlineLaborEmployee ? "not-allowed" : "pointer",
-                                  opacity: savingInlineLaborEmployee ? 0.5 : 1,
-                                }}
-                              >
-                                Cancel
-                              </button>
-                              <button
-                                type="submit"
-                                disabled={savingInlineLaborEmployee}
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  padding: "10px 18px",
-                                  borderRadius: 14,
-                                  border: "none",
-                                  background: C.pri,
-                                  color: "#fff",
-                                  fontSize: 14,
-                                  fontWeight: 700,
-                                  fontFamily: "inherit",
-                                  cursor: savingInlineLaborEmployee ? "not-allowed" : "pointer",
-                                  opacity: savingInlineLaborEmployee ? 0.55 : 1,
-                                  boxShadow: "0 14px 28px rgba(20, 83, 45, 0.18)",
-                                }}
-                              >
-                                {savingInlineLaborEmployee ? "Saving..." : "Create Employee"}
-                              </button>
-                            </div>
-                          </div>
-                          <div style={{ marginTop: 10, fontSize: 12, color: C.textMut }}>
-                            New employees start active. Phone and email appear directly in the roster.
-                          </div>
-                        </form>
-                      </td>
-                    </tr>
-                  )}
 	                  {sortedRosterRows.map((row) => {
 	                    const rowEmployeeId = getLaborEmployeeRowId(row);
 	                    const rowName = row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ");
@@ -25861,13 +25365,6 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast,
 		                      </tr>
                     );
                   })}
-                  {sortedRosterRows.length === 0 && showInlineLaborEmployeeComposer && (
-                    <tr>
-	                      <td colSpan={5} style={{ padding: "14px 16px", fontSize: 12, color: C.textMut }}>
-                        Your first employee will land directly in the roster the moment you save this row.
-                      </td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
             </Card>

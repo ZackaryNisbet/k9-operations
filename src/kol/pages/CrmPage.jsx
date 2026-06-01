@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../supabaseClient";
 import { C, fmtDate, fmtDateFull, todayStr, addDays } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Btn, Modal, MiniDatePicker, Badge, Inp, CustomSelect } from "../../shared/ui";
+import { Btn, Modal, LogEntryModal, RecordActivityModal, StatusSelect, Badge, Inp, CustomSelect } from "../../shared/ui";
 import IgniteOnboardingWizard from "../onboarding/IgniteOnboardingWizard";
 import IgnitePipelineDiagram from "../onboarding/IgnitePipelineDiagram";
 import { FormFields } from "./crmFormFields";
@@ -22,6 +22,8 @@ import {
   StackBadge,
   RowActionButton,
   CountButton,
+  PillFilter,
+  ListSurface,
   filterRows,
 } from "../../shared/listSurface";
 import {
@@ -52,6 +54,10 @@ import {
   classifySubmissionCategory,
   updateTypeLabel,
   UPDATE_TYPES,
+  CRM_LEAD_STATUSES,
+  CRM_OPEN_STATUSES,
+  leadStatusValue,
+  getLeadStatusMeta,
 } from "../crmData";
 
 const SECTION_LABEL = {
@@ -75,6 +81,8 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   const [activeTab, setActiveTab] = useState("booking");
   const [query, setQuery] = useState("");
   const [expand, setExpand] = useState({ id: null, mode: "form" });
+  const [activityLead, setActivityLead] = useState(null);
+  const [statusFilter, setStatusFilter] = useState(() => new Set(CRM_OPEN_STATUSES));
   const [historyFilters, setHistoryFilters] = useState({ date: "", lead: "", type: "", actor: "" });
   const [logLead, setLogLead] = useState(null);
   const [showHealth, setShowHealth] = useState(false);
@@ -164,6 +172,19 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
   }, []);
 
   const openLog = useCallback((lead) => setLogLead(lead), []);
+  // Persist a lead's pipeline status (optimistic; revert on error).
+  const setLeadStatus = useCallback(async (lead, status) => {
+    const prevStatus = lead.lead_status || null;
+    setLeads((prev) => prev.map((l) => (l.id === lead.id ? { ...l, lead_status: status } : l)));
+    const { error } = await supabase.from("ignite_leads").update({ lead_status: status }).eq("id", lead.id);
+    if (error) {
+      setLeads((prev) => prev.map((l) => (l.id === lead.id ? { ...l, lead_status: prevStatus } : l)));
+      toast(error.message || "Couldn't update status.", "error");
+      return;
+    }
+    const meta = getLeadStatusMeta(status);
+    toast(`Status → ${meta.short || meta.label}`, "success");
+  }, [toast]);
   // One inline expander per row, in one of two modes — the booking form FIELDS
   // or the update LOG. Clicking the active one collapses it; clicking the other
   // switches. Both open downward beneath the row (no modal), like Marketing.
@@ -238,7 +259,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
           const count = populatedFieldCount(r);
           if (!count) return <span style={{ color: C.textMut }}>—</span>;
           const expanded = expand.id === r.id && expand.mode === "form";
-          const label = classifySubmissionCategory(r) === "employment" ? "Employment details" : "Booking form details";
+          const label = classifySubmissionCategory(r) === "employment" ? "Employment Form" : "Booking Form";
           return (
             <button
               type="button"
@@ -253,6 +274,17 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
           );
         },
       },
+      ...(activeTab === "booking" ? [{
+        key: "status",
+        header: "Status",
+        width: "154px",
+        searchable: false,
+        render: (r) => (
+          <div onClick={(e) => e.stopPropagation()} style={{ display: "flex" }}>
+            <StatusSelect value={leadStatusValue(r)} options={CRM_LEAD_STATUSES} onChange={(v) => setLeadStatus(r, v)} />
+          </div>
+        ),
+      }] : []),
       {
         key: "followup",
         header: "Follow-up",
@@ -283,7 +315,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <CountButton count={count} onClick={(e) => { e.stopPropagation(); toggleExpand(r, "log"); }} title="View update log" />
+                <CountButton count={count} onClick={(e) => { e.stopPropagation(); setActivityLead(r); }} title="View update log" />
                 <RowActionButton tone="primary" title="Log an update" onClick={(e) => { e.stopPropagation(); openLog(r); }}>
                   Log
                 </RowActionButton>
@@ -298,13 +330,24 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         },
       },
     ],
-    [updatesByLead, today, expand, openLog, toggleExpand]
+    [updatesByLead, today, expand, openLog, toggleExpand, activeTab, setLeadStatus]
   );
 
   const visibleRows = useMemo(() => {
     const scoped = filterSubmissions(leads, { category: activeTab });
-    return filterRows(scoped, query, columns);
-  }, [leads, activeTab, query, columns]);
+    const byStatus = activeTab === "booking" ? scoped.filter((r) => statusFilter.has(leadStatusValue(r))) : scoped;
+    return filterRows(byStatus, query, columns);
+  }, [leads, activeTab, query, columns, statusFilter]);
+
+  // Per-status counts for the filter pills (booking leads only).
+  const statusCounts = useMemo(() => {
+    const m = {};
+    for (const r of filterSubmissions(leads, { category: "booking" })) {
+      const v = leadStatusValue(r);
+      m[v] = (m[v] || 0) + 1;
+    }
+    return m;
+  }, [leads]);
 
   const historyRows = useMemo(() => buildLeadHistoryRows(leads, updatesByLead), [leads, updatesByLead]);
   const historyFilterOptions = useMemo(() => buildLeadHistoryFilterOptions(historyRows), [historyRows]);
@@ -345,9 +388,6 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, marginBottom: 18 }}>
       <div>
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: C.text, letterSpacing: "-0.01em" }}>CRM</h1>
-        <p style={{ marginTop: 6, marginBottom: 0, fontSize: 14, color: C.textMut }}>
-          Booking & availability form submissions from your website, ready for outreach.
-        </p>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
         {loadState !== "schema" && <HealthBadge model={health} onOpen={() => setShowHealth(true)} />}
@@ -387,9 +427,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         defaultSort={{ key: "received", direction: "desc" }}
         onRowClick={toggleExpand}
         isRowExpanded={(r) => r.id === expand.id}
-        renderExpansion={(r) => expand.mode === "log"
-          ? <UpdatesPanel lead={r} updates={leadUpdates(r, updatesByLead)} onLog={() => openLog(r)} />
-          : <SubmissionDetails lead={r} />}
+        renderExpansion={(r) => <SubmissionDetails lead={r} />}
         emptyText={emptyText}
         minWidth={1120}
         style={{ border: "none", borderRadius: 0 }}
@@ -406,14 +444,43 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
       {loadState === "schema" ? (
         <SetupNotice onStart={() => setShowWizard(true)} canStart={canSetup} />
       ) : (
-        <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden", background: C.surface }}>
-          <ListSearchRow value={query} onChange={setQuery} placeholder="Search by name, phone, or form details…" />
+        <ListSurface>
+          <ListSearchRow value={query} onChange={setQuery} placeholder="Search by name, phone, or form details…">
+            {activeTab === "booking" && (
+              <>
+                {CRM_LEAD_STATUSES.map((s) => {
+                  const on = statusFilter.has(s.value);
+                  return (
+                    <PillFilter
+                      key={s.value}
+                      active={on}
+                      count={statusCounts[s.value] || 0}
+                      title={on ? `Hide ${s.label}` : `Show ${s.label}`}
+                      onClick={() => setStatusFilter((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(s.value)) next.delete(s.value); else next.add(s.value);
+                        return next;
+                      })}
+                    >
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                        <span style={{ width: 7, height: 7, borderRadius: 999, background: s.bg, border: `1.5px solid ${s.fg}`, flexShrink: 0 }} />
+                        {s.short}
+                      </span>
+                    </PillFilter>
+                  );
+                })}
+                {statusFilter.size !== CRM_LEAD_STATUSES.length && (
+                  <button type="button" onClick={() => setStatusFilter(new Set(CRM_LEAD_STATUSES.map((x) => x.value)))} style={{ marginLeft: 2, border: "none", background: "transparent", color: C.pri, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>All</button>
+                )}
+              </>
+            )}
+          </ListSearchRow>
           <ListTabBar tabs={tabs} activeId={activeTab} onChange={(id) => { setActiveTab(id); setExpand({ id: null, mode: "form" }); }} />
           {activeTab === "history"
             ? <ListExplainer>Every logged change across your leads — who changed what, the follow-up it set, and when.</ListExplainer>
             : activeCategory && <ListExplainer>{activeCategory.explainer}</ListExplainer>}
           {body}
-        </div>
+        </ListSurface>
       )}
 
       {logLead && (
@@ -430,6 +497,38 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
           toast={toast}
         />
       )}
+
+      {activityLead && (() => {
+        const log = [...leadUpdates(activityLead, updatesByLead)].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        const acts = log.map((u) => ({
+          id: u.id,
+          actor: u.created_by_name || "Ignite",
+          timestamp: fmtDateTime(u.created_at),
+          body: u.notes,
+          meta: (
+            <>
+              <span style={{ fontWeight: 700, color: C.pri }}>{updateTypeLabel(u.update_type)}</span>
+              {u.next_follow_up_date && <span>· Next follow-up: {fmtDate(u.next_follow_up_date)}</span>}
+            </>
+          ),
+        }));
+        const lead = activityLead;
+        return (
+          <RecordActivityModal
+            title={cleanLeadName(lead) || "Submission"}
+            context={<>
+              <div style={{ marginBottom: 14 }}>
+                <StatusSelect value={leadStatusValue(lead)} options={CRM_LEAD_STATUSES} onChange={(v) => setLeadStatus(lead, v)} />
+              </div>
+              <SubmissionDetails lead={lead} />
+            </>}
+            activities={acts}
+            emptyText="No outreach logged yet."
+            onLog={() => { setActivityLead(null); openLog(lead); }}
+            onClose={() => setActivityLead(null)}
+          />
+        );
+      })()}
 
       {showWizard && (
         <IgniteOnboardingWizard
@@ -660,14 +759,14 @@ function UpdatesPanel({ lead, updates, onLog }) {
 function LogUpdateModal({ lead, profile, locationId, today, onClose, onSaved, toast }) {
   // Suggest a next-day follow-up from the moment the picker is opened.
   const recDate = addDays(today, 1);
-  const [type, setType] = useState("call");
-  const [notes, setNotes] = useState("");
-  const [date, setDate] = useState(recDate);
   const [saving, setSaving] = useState(false);
 
   const createdByName = (profile && (profile.full_name || profile.name || profile.email)) || "Staff";
 
-  const save = async () => {
+  // Persistence lives here; the clean dialog shell + Type/Notes/Follow-up fields
+  // come from the shared LogEntryModal so this surface and every other tracker
+  // log update are visually identical.
+  const save = async ({ type, notes, date }) => {
     if (saving) return;
     setSaving(true);
     const payload = buildUpdatePayload({
@@ -691,62 +790,22 @@ function LogUpdateModal({ lead, profile, locationId, today, onClose, onSaved, to
   };
 
   return (
-    <Modal title={`Log update — ${cleanLeadName(lead) || "submission"}`} onClose={onClose}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <div>
-          <div style={SECTION_LABEL}>Type</div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {UPDATE_TYPES.map((t) => {
-              const active = type === t.id;
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setType(t.id)}
-                  style={{
-                    padding: "5px 12px",
-                    borderRadius: 8,
-                    fontSize: 12,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                    border: `1.5px solid ${active ? C.pri : C.border}`,
-                    background: active ? C.priLt : "transparent",
-                    color: active ? C.pri : C.textMut,
-                  }}
-                >
-                  {t.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div>
-          <div style={SECTION_LABEL}>Notes</div>
-          <textarea
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="What happened on this outreach…"
-            rows={3}
-            autoFocus
-            style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none", background: C.bg, color: C.text }}
-            onFocus={(e) => { e.target.style.borderColor = C.pri; }}
-            onBlur={(e) => { e.target.style.borderColor = C.border; }}
-          />
-        </div>
-
-        <div>
-          <div style={SECTION_LABEL}>Next follow-up date</div>
-          <MiniDatePicker value={date} onChange={setDate} min={today} recommendedDate={recDate} recommendedHint={`Suggested follow-up: ${fmtDate(recDate)}`} />
-        </div>
-
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
-          <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
-          <Btn size="sm" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save update"}</Btn>
-        </div>
-      </div>
-    </Modal>
+    <LogEntryModal
+      title={`Log update — ${cleanLeadName(lead) || "submission"}`}
+      types={UPDATE_TYPES}
+      initialType="call"
+      notesLabel="Notes"
+      notesPlaceholder="What happened on this outreach…"
+      followUpLabel="Next follow-up date"
+      today={today}
+      minDate={today}
+      recommendedDate={recDate}
+      recommendedHint={`Suggested follow-up: ${fmtDate(recDate)}`}
+      saveLabel="Save update"
+      onClose={onClose}
+      onSave={save}
+      saving={saving}
+    />
   );
 }
 
