@@ -377,10 +377,23 @@ export function deriveFollowUp(updates) {
   return "";
 }
 
-/** Just the date part (YYYY-MM-DD) of a created_at timestamp. */
+/**
+ * Local calendar day (YYYY-MM-DD) for an instant. created_at is a timestamptz,
+ * so PostgREST hands it back in UTC ("…T02:42:00+00:00"). Slicing the first 10
+ * chars would yield the *UTC* day, which runs a day ahead of the viewer's wall
+ * clock for anything that arrives after ~8pm Eastern — so we read the local
+ * Y/M/D off a Date instead, matching how receivedTime renders the clock.
+ */
+export function localDay(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Local calendar day (YYYY-MM-DD) the lead came in, per its created_at timestamp. */
 export function receivedDate(lead) {
-  const ts = lead && lead.created_at;
-  return ts ? String(ts).slice(0, 10) : "";
+  return localDay(lead && lead.created_at);
 }
 
 /** Local wall-clock time the lead came in, e.g. "10:32 AM" — "" if unknown. */
@@ -482,7 +495,7 @@ export function buildLeadHistoryRows(leads, updatesByLead) {
 export function groupLeadHistoryByDay(rows) {
   const byDay = new Map();
   for (const r of rows || []) {
-    const day = r.createdAt ? String(r.createdAt).slice(0, 10) : "unknown";
+    const day = localDay(r.createdAt) || "unknown";
     if (!byDay.has(day)) byDay.set(day, []);
     byDay.get(day).push(r);
   }
@@ -511,7 +524,7 @@ export function buildLeadHistoryFilterOptions(rows) {
   };
 }
 
-const historyRowDay = (r) => (r && r.createdAt ? String(r.createdAt).slice(0, 10) : "");
+const historyRowDay = (r) => localDay(r && r.createdAt);
 
 /** Filter history rows by Activity Date / Lead / Type / Actor. */
 export function applyLeadHistoryFilters(rows, filters = {}) {
