@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Badge, Btn, CalendarPicker, Card, Modal } from "../../shared/ui";
+import { Badge, Btn, CalendarPicker, Card, CustomSelect, Modal } from "../../shared/ui";
 import { hasLeanPermission } from "../../shared/permissions";
 import {
   GRASSROOTS_CATEGORY_CONFIGS,
@@ -51,7 +51,6 @@ import {
   makeGrassrootsEventCloseout,
   compareGrassrootsHistoryDesc,
   filterGrassrootsHistory,
-  groupGrassrootsHistoryByDay,
   groupGrassrootsActivityAttachments,
   groupGrassrootsActivities,
   inferGrassrootsActivityAttachmentMimeType,
@@ -93,10 +92,10 @@ const HISTORY_EVENT_LABELS = {
   target_updated: "Edited",
   target_moved: "Moved",
   target_deleted: "Deleted",
-  development_logged: "Development",
-  drop_logged: "Drop",
-  development_updated: "Edited Development",
-  drop_updated: "Edited Drop",
+  development_logged: "Logged development",
+  drop_logged: "Logged visit",
+  development_updated: "Edited development",
+  drop_updated: "Edited visit",
 };
 
 const GOOGLE_PLACES_API_KEY = import.meta.env?.VITE_GOOGLE_PLACES_API_KEY || "";
@@ -521,22 +520,6 @@ function getTargetHistoryChanges(entry) {
 function getHistoryChanges(entry) {
   const activityChanges = getActivityHistoryChanges(entry);
   return activityChanges.length > 0 ? activityChanges : getTargetHistoryChanges(entry);
-}
-
-// Calm, distinct dot color per category for the cross-category History feed
-// (a colored dot + text label, never a decorative icon).
-const HISTORY_CATEGORY_DOT = {
-  events: C.pri,
-  drops: C.info,
-  corporate_partnerships: C.acc,
-  apartments: C.warn,
-  pet_professional_partnerships: "#7C3AED",
-  local_business_partnerships: "#0891B2",
-  schools: "#DB2777",
-};
-
-function historyCategoryColor(category) {
-  return HISTORY_CATEGORY_DOT[category] || C.textMut;
 }
 
 function buildTargetPayload(draft, locationId, actor) {
@@ -2186,94 +2169,27 @@ function FilterIcon() {
   );
 }
 
-// Standardized history row — matches the shared HistoryFeed pattern: a semantic
-// <Badge> event chip, a natural-language summary (+ optional category suffix and
-// field-level change lines), and a right-aligned time.
-function HistoryList({ items, emptyText = "No history yet.", showCategory = false }) {
-  const rows = [...(items || [])].sort(compareGrassrootsHistoryDesc);
-  if (rows.length === 0) {
-    return <div style={{ fontSize: 12, color: C.textMut }}>{emptyText}</div>;
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {rows.map((entry) => {
-        const changes = getHistoryChanges(entry);
-        const categoryLabel = showCategory ? getGrassrootsCategoryConfig(entry.category).label : null;
-        return (
-          <div key={entry.id} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "10px 14px", border: `1px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-            <Badge size="sm" color={historyEventBadgeColor(entry.event_type)}>{historyEventLabel(entry.event_type)}</Badge>
-            <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: C.text, lineHeight: 1.45 }}>
-              <div style={{ wordBreak: "break-word" }}>
-                {summarizeMarketingHistoryEntry(entry)}
-                {categoryLabel && <span style={{ color: C.textMut }}> · {categoryLabel}</span>}
-              </div>
-              {changes.length > 0 && (
-                <div style={{ marginTop: 4, display: "grid", gap: 2, fontSize: 12, color: C.textMut }}>
-                  {changes.map((change) => (
-                    <div key={change.label} style={{ wordBreak: "break-word" }}>
-                      <span style={{ fontWeight: 700, color: C.textSec }}>{change.label}:</span>{" "}
-                      {change.before !== "None" && (
-                        <><span style={{ textDecoration: "line-through", opacity: 0.6 }}>{change.before}</span>{" → "}</>
-                      )}
-                      <span style={{ color: C.text }}>{change.after}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div style={{ fontSize: 12, color: C.textMut, flexShrink: 0, whiteSpace: "nowrap" }}>
-              {fmtHistoryTime(entry.event_at || entry.created_at)}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// Map each tracker event type onto a shared Badge semantic color.
-const HISTORY_EVENT_BADGE_COLOR = {
-  target_created: "success",
-  target_updated: "info",
-  target_moved: "warning",
-  target_deleted: "danger",
-  development_logged: "primary",
-  drop_logged: "primary",
-  development_updated: "info",
-  drop_updated: "info",
+// Compact table styling for the Marketing History tab — mirrors the Training
+// History table (tight uppercase header + roster-style cells).
+const HISTORY_TH = {
+  padding: "9px 12px",
+  fontSize: 10.5,
+  fontWeight: 900,
+  color: C.textMut,
+  textTransform: "uppercase",
+  letterSpacing: 0,
+  borderBottom: `2px solid ${C.border}`,
+  textAlign: "left",
+  whiteSpace: "nowrap",
+  background: C.bg,
+  position: "sticky",
+  top: 0,
+  zIndex: 1,
 };
+const HISTORY_TD = { padding: "11px 12px", fontSize: 12.5, lineHeight: 1.35, fontWeight: 700, color: C.text, verticalAlign: "top" };
+const HISTORY_TD_SECONDARY = { ...HISTORY_TD, color: C.textSec, fontWeight: 650 };
 
-function historyEventBadgeColor(eventType) {
-  return HISTORY_EVENT_BADGE_COLOR[eventType] || "default";
-}
-
-// Past-tense verb phrase per event type, for a natural-language row summary.
-const HISTORY_EVENT_VERB = {
-  target_created: "added",
-  target_updated: "edited",
-  target_moved: "moved",
-  target_deleted: "deleted",
-  development_logged: "logged development for",
-  drop_logged: "logged a visit to",
-  development_updated: "edited development for",
-  drop_updated: "edited a visit for",
-};
-
-function summarizeMarketingHistoryEntry(entry) {
-  const who = historyActorName(entry);
-  const name = (entry?.target_name || "").trim() || "a record";
-  const verb = HISTORY_EVENT_VERB[entry?.event_type] || "changed";
-  return `${who} ${verb} ${name}`;
-}
-
-// Full-date day heading, e.g. "Sunday, May 31, 2026" (matches the shared feed).
-function historyDayHeading(dayKey) {
-  if (!dayKey) return "Earlier";
-  const date = new Date(`${dayKey}T12:00:00`);
-  if (Number.isNaN(date.getTime())) return dayKey;
-  return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-}
+const HISTORY_RENDER_CAP = 400;
 
 function fmtHistoryTime(value) {
   if (!value) return "";
@@ -2282,108 +2198,132 @@ function fmtHistoryTime(value) {
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
-const HISTORY_RENDER_CAP = 400;
-
-// The Marketing "History" tab: one chronological, cross-category audit feed of every
-// create / edit / move / delete / logged visit, grouped by day and filterable by
-// category. Supersedes the old per-category History side panel.
-function MarketingHistoryView({ history, search, categoryFilter, onCategoryFilter }) {
-  const categoryCounts = useMemo(() => {
-    const counts = new Map();
-    for (const entry of history || []) {
-      if (!entry) continue;
-      counts.set(entry.category, (counts.get(entry.category) || 0) + 1);
-    }
-    return counts;
-  }, [history]);
-
-  const filtered = useMemo(
-    () => filterGrassrootsHistory(history, { category: categoryFilter, search }),
-    [history, categoryFilter, search],
+// One row in the Marketing History table: When · Category · Action · Row / Change · Person.
+function MarketingHistoryRow({ entry }) {
+  const changes = getHistoryChanges(entry);
+  const categoryLabel = getGrassrootsCategoryConfig(entry.category).label;
+  const ts = entry.event_at || entry.created_at;
+  return (
+    <tr
+      style={{ borderBottom: `1px solid ${C.borderLight}` }}
+      onMouseEnter={(event) => { event.currentTarget.style.background = C.surfaceHover; }}
+      onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
+    >
+      <td style={{ ...HISTORY_TD_SECONDARY, whiteSpace: "nowrap" }}>
+        <div style={{ color: C.text, fontWeight: 800 }}>{fmtDate(ts)}</div>
+        <div style={{ fontSize: 11, color: C.textMut, fontWeight: 600 }}>{fmtHistoryTime(ts)}</div>
+      </td>
+      <td style={{ ...HISTORY_TD, whiteSpace: "nowrap" }}>{categoryLabel}</td>
+      <td style={{ ...HISTORY_TD, whiteSpace: "nowrap" }}>{historyEventLabel(entry.event_type)}</td>
+      <td style={{ ...HISTORY_TD_SECONDARY, minWidth: 280 }}>
+        <div style={{ color: C.text, fontWeight: 800 }}>{entry.target_name || "Untitled row"}</div>
+        {changes.length > 0 && (
+          <div style={{ marginTop: 5, display: "grid", gap: 3 }}>
+            {changes.map((change) => (
+              <div key={change.label} style={{ fontSize: 11.5, color: C.textMut, lineHeight: 1.4 }}>
+                <span style={{ fontWeight: 800, color: C.textSec }}>{change.label}:</span>{" "}
+                {change.before !== "None" && (
+                  <><span style={{ textDecoration: "line-through", opacity: 0.6 }}>{change.before}</span>{" → "}</>
+                )}
+                <span style={{ color: C.text, fontWeight: 700 }}>{change.after}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </td>
+      <td style={{ ...HISTORY_TD_SECONDARY, whiteSpace: "nowrap" }}>{historyActorName(entry)}</td>
+    </tr>
   );
-  const capped = useMemo(() => filtered.slice(0, HISTORY_RENDER_CAP), [filtered]);
-  const groups = useMemo(() => groupGrassrootsHistoryByDay(capped), [capped]);
-  const hiddenCount = filtered.length - capped.length;
-  const totalCount = (history || []).length;
+}
 
-  const pills = [
-    { key: "all", label: "All", color: C.text, count: totalCount },
-    ...GRASSROOTS_CATEGORY_CONFIGS
-      .filter((config) => categoryCounts.get(config.dbValue))
-      .map((config) => ({
-        key: config.dbValue,
-        label: config.label,
-        color: historyCategoryColor(config.dbValue),
-        count: categoryCounts.get(config.dbValue),
-      })),
-  ];
+// The Marketing "History" tab: one cross-category audit table of every create /
+// edit / move / delete / logged visit. Mirrors the Training History table —
+// Card + header + filter toolbar + When · Category · Action · Row/Change · Person.
+function MarketingHistoryView({ history, search, categoryFilter, onCategoryFilter, actorFilter, onActorFilter, onClearFilters }) {
+  const sorted = useMemo(() => [...(history || [])].sort(compareGrassrootsHistoryDesc), [history]);
+
+  const categoryOptions = useMemo(() => {
+    const present = new Set(sorted.map((entry) => entry.category));
+    return [
+      { value: "all", label: "All categories" },
+      ...GRASSROOTS_CATEGORY_CONFIGS
+        .filter((config) => present.has(config.dbValue))
+        .map((config) => ({ value: config.dbValue, label: config.label })),
+    ];
+  }, [sorted]);
+
+  const actorOptions = useMemo(() => {
+    const names = [...new Set(sorted.map((entry) => historyActorName(entry)))].sort((a, b) => a.localeCompare(b));
+    return [{ value: "all", label: "All people" }, ...names.map((name) => ({ value: name, label: name }))];
+  }, [sorted]);
+
+  const filtered = useMemo(() => {
+    const base = filterGrassrootsHistory(sorted, { category: categoryFilter, search });
+    if (!actorFilter || actorFilter === "all") return base;
+    return base.filter((entry) => historyActorName(entry) === actorFilter);
+  }, [sorted, categoryFilter, search, actorFilter]);
+
+  const capped = useMemo(() => filtered.slice(0, HISTORY_RENDER_CAP), [filtered]);
+  const hiddenCount = filtered.length - capped.length;
+  const totalCount = sorted.length;
+  const filterCount = (categoryFilter && categoryFilter !== "all" ? 1 : 0) + (actorFilter && actorFilter !== "all" ? 1 : 0);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {pills.length > 1 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {pills.map((pill) => {
-            const on = (categoryFilter || "all") === pill.key;
-            return (
-              <button
-                key={pill.key}
-                onClick={() => onCategoryFilter(pill.key)}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "4px 10px",
-                  borderRadius: 999,
-                  border: `1.5px solid ${on ? C.pri : C.border}`,
-                  background: on ? C.pri : "transparent",
-                  color: on ? "#fff" : C.textSec,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {pill.key !== "all" && (
-                  <span style={{ width: 7, height: 7, borderRadius: 999, background: on ? "#fff" : pill.color, flexShrink: 0 }} />
-                )}
-                {pill.label}
-                <span style={{ fontWeight: 800, opacity: on ? 0.9 : 0.55 }}>{pill.count}</span>
-              </button>
-            );
-          })}
+    <Card style={{ padding: 0, overflow: "hidden", borderRadius: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap", padding: "16px 18px", borderBottom: `1px solid ${C.borderLight}` }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: C.text }}>Marketing History</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: C.textMut, fontWeight: 700 }}>Create, edit, move, delete, and logged-visit activity across all marketing categories.</div>
         </div>
-      )}
+        <Badge color={filtered.length > 0 ? "info" : "default"}>{filtered.length} shown</Badge>
+      </div>
 
-      {groups.length === 0 ? (
-        <div style={{ padding: "56px 24px", textAlign: "center", color: C.textMut }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
-            {totalCount === 0 ? "No changes recorded yet" : "No changes match your filters"}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12, flexWrap: "wrap", padding: "12px 18px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ minWidth: 200 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, marginBottom: 4 }}>Category</div>
+            <CustomSelect value={categoryFilter || "all"} onChange={onCategoryFilter} options={categoryOptions} small />
           </div>
-          <div style={{ fontSize: 12.5, marginTop: 4 }}>
-            {totalCount === 0
-              ? "Adds, edits, moves, and logged visits will show up here as your team works the tracker."
-              : "Try a different category or clear the search."}
+          <div style={{ minWidth: 200 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, marginBottom: 4 }}>Person</div>
+            <CustomSelect value={actorFilter || "all"} onChange={onActorFilter} options={actorOptions} small searchable searchPlaceholder="Search people" />
           </div>
         </div>
+        <Btn variant="ghost" size="sm" onClick={onClearFilters} disabled={filterCount === 0}>
+          Clear Filters{filterCount > 0 ? ` (${filterCount})` : ""}
+        </Btn>
+      </div>
+
+      {totalCount === 0 ? (
+        <div style={{ padding: 28, textAlign: "center", color: C.textMut, fontSize: 13 }}>No marketing history has been logged yet.</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ padding: 28, textAlign: "center", color: C.textMut, fontSize: 13 }}>No marketing history matches the current filters.</div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-          {groups.map((group) => (
-            <div key={group.dayKey || "unknown"}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>
-                {historyDayHeading(group.dayKey)}
-              </div>
-              <HistoryList items={group.entries} showCategory />
-            </div>
-          ))}
+        <div style={{ maxHeight: "70vh", overflow: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={HISTORY_TH}>When</th>
+                <th style={HISTORY_TH}>Category</th>
+                <th style={HISTORY_TH}>Action</th>
+                <th style={HISTORY_TH}>Row / Change</th>
+                <th style={HISTORY_TH}>Person</th>
+              </tr>
+            </thead>
+            <tbody>
+              {capped.map((entry) => (
+                <MarketingHistoryRow key={entry.id} entry={entry} />
+              ))}
+            </tbody>
+          </table>
           {hiddenCount > 0 && (
-            <div style={{ textAlign: "center", fontSize: 12, color: C.textMut, fontWeight: 600, paddingTop: 4 }}>
-              Showing the {HISTORY_RENDER_CAP} most recent changes · {hiddenCount} older {hiddenCount === 1 ? "entry" : "entries"} hidden. Filter by category or search to narrow.
+            <div style={{ padding: "12px 14px", textAlign: "center", color: C.textMut, fontSize: 12 }}>
+              Showing the {HISTORY_RENDER_CAP} most recent of {filtered.length} matching changes. Narrow with the filters above.
             </div>
           )}
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -3945,6 +3885,7 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
   const [draftFilters, setDraftFilters] = useState(() => getGrassrootsDefaultFilters("events"));
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [historyCategoryFilter, setHistoryCategoryFilter] = useState("all");
+  const [historyActorFilter, setHistoryActorFilter] = useState("all");
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [configuringFilterKey, setConfiguringFilterKey] = useState(null);
   const [filterPickerReady, setFilterPickerReady] = useState(false);
@@ -6698,6 +6639,9 @@ export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
           search={lifecycleSearch}
           categoryFilter={historyCategoryFilter}
           onCategoryFilter={setHistoryCategoryFilter}
+          actorFilter={historyActorFilter}
+          onActorFilter={setHistoryActorFilter}
+          onClearFilters={() => { setHistoryCategoryFilter("all"); setHistoryActorFilter("all"); }}
         />
       ) : (
         <div key={activeCategory} className="grassroots-category-stage" style={{ display: "grid", gap: 12 }}>
