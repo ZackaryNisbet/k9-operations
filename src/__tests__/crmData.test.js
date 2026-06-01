@@ -309,7 +309,7 @@ describe("canonical form fields — one defined list per category", () => {
   it("booking renders one fixed, ordered list, normalizing synonym keys", () => {
     const fields = canonicalFormFields(bookingLead);
     expect(fields.map((f) => f.label)).toEqual([
-      "Email", "Phone", "Preferred time to reach", "ZIP", "City", "State",
+      "Email", "Phone", "Preferred time to reach", "State", "City", "ZIP",
       "Desired service", "Desired date(s)", "Details",
     ]);
     expect(fields.find((f) => f.key === "email").value).toBe("JMBMartinez.jmm@gmail.com");
@@ -339,7 +339,7 @@ describe("canonical form fields — one defined list per category", () => {
     expect(groups.map((g) => g.id)).toEqual(["contact", "location", "request"]);
     expect(groups.map((g) => g.label)).toEqual(["Contact", "Location", "Request"]);
     expect(groups[0].fields.map((f) => f.key)).toEqual(["email", "phone", "preferred_time"]);
-    expect(groups[1].fields.map((f) => f.key)).toEqual(["zip", "city", "state"]);
+    expect(groups[1].fields.map((f) => f.key)).toEqual(["state", "city", "zip"]);
     expect(groups[2].fields.map((f) => f.key)).toEqual(["desired_service", "desired_dates", "details"]);
     expect(groups[2].fields.find((f) => f.key === "desired_service").emphasis).toBe(true);
   });
