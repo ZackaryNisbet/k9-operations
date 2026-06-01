@@ -884,6 +884,22 @@ export function compareGrassrootsHistoryDesc(a, b) {
   return String(b?.event_at || b?.created_at || "").localeCompare(String(a?.event_at || a?.created_at || ""));
 }
 
+// Filter the flat history feed for the Marketing History tab. `category` is a db
+// value (e.g. "events", "local_business_partnerships") or "all"; `search` matches
+// the row name, the change summary, or who made the change (case-insensitive).
+export function filterGrassrootsHistory(history = [], { category = "all", search = "" } = {}) {
+  const term = String(search || "").trim().toLowerCase();
+  return (history || []).filter((entry) => {
+    if (!entry) return false;
+    if (category && category !== "all" && entry.category !== category) return false;
+    if (!term) return true;
+    return [entry.target_name, entry.summary, entry.actor_name]
+      .map((value) => String(value || "").toLowerCase())
+      .join(" ")
+      .includes(term);
+  });
+}
+
 export function calculateGrassrootsCpl(cost, leadsCaptured) {
   const parsedCost = Number(cost);
   const parsedLeads = Number(leadsCaptured);
