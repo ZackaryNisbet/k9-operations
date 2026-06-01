@@ -14,12 +14,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from "../../supabaseClient";
 import { C, fmtPhoneInput } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Btn, CalendarPicker, Inp, Modal } from "../../shared/ui";
+import { Btn, Inp, LogEntryModal, Modal } from "../../shared/ui";
 import {
   DenseTable,
   IconButton,
   ListExplainer,
   ListSearchRow,
+  ListSurface,
   ListSurfaceTitle,
   ListTabBar,
   RowActionButton,
@@ -508,43 +509,12 @@ function fmtUpdateStamp(value) {
 }
 
 // Inline updates area beneath an org row — a verbatim copy of the marketing
-// tracker's Updates expansion: an optional Log composer on top, then every
-// historical update (actor — date · time / text), newest first.
-function UpdatesExpansion({ feed, logging, logBody, onLogBodyChange, logNextDate, onLogNextDateChange, onCancelLog, onSaveLog, savingLog, canManage }) {
+// tracker's Updates expansion: every historical update (actor — date · time /
+// text), newest first. The Log composer itself now lives in the shared
+// LogEntryModal (opened from the row's Log button), not inline here.
+function UpdatesExpansion({ feed }) {
   return (
     <div style={{ background: C.bg, borderLeft: `3px solid ${C.pri}` }}>
-      {logging && canManage ? (
-        <div style={{ padding: "12px 14px", borderBottom: feed.length > 0 ? `1px solid ${C.borderLight}` : "none" }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: C.pri, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            Log Update
-          </div>
-          <textarea
-            value={logBody}
-            onChange={(e) => onLogBodyChange(e.target.value)}
-            placeholder="Notes about this outreach / development..."
-            rows={5}
-            style={{ width: "100%", minHeight: 110, padding: "10px 12px", border: `1.5px solid ${C.pri}`, borderRadius: 6, fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none", boxSizing: "border-box" }}
-            autoFocus
-          />
-
-          <div style={{ marginTop: 6 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-              Next Follow-Up Date <span style={{ fontWeight: 600, color: C.textMut, textTransform: "none", letterSpacing: 0 }}>(optional)</span>
-            </div>
-            <CalendarPicker value={logNextDate || ""} min={new Date().toISOString().slice(0, 10)} onChange={onLogNextDateChange} />
-          </div>
-
-          <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
-            <button onClick={onCancelLog} style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-              Cancel
-            </button>
-            <button onClick={onSaveLog} disabled={savingLog || !logBody.trim()} style={{ padding: "6px 16px", borderRadius: 6, border: "none", background: C.pri, color: "#fff", fontSize: 12, fontWeight: 700, cursor: savingLog ? "default" : "pointer", fontFamily: "inherit", opacity: savingLog || !logBody.trim() ? 0.7 : 1 }}>
-              {savingLog ? "Saving..." : "Save Log"}
-            </button>
-          </div>
-        </div>
-      ) : null}
-
       {feed.length > 0 ? (
         <div style={{ padding: "8px 14px 4px" }}>
           {feed.map((row, idx, arr) => (
@@ -555,7 +525,9 @@ function UpdatesExpansion({ feed, logging, logBody, onLogBodyChange, logNextDate
             </div>
           ))}
         </div>
-      ) : (!logging ? <div style={{ padding: "10px 14px", fontSize: 11, color: C.textMut }}>No updates yet — click Log to add one.</div> : null)}
+      ) : (
+        <div style={{ padding: "10px 14px", fontSize: 11, color: C.textMut }}>No updates yet — click Log to add one.</div>
+      )}
     </div>
   );
 }
@@ -588,8 +560,6 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   const [saving, setSaving] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [preview, setPreview] = useState(null); // { attachment, url, loading }
-  const [logBody, setLogBody] = useState("");
-  const [logNextDate, setLogNextDate] = useState("");
   const [savingLog, setSavingLog] = useState(false);
 
   const toast = useCallback((message, type = "success") => addGlobalToast(message, type), [addGlobalToast]);
@@ -652,7 +622,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   // updates mode is a verbatim copy of the marketing tracker's updates column.
   const toggleContacts = useCallback((id) => setExpandedRow((prev) => (prev && prev.id === id && prev.mode === "contacts" ? null : { id, mode: "contacts" })), []);
   const openUpdates = useCallback((id) => setExpandedRow((prev) => (prev && prev.id === id && prev.mode === "updates" && !prev.logging ? null : { id, mode: "updates", logging: false })), []);
-  const openLog = useCallback((id) => { setLogBody(""); setLogNextDate(""); setExpandedRow((prev) => (prev && prev.id === id && prev.mode === "updates" && prev.logging ? null : { id, mode: "updates", logging: true })); }, []);
+  const openLog = useCallback((id) => { setExpandedRow((prev) => (prev && prev.id === id && prev.mode === "updates" && prev.logging ? null : { id, mode: "updates", logging: true })); }, []);
   const cancelLog = useCallback(() => setExpandedRow((prev) => (prev ? { ...prev, logging: false } : prev)), []);
 
   // ── editor lifecycle ──
@@ -843,17 +813,17 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
     setPreview({ attachment, url: data?.signedUrl || "", loading: false });
   };
 
-  // Save an inline Log Update (a directory note) for the expanded org.
-  const saveLog = async () => {
-    const body = logBody.trim();
+  // Save a Log Update (a directory note) for the expanded org. The composer now
+  // lives in the shared LogEntryModal, which owns its own notes/date state and
+  // hands them back here on save.
+  const saveLog = async ({ notes: body, date: nextContactDate }) => {
+    const trimmed = String(body || "").trim();
     const orgId = expandedRow?.id;
-    if (!body || !orgId || !locationId) return;
+    if (!trimmed || !orgId || !locationId) return;
     setSavingLog(true);
     try {
-      const { error } = await supabase.from("marketing_directory_notes").insert(buildDirectoryNotePayload(body, locationId, actor, { orgId, nextContactDate: logNextDate }));
+      const { error } = await supabase.from("marketing_directory_notes").insert(buildDirectoryNotePayload(trimmed, locationId, actor, { orgId, nextContactDate: nextContactDate || "" }));
       if (error) throw error;
-      setLogBody("");
-      setLogNextDate("");
       setExpandedRow((prev) => (prev ? { ...prev, logging: false } : prev));
       await loadDirectory();
       toast("Update logged");
@@ -1084,6 +1054,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
 
       <ListSurfaceTitle actions={titleActions}>Marketing Directory</ListSurfaceTitle>
 
+      <ListSurface>
       <ListTabBar
         tabs={[{ id: "directory", label: "Directory", count: counts.total }, { id: "history", label: "History", count: history.length }]}
         activeId={tab}
@@ -1121,21 +1092,11 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
               rows={visibleEntries}
               getRowKey={(e) => `${e.kind}:${e.id}`}
               minWidth={1000}
+              style={{ border: "none", borderRadius: 0 }}
               onRowClick={(e) => toggleContacts(e.id)}
               isRowExpanded={(e) => Boolean(expandedRow && expandedRow.id === e.id)}
               renderExpansion={(e) => (expandedRow && expandedRow.mode === "updates" ? (
-                <UpdatesExpansion
-                  feed={buildDirectoryUpdatesFeed(e.org, { notes, history })}
-                  logging={Boolean(expandedRow.logging)}
-                  logBody={logBody}
-                  onLogBodyChange={setLogBody}
-                  logNextDate={logNextDate}
-                  onLogNextDateChange={setLogNextDate}
-                  onCancelLog={cancelLog}
-                  onSaveLog={saveLog}
-                  savingLog={savingLog}
-                  canManage={canManage}
-                />
+                <UpdatesExpansion feed={buildDirectoryUpdatesFeed(e.org, { notes, history })} />
               ) : (
                 <DirectoryExpansion
                   entry={e}
@@ -1164,10 +1125,12 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
               minWidth={560}
               defaultSort={{ key: "when", direction: "desc" }}
               emptyText="No changes recorded yet."
+              style={{ border: "none", borderRadius: 0 }}
             />
           </div>
         </>
       )}
+      </ListSurface>
 
       {editor ? (
         <DirectoryEditorModal
@@ -1196,6 +1159,28 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
 
       {importOpen ? (
         <ImportModal candidates={importCandidates} saving={saving} onClose={() => setImportOpen(false)} onImport={importSelected} />
+      ) : null}
+
+      {expandedRow && expandedRow.mode === "updates" && expandedRow.logging && canManage ? (
+        (() => {
+          const logOrg = orgs.find((o) => o.id === expandedRow.id);
+          const logName = logOrg ? getDirectoryOrgName(logOrg) : "";
+          return (
+            <LogEntryModal
+              title={logName ? `Log update — ${logName}` : "Log update"}
+              types={null}
+              notesLabel="Notes"
+              notesPlaceholder="Notes about this outreach / development…"
+              followUpLabel="Next follow-up date"
+              followUpOptional
+              today={new Date().toISOString().slice(0, 10)}
+              saveLabel="Save log"
+              saving={savingLog}
+              onClose={cancelLog}
+              onSave={saveLog}
+            />
+          );
+        })()
       ) : null}
 
       {preview ? (

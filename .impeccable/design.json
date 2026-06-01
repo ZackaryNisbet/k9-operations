@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-05-28T12:35:00Z",
+  "title": "Design System: K9 Operations",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Deep Forest Green",
+        "canonical": "#14532D",
+        "tonalRamp": ["#0A2F18", "#0F3D22", "#14532D", "#1A6538", "#2E7A4A", "#5A9A6C", "#A3C9A8", "#E8F5E9"]
+      },
+      "accent": {
+        "role": "accent",
+        "displayName": "Electric Lime",
+        "canonical": "#84CC16",
+        "tonalRamp": ["#3D5C0A", "#527F0E", "#6B9F12", "#84CC16", "#A3E040", "#C5F07A", "#E2F8B8", "#F5FEE6"]
+      },
+      "primary-tint": {
+        "role": "neutral",
+        "displayName": "Canopy Cream",
+        "canonical": "#F7FEE7",
+        "tonalRamp": ["#E8F5D8", "#F0F9E0", "#F7FEE7", "#FAFFF0", "#FCFFF6", "#FDFFFA", "#FEFFFD", "#FFFFFF"]
+      }
+    },
+    "typographyMeta": {
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default reading and dense data tables."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Column headers, badges, metadata. Uppercase with tracking."
+      }
+    },
+    "shadows": [
+      {
+        "name": "subtle",
+        "value": "0 1px 3px rgba(20, 83, 45, 0.3)",
+        "purpose": "Primary and accent button elevation."
+      },
+      {
+        "name": "popover",
+        "value": "0 8px 30px rgba(0,0,0,0.15)",
+        "purpose": "Dropdowns, popovers, and lifted surfaces."
+      }
+    ],
+    "motion": [
+      {
+        "name": "standard",
+        "value": "cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Default easing for state transitions. 150-250ms duration."
+      }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Main call-to-action button. Used for primary actions across the app.",
+      "html": "<button class=\"ds-btn-primary\">Save Changes</button>",
+      "css": ".ds-btn-primary { background: #14532D; color: #fff; padding: 10px 22px; border: none; border-radius: 12px; font-weight: 600; font-size: 14px; letter-spacing: 0.01em; cursor: pointer; transition: background 0.18s cubic-bezier(0.4,0,0.2,1), box-shadow 0.18s cubic-bezier(0.4,0,0.2,1); box-shadow: 0 1px 3px rgba(20,83,45,0.3); } .ds-btn-primary:hover { background: #166534; box-shadow: 0 2px 6px rgba(20,83,45,0.35); } .ds-btn-primary:focus-visible { outline: 2px solid #84CC16; outline-offset: 2px; } .ds-btn-primary:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Accent Button",
+      "kind": "button",
+      "refersTo": "button-accent",
+      "description": "High-energy accent action (used for primary positive actions).",
+      "html": "<button class=\"ds-btn-accent\">Log Activity</button>",
+      "css": ".ds-btn-accent { background: #84CC16; color: #fff; padding: 10px 22px; border: none; border-radius: 12px; font-weight: 600; font-size: 14px; letter-spacing: 0.01em; cursor: pointer; transition: background 0.18s cubic-bezier(0.4,0,0.2,1); } .ds-btn-accent:hover { background: #6B9F12; } .ds-btn-accent:focus-visible { outline: 2px solid #14532D; outline-offset: 2px; }"
+    },
+    {
+      "name": "Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Status and category labels. Pill shaped with high contrast.",
+      "html": "<span class=\"ds-badge\">Booked</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.02em; background: #F7FEE7; color: #14532D; white-space: nowrap; }"
+    },
+    {
+      "name": "Modal / Dialog",
+      "kind": "modal",
+      "refersTo": "modal",
+      "description": "Shared modal primitive for focused, blocking tasks (create/edit forms, logging an update, viewing one record's activity). Renders through a PORTAL to document.body so its position:fixed backdrop always covers the FULL viewport with the standard scrim+blur — never trapped to a transformed/filtered/animated ancestor (the Marketing partial-blur bug). It is the canonical activity/record-view surface: RecordActivityModal (grouped record context + reverse-chron history + 'Log update' CTA) opens here, not as an inline row drawer. Fixed dimmed+blurred backdrop, centered white panel with 20px radius and a soft layered shadow, sticky header (18px/700 title left, hover-lit close X right, 1px border-light bottom border), 24px body that scrolls internally under a ~90vh cap, and a right-aligned footer (ghost Cancel, then a verb-noun primary). Default 520px; wide is 720px. Esc and backdrop click close; focus moves to the first field on open and returns to the opener on close; one modal at a time, never nested. role=dialog, aria-modal=true, labelled by the title.",
+      "html": "<div class=\"ds-modal-backdrop\">\n  <div class=\"ds-modal\" role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"ds-modal-title\">\n    <header class=\"ds-modal__header\">\n      <h2 id=\"ds-modal-title\" class=\"ds-modal__title\">Log update</h2>\n      <button class=\"ds-modal__close\" aria-label=\"Close\">&times;</button>\n    </header>\n    <div class=\"ds-modal__body\">\n      <label class=\"ds-modal__label\" for=\"ds-modal-notes\">Notes</label>\n      <textarea id=\"ds-modal-notes\" class=\"ds-modal__input\" rows=\"4\" placeholder=\"What happened?\"></textarea>\n    </div>\n    <footer class=\"ds-modal__footer\">\n      <button class=\"ds-modal__btn-ghost\">Cancel</button>\n      <button class=\"ds-modal__btn-primary\">Save update</button>\n    </footer>\n  </div>\n</div>",
+      "css": ".ds-modal-backdrop { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(15,23,42,0.48); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: ds-modal-fade 0.18s cubic-bezier(0.4,0,0.2,1); } .ds-modal { width: 520px; max-width: 100%; max-height: 90vh; display: flex; flex-direction: column; background: #FFFFFF; border-radius: 20px; box-shadow: 0 1px 2px rgba(15,23,42,0.06), 0 12px 40px rgba(15,23,42,0.18); overflow: hidden; animation: ds-modal-rise 0.2s cubic-bezier(0.4,0,0.2,1); } .ds-modal--wide { width: 720px; } .ds-modal__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px 24px; border-bottom: 1px solid #F1F5F9; } .ds-modal__title { margin: 0; font-size: 18px; font-weight: 700; color: #0F172A; } .ds-modal__close { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: none; border-radius: 8px; background: transparent; color: #475569; font-size: 20px; line-height: 1; cursor: pointer; transition: background 0.15s cubic-bezier(0.4,0,0.2,1), color 0.15s cubic-bezier(0.4,0,0.2,1); } .ds-modal__close:hover { background: #F8FAFC; color: #0F172A; } .ds-modal__body { padding: 24px; overflow-y: auto; } .ds-modal__label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 700; color: #475569; } .ds-modal__input { width: 100%; box-sizing: border-box; padding: 9px 12px; border: 1px solid #E2E8F0; border-radius: 10px; font-size: 14px; color: #0F172A; font-family: inherit; resize: vertical; transition: border-color 0.15s cubic-bezier(0.4,0,0.2,1), box-shadow 0.15s cubic-bezier(0.4,0,0.2,1); } .ds-modal__input:focus { outline: none; border-color: #14532D; box-shadow: 0 0 0 3px rgba(20,83,45,0.12); } .ds-modal__footer { display: flex; justify-content: flex-end; gap: 8px; padding: 16px 24px; border-top: 1px solid #F1F5F9; } .ds-modal__btn-ghost { background: transparent; color: #475569; padding: 9px 16px; border: 1px solid transparent; border-radius: 12px; font-weight: 600; font-size: 14px; cursor: pointer; transition: background 0.15s cubic-bezier(0.4,0,0.2,1); } .ds-modal__btn-ghost:hover { background: #F8FAFC; color: #0F172A; } .ds-modal__btn-primary { background: #14532D; color: #fff; padding: 9px 18px; border: none; border-radius: 12px; font-weight: 600; font-size: 14px; letter-spacing: 0.01em; cursor: pointer; box-shadow: 0 1px 3px rgba(20,83,45,0.3); transition: background 0.18s cubic-bezier(0.4,0,0.2,1); } .ds-modal__btn-primary:hover { background: #166534; } .ds-modal__btn-primary:focus-visible { outline: 2px solid #84CC16; outline-offset: 2px; } @media (prefers-reduced-motion: reduce) { .ds-modal-backdrop, .ds-modal { animation: none; } } @keyframes ds-modal-fade { from { opacity: 0; } to { opacity: 1; } } @keyframes ds-modal-rise { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quietly Competent Operations Hub",
+    "overview": "The system is deliberately clean and minimalistic on the surface. It earns its appeal through extreme clarity and thoughtful restraint rather than visual noise. Staff should feel an immediate sense of calm competence when they open it — like opening a well-organized, battle-tested operations binder that has been refined by someone who truly understands the work.\n\nUnderneath the simplicity is sophisticated craft: precise interactions, excellent feedback, and subtle motion that only appears when it serves a purpose. The interface should feel like it was built by a highly skilled engineer who respects the user’s time and environment. It is attractive because it is *good*, not because it is decorated.\n\nThis system explicitly rejects consumer-cute pet-industry aesthetics, bloated modern SaaS “delight,” and fragile or precious interfaces.",
+    "keyCharacteristics": [
+      "Extreme visual calm and scannability",
+      "High information density without feeling cramped",
+      "Sophistication expressed through precision and restraint",
+      "Practical and reliable above all else"
+    ],
+    "rules": [
+      {
+        "name": "The One Accent Rule",
+        "body": "The lime accent should feel special. It is used for primary actions and important positive states, not decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "Density is a Virtue",
+        "body": "Staff need to see and act on substantial amounts of information without excessive scrolling or context switching.",
+        "section": "overview"
+      },
+      {
+        "name": "The Modal Portals to Body",
+        "body": "The shared Modal renders through a portal to document.body so its position:fixed backdrop always covers the full viewport (standard rgba(15,23,42,0.48) + 6px blur). Never hand-roll a fixed-position overlay — placed inside a transformed/filtered/animated ancestor it gets trapped to that ancestor's box and the blur covers only part of the screen (the Marketing bug).",
+        "section": "components"
+      },
+      {
+        "name": "RecordActivityModal is the Record/History View",
+        "body": "Viewing a record plus its activity history is a focused modal (RecordActivityModal): grouped record context at top, reverse-chron timeline beneath, a 'Log update' CTA that opens LogEntryModal — consistent across CRM, Marketing, and every tracker. The dense-table inline drawer is only for ultra-light single-field peeks; anything 'review this record' or 'act on it' is a modal. The page-level History tab stays a DenseTable audit list.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Use density deliberately — staff need to see and act on a lot of information.",
+      "Let sophistication come from precision, feedback, and subtle motion rather than visual flair.",
+      "Maintain extreme consistency in spacing, radii, and interaction patterns.",
+      "Make the interface feel calm and trustworthy first, attractive second."
+    ],
+    "donts": [
+      "Add decorative motion, micro-animations, or “delight” that doesn’t serve a clear functional purpose.",
+      "Use consumer-cute or overly playful pet-industry visual language.",
+      "Create heavy shadows, glassmorphism, or excessive layering.",
+      "Reinvent standard affordances (buttons, inputs, tables) for the sake of novelty.",
+      "Let visual noise get in the way of speed and clarity under operational pressure."
+    ]
+  }
+}

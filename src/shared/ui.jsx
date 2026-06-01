@@ -562,7 +562,11 @@ function CalendarPicker({ label, value, onChange, required, disabled, min, max, 
 function Modal({title,onClose,children,wide,fullWidth}) {
   useEffect(() => { const h = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }; document.addEventListener("keydown", h); return () => document.removeEventListener("keydown", h); }, [onClose]);
   const mw = fullWidth ? "calc(100vw - 60px)" : wide ? 720 : 520;
-  return (
+  // Portal to <body> so the fixed backdrop always covers the full viewport. A
+  // `position:fixed` element is trapped inside any ancestor that has a transform/
+  // filter/animation (e.g. an animated page "stage"), which otherwise clips the
+  // blur to just that container — see the Marketing page. The portal escapes it.
+  return ReactDOM.createPortal(
     <div className="ui-modal-backdrop" onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.48)",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:fullWidth?16:20}}>
       <style>{`
         @keyframes uiModalBackdropIn { from { opacity: 0; } to { opacity: 1; } }
@@ -580,7 +584,208 @@ function Modal({title,onClose,children,wide,fullWidth}) {
         </div>
         <div style={{padding:24}}>{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body
+  );
+}
+
+// ─── Shared activity-logging modal ──────────────────────────────────────────
+// The canonical "log an update" surface — a compact, clean white dialog with an
+// optional Type selector (Call/Text/Email/Note), a dominant Notes field, and an
+// optional next follow-up date. Extracted verbatim from the CRM's beloved
+// LogUpdateModal so Marketing, Grassroots, and every tracker share ONE dialog
+// instead of bespoke inline composers. Presentational only: the caller owns
+// persistence through onSave({ type, notes, date }).
+const MODAL_LABEL = { fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut, marginBottom: 8 };
+
+function LogEntryModal({
+  title = "Log update",
+  types = null,
+  initialType = null,
+  initialNotes = "",
+  initialDate = "",
+  notesLabel = "Notes",
+  notesPlaceholder = "What happened on this outreach…",
+  showFollowUp = true,
+  followUpLabel = "Next follow-up date",
+  followUpOptional = false,
+  today = null,
+  minDate = null,
+  recommendedDate = null,
+  recommendedHint = null,
+  saveLabel = "Save update",
+  savingLabel = "Saving…",
+  onClose,
+  onSave,
+  saving = false,
+}) {
+  const typeList = Array.isArray(types) ? types : [];
+  const [type, setType] = useState(initialType || (typeList[0] && typeList[0].id) || null);
+  const [notes, setNotes] = useState(initialNotes);
+  const [date, setDate] = useState(initialDate || recommendedDate || "");
+  const submit = () => { if (saving) return; onSave({ type, notes, date }); };
+  return (
+    <Modal title={title} onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {typeList.length > 0 && (
+          <div>
+            <div style={MODAL_LABEL}>Type</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {typeList.map((t) => {
+                const active = type === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setType(t.id)}
+                    style={{ padding: "5px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${active ? C.pri : C.border}`, background: active ? C.priLt : "transparent", color: active ? C.pri : C.textMut }}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div>
+          <div style={MODAL_LABEL}>{notesLabel}</div>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder={notesPlaceholder}
+            rows={4}
+            autoFocus
+            style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none", background: C.bg, color: C.text }}
+            onFocus={(e) => { e.target.style.borderColor = C.pri; }}
+            onBlur={(e) => { e.target.style.borderColor = C.border; }}
+          />
+        </div>
+
+        {showFollowUp && (
+          <div>
+            <div style={MODAL_LABEL}>
+              {followUpLabel}
+              {followUpOptional && <span style={{ fontWeight: 600, color: C.textMut, textTransform: "none", letterSpacing: 0 }}> (optional)</span>}
+            </div>
+            <MiniDatePicker value={date} onChange={setDate} min={minDate || today} recommendedDate={recommendedDate} recommendedHint={recommendedHint} />
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+          <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
+          <Btn size="sm" onClick={submit} disabled={saving}>{saving ? savingLabel : saveLabel}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Shared record + activity modal ─────────────────────────────────────────
+// A focused, read-at-a-glance view of one record: its key facts grouped at the
+// top (caller-composed `context` node) followed by the chronological activity
+// timeline. Replaces the bespoke inline "update log" drawers so a CRM lead and a
+// Marketing event present their history identically. `onLog` surfaces the
+// primary "Log update" action. Activities are normalized by the caller to
+// { id, actor, timestamp, body, meta } so this stays source-agnostic.
+function RecordActivityModal({
+  title,
+  subtitle = null,
+  context = null,
+  activities = [],
+  emptyText = "No activity logged yet.",
+  logLabel = "Log update",
+  onLog = null,
+  onClose,
+}) {
+  const list = Array.isArray(activities) ? activities : [];
+  return (
+    <Modal title={title} onClose={onClose} wide>
+      <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        {subtitle && <div style={{ marginTop: -8, fontSize: 13, color: C.textMut }}>{subtitle}</div>}
+        {context && <div>{context}</div>}
+        <div style={{ borderTop: context ? `1px solid ${C.borderLight}` : "none", paddingTop: context ? 16 : 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+            <span style={{ ...MODAL_LABEL, marginBottom: 0 }}>{`Activity${list.length ? ` · ${list.length}` : ""}`}</span>
+            {onLog && <Btn size="sm" variant="secondary" onClick={onLog}>{logLabel}</Btn>}
+          </div>
+          {list.length === 0 ? (
+            <div style={{ fontSize: 13, color: C.textMut, padding: "8px 0" }}>{emptyText}</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {list.map((a, i) => (
+                <div key={a.id || i} style={{ padding: "12px 0", borderTop: i === 0 ? "none" : `1px solid ${C.borderLight}` }}>
+                  <div style={{ fontSize: 12.5, marginBottom: 5 }}>
+                    <span style={{ fontWeight: 800, color: C.text }}>{a.actor || "—"}</span>
+                    {a.timestamp && <span style={{ color: C.textMut }}>{` — ${a.timestamp}`}</span>}
+                  </div>
+                  <div style={{ fontSize: 13.5, color: C.text, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{a.body || "—"}</div>
+                  {a.meta && <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 11.5, color: C.textMut }}>{a.meta}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Shared status pill + picker ────────────────────────────────────────────
+// A colored status pill that opens a portaled dropdown of options — the exact
+// pattern from the Marketing tracker, extracted so CRM and every tracker share
+// ONE control instead of re-implementing the pill + popover. Each option carries
+// its own colors: { value, label, short?, bg, fg }. `short` (optional) renders in
+// the compact pill; `label` renders in the dropdown. Self-contained: it manages
+// its own open/position state and portals the menu to <body>. Persistence is the
+// caller's via onChange(value). Pass `disabled` for a read-only badge.
+function StatusSelect({ value, options = [], onChange, disabled = false, placeholder = "Set status", minWidth = 168 }) {
+  const [menu, setMenu] = useState(null); // { x, y } viewport coords, or null
+  const opt = options.find((o) => o.value === value) || null;
+  const st = opt || { bg: C.bg, fg: C.textMut };
+  const pillLabel = opt ? (opt.short || opt.label) : placeholder;
+  const open = (e) => {
+    e.stopPropagation();
+    if (disabled) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    setMenu((prev) => (prev ? null : { x: r.left, y: r.bottom }));
+  };
+  return (
+    <>
+      <button
+        type="button"
+        onClick={open}
+        title={disabled ? undefined : "Change status"}
+        style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, fontWeight: 800, padding: "2px 7px 2px 9px", borderRadius: 999, background: st.bg, color: st.fg, whiteSpace: "nowrap", letterSpacing: "0.02em", border: "none", cursor: disabled ? "default" : "pointer", fontFamily: "inherit", maxWidth: "100%" }}
+      >
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{pillLabel}</span>
+        {!disabled && <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><path d="M6 9l6 6 6-6" /></svg>}
+      </button>
+      {menu && ReactDOM.createPortal(
+        <>
+          <div onClick={() => setMenu(null)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
+          <div style={{ position: "fixed", left: Math.max(8, Math.min(menu.x, window.innerWidth - minWidth - 12)), top: menu.y + 4, zIndex: 9999, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 12px 32px rgba(15,23,42,0.18)", padding: 4, minWidth, maxHeight: 340, overflowY: "auto" }}>
+            {options.map((o) => {
+              const current = o.value === value;
+              return (
+                <button
+                  key={o.value}
+                  type="button"
+                  onClick={() => { setMenu(null); if (o.value !== value) onChange?.(o.value); }}
+                  onMouseEnter={(e) => { if (!current) e.currentTarget.style.background = C.bg; }}
+                  onMouseLeave={(e) => { if (!current) e.currentTarget.style.background = "transparent"; }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 9px", border: "none", background: current ? C.bg : "transparent", borderRadius: 7, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: current ? 800 : 600, color: C.text, textAlign: "left" }}
+                >
+                  <span style={{ width: 9, height: 9, borderRadius: 999, background: o.bg, border: `1.5px solid ${o.fg}`, flexShrink: 0 }} />
+                  {o.label}
+                </button>
+              );
+            })}
+          </div>
+        </>,
+        document.body,
+      )}
+    </>
   );
 }
 
@@ -611,14 +816,14 @@ function validateClientFields(fields, values) {
 function LaborSearchBar({ value = "", onChange = () => {}, placeholder = "Search…", children = null }) {
   return (
     <div style={{ borderBottom: `1.5px solid ${C.borderLight}`, background: C.bg }}>
-      <div style={{ display: "flex", alignItems: "center", padding: "0 16px", minHeight: 44 }}>
+      <div style={{ display: "flex", alignItems: "center", padding: "0 16px" }}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={value ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
         <input
           value={value || ""}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           className="no-focus-ring"
-          style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }}
+          style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "9px 10px", width: "100%", fontFamily: "inherit" }}
         />
         {value ? (
           <button type="button" onClick={() => onChange("")} title="Clear" style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex", flexShrink: 0 }}>
@@ -718,4 +923,4 @@ function LaborIntro({ value = "", defaultValue = "", prefix = null, canEdit = fa
 }
 
 
-export { K9Logo, K9LogoMini, Tip, Badge, Btn, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, Card, isFieldRequired, validateClientFields, LaborSearchBar, LaborIntro };
+export { K9Logo, K9LogoMini, Tip, Badge, Btn, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, LogEntryModal, RecordActivityModal, StatusSelect, Card, isFieldRequired, validateClientFields, LaborSearchBar, LaborIntro };

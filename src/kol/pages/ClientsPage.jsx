@@ -6,7 +6,7 @@ import ReactDOM from "react-dom";
 import { supabase } from "../../supabaseClient";
 import { C, OPERATIONS_CATALOG, OPS_TYPES, LITE_DEF_PRICING, CHART_PTS, DEF_CLIENT_FIELDS, DEF_DOG_FIELDS, DEFAULT_LIFECYCLE_BANNERS, LC_OP_LABELS, LC_FILTER_FIELDS, LITE_ACTION_LABELS, LITE_ACTION_LEVELS, DEF_LITE_EOD_TEMPLATE, DAY_NAMES_SHORT, ROOM_TYPES, K9_LOCATIONS, POS_BASE, PAGE_SLUGS, buildUrl, parseUrl, gid, titleCase, fmtPhone, fmtDate, fmtDateFull, fmtDateShort, fmtTime, fmtInstr, todayStr, addDays, formatTime12hr, countNights, countHours, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX, LEAN_ROLES, NAV_ITEMS, K9_LOGO_SRC, K9_LOGO_PNG, SLUG_TO_PAGE, ENT_SLUG_TO_PAGE, formatDogNames, fmtPhoneInput, IDB_VERSION, idbGet, idbSet } from "../../shared/theme";
 import { I, Icons } from "../../shared/icons";
-import { Tip, Badge, Btn, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, Card, K9Logo, K9LogoMini, isFieldRequired, validateClientFields } from "../../shared/ui";  // formatDogNames, fmtPhoneInput are in theme.js
+import { Tip, Badge, Btn, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, LogEntryModal, Card, K9Logo, K9LogoMini, isFieldRequired, validateClientFields } from "../../shared/ui";  // formatDogNames, fmtPhoneInput are in theme.js
 import { hasPermission, hasLeanPermission, _resolveRole, LEGACY_ROLE_MAP, ROLE_CODE_MAP } from "../../shared/permissions";
 import { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, resSvcIncludes, getPPStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel } from "../../shared/opsHelpers";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
@@ -23,8 +23,6 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const [showOldGingrData, setShowOldGingrData] = useState(false);
   const [sourceFilter, setSourceFilter] = useState(new Set());
   const [logPopover, setLogPopover] = useState(null);
-  const [logNotes, setLogNotes] = useState("");
-  const [logDate, setLogDate] = useState("");
   const [expandedUpdates, setExpandedUpdates] = useState(new Set());
   const [visibleColumns, setVisibleColumns] = useState(new Set(["totalRes","lastRes","daysSince","totalSpent","nextRes"]));
   const [showColumnToggle, setShowColumnToggle] = useState(false);
@@ -77,7 +75,6 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const [configStep, setConfigStep] = useState(0); // 0=pick op, 1=enter value
   const prevFilterOpen = useRef(false);
   useEffect(() => { if (lcFilterOpen && !prevFilterOpen.current) { setDraftFilters({...lcFilters}); setShowFilterPicker(false); setConfiguringKey(null); } prevFilterOpen.current = lcFilterOpen; }, [lcFilterOpen, lcFilters]);
-  const logBtnRef = useRef({});
   const colToggleRef = useRef(null);
 
   // ── Pre-built lookup maps (O(n) instead of O(n×m) filtering) ──
@@ -596,9 +593,12 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const bdThresh = data.resortPolicies?.retentionBoardingDays ?? 180;
 
   // ── Log/Revive handler ──
-  const handleSaveLog = async () => {
+  // Notes + follow-up date now come from the shared LogEntryModal, which owns
+  // its own input state and hands them back here on save.
+  const handleSaveLog = async ({ notes, date }) => {
     if (!logPopover) return;
-    if (!logNotes.trim() || !logDate) { addGlobalToast?.({ type: "error", message: "Notes and follow-up date are required" }); return; }
+    const body = String(notes || "").trim();
+    if (!body || !date) { addGlobalToast?.({ type: "error", message: "Notes and follow-up date are required" }); return; }
     const { clientId, tab: lcTab, isRevive } = logPopover;
     const newClients = data.clients.map(c => {
       if (c.id !== clientId) return c;
@@ -606,9 +606,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       const rawColdFrom = lc.coldFrom || "leads";
       const tabKey = isRevive ? (rawColdFrom === "lapsed" || rawColdFrom === "retention" ? "retention" : "conversion") : lcTab;
       const oldDate = lc[tabKey]?.followUpDate || "";
-      const entry = { id: gid(), notes: logNotes, previousFollowUp: oldDate, newFollowUp: logDate, loggedBy: profile?.full_name || profile?.email || "Staff", loggedAt: new Date().toISOString() };
-      const updatedTab = { ...(lc[tabKey]||{}), notes: "", followUpDate: logDate, updates: [entry, ...(lc[tabKey]?.updates||[])] };
-      const evt = { event: isRevive ? "revived_from_cold" : "logged_outreach", date: today, details: isRevive ? `Revived back to ${tabKey}` : `Logged in ${tabKey}: "${logNotes.substring(0,50)}"` };
+      const entry = { id: gid(), notes: body, previousFollowUp: oldDate, newFollowUp: date, loggedBy: profile?.full_name || profile?.email || "Staff", loggedAt: new Date().toISOString() };
+      const updatedTab = { ...(lc[tabKey]||{}), notes: "", followUpDate: date, updates: [entry, ...(lc[tabKey]?.updates||[])] };
+      const evt = { event: isRevive ? "revived_from_cold" : "logged_outreach", date: today, details: isRevive ? `Revived back to ${tabKey}` : `Logged in ${tabKey}: "${body.substring(0,50)}"` };
       return {
         ...c,
         lifecycle: { ...lc, [tabKey]: updatedTab, ...(isRevive ? { cold: false, reclassifiedReason: null, reclassifiedDate: null, reclassifiedFrom: null } : {}) },
@@ -616,7 +616,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       };
     });
     await save({ ...data, clients: newClients });
-    setLogPopover(null); setLogNotes(""); setLogDate("");
+    setLogPopover(null);
     addGlobalToast?.({ message: isRevive ? "Client revived" : "Log saved" });
   };
 
@@ -913,8 +913,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             background:updates.length>0?`${C.acc}20`:C.bg,color:updates.length>0?C.acc:C.textMut}}>
           {updates.length}
         </button>
-        <button ref={el => { if(el) logBtnRef.current[client.id] = el; }}
-          onClick={(e) => { e.stopPropagation(); const rect=e.currentTarget.getBoundingClientRect(); setLogPopover({ clientId:client.id, tab, x:rect.left, y:rect.bottom+4 }); setLogNotes(client.lifecycle?.[tab]?.notes||""); setLogDate(""); }}
+        <button
+          onClick={(e) => { e.stopPropagation(); setLogPopover({ clientId:client.id, tab, initialNotes: client.lifecycle?.[tab]?.notes||"" }); }}
           style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${C.pri}30`,background:`${C.pri}08`,color:C.pri,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
           Log
         </button>
@@ -934,7 +934,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // ── Revive button cell ──
   const renderReviveBtn = (client) => (
-    <button onClick={(e) => { e.stopPropagation(); const rect=e.currentTarget.getBoundingClientRect(); const cf=client.lifecycle?.coldFrom||"leads"; setLogPopover({ clientId:client.id, tab:(cf==="lapsed"||cf==="retention")?"retention":"conversion", isRevive:true, x:rect.left, y:rect.bottom+4 }); setLogNotes(""); setLogDate(""); }}
+    <button onClick={(e) => { e.stopPropagation(); const cf=client.lifecycle?.coldFrom||"leads"; setLogPopover({ clientId:client.id, tab:(cf==="lapsed"||cf==="retention")?"retention":"conversion", isRevive:true, initialNotes:"" }); }}
       style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${C.suc}30`,background:`${C.suc}08`,color:C.suc,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
       Revive
     </button>
@@ -2146,33 +2146,32 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         )}
       </Card>
 
-      {/* Log Popover */}
-      {logPopover && (
-        <div style={{position:"fixed",top:0,left:0,width:"100%",height:"100%",zIndex:9998}} onClick={()=>{setLogPopover(null);setLogNotes("");setLogDate("");}}>
-          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",left:Math.min(logPopover.x||300,window.innerWidth-340),top:logPopover.y||200,zIndex:9999,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:12,padding:"16px 20px",width:310,boxShadow:"0 8px 32px rgba(0,0,0,0.15)"}}>
-            <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>{logPopover.isRevive ? "Revive Client" : "Log Outreach"}</div>
-            <textarea value={logNotes} onChange={e=>setLogNotes(e.target.value)} placeholder="Notes about this outreach..." rows={3}
-              style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:12,fontFamily:"inherit",resize:"vertical",outline:"none",background:C.bg,boxSizing:"border-box",marginBottom:10}}
-              onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border} autoFocus />
-            <div style={{marginBottom:10}}>
-              <div style={{fontSize:11,fontWeight:700,color:C.textSec,marginBottom:4}}>Next Follow-Up Date *</div>
-              {(() => {
-                const c = data.clients.find(cl => cl.id === logPopover.clientId);
-                const src = c?.lifecycle?.conversion?.source;
-                const isHighIntent = src === "eval" || src === "tour" || src === "ignite";
-                const addD = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0,10); };
-                const recDate = isHighIntent ? addD(1) : addD(2);
-                const recHint = isHighIntent ? "Recommended: +1 day (high-intent lead). Use a further date if the client gave a specific callback date." : "Recommended: +2 days (standard follow-up). Use +1 day for high-intent leads or a further date if the client gave a specific callback date.";
-                return <MiniDatePicker value={logDate} onChange={setLogDate} recommendedDate={recDate} recommendedHint={recHint} />;
-              })()}
-            </div>
-            <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
-              <Btn size="sm" variant="ghost" onClick={()=>{setLogPopover(null);setLogNotes("");setLogDate("");}}>Cancel</Btn>
-              <Btn size="sm" onClick={handleSaveLog}>{logPopover.isRevive ? "Revive" : "Save Log"}</Btn>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Log / Revive — shared LogEntryModal (follow-up date required) */}
+      {logPopover && (() => {
+        const c = data.clients.find(cl => cl.id === logPopover.clientId);
+        const src = c?.lifecycle?.conversion?.source;
+        const isHighIntent = src === "eval" || src === "tour" || src === "ignite";
+        const addD = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0,10); };
+        const recDate = isHighIntent ? addD(1) : addD(2);
+        const recHint = isHighIntent
+          ? "Recommended: +1 day (high-intent lead). Use a further date if the client gave a specific callback date."
+          : "Recommended: +2 days (standard follow-up). Use +1 day for high-intent leads or a further date if the client gave a specific callback date.";
+        return (
+          <LogEntryModal
+            title={logPopover.isRevive ? "Revive Client" : "Log Outreach"}
+            types={null}
+            initialNotes={logPopover.initialNotes || ""}
+            notesLabel="Notes"
+            notesPlaceholder="Notes about this outreach…"
+            followUpLabel="Next follow-up date"
+            recommendedDate={recDate}
+            recommendedHint={recHint}
+            saveLabel={logPopover.isRevive ? "Revive" : "Save Log"}
+            onClose={() => setLogPopover(null)}
+            onSave={handleSaveLog}
+          />
+        );
+      })()}
 
       {/* Reclassify Popover */}
       {reclassifyPopover && (
