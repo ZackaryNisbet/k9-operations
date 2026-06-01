@@ -12,7 +12,7 @@
 // Upkeep, and Grassroots use. All data/UI rules live in ../marketingDirectoryData.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../supabaseClient";
-import { C } from "../../shared/theme";
+import { C, fmtPhoneInput } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn, Inp, Modal } from "../../shared/ui";
 import {
@@ -22,7 +22,6 @@ import {
   ListSearchRow,
   ListSurfaceTitle,
   ListTabBar,
-  PillFilter,
   RowActionButton,
   StatusPill,
 } from "../../shared/listSurface";
@@ -31,7 +30,6 @@ import { normalizeOptionalUuid } from "../trainingData";
 import {
   MARKETING_DIRECTORY_ATTACHMENT_ACCEPT,
   MARKETING_DIRECTORY_ATTACHMENT_BUCKET,
-  MARKETING_DIRECTORY_ENTRY_TYPES,
   MARKETING_DIRECTORY_ORG_TYPE_OPTIONS,
   buildDirectoryAttachmentPath,
   buildDirectoryContactPayload,
@@ -39,6 +37,8 @@ import {
   buildDirectoryImportCandidates,
   buildDirectoryOrgPayload,
   buildGrassrootsTargetWriteback,
+  countDirectoryPairedTargets,
+  getDirectoryLastInteractedAt,
   diffDirectoryPeople,
   makeOrgDraftFromIndividual,
   filterDirectoryEntries,
@@ -82,6 +82,12 @@ function fmtDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function fmtDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
 }
 
 const MUTED = { color: C.textMut, fontSize: 11 };
@@ -285,7 +291,7 @@ function DirectoryEditorModal({
                       <input placeholder="Title / role" value={p.title || ""} onChange={(e) => onChangePerson(i, "title", e.target.value)} style={INLINE_INPUT} />
                       <div style={{ display: "flex", gap: 8 }}>
                         <input placeholder="Email" value={p.email || ""} onChange={(e) => onChangePerson(i, "email", e.target.value)} style={INLINE_INPUT} />
-                        <input placeholder="Phone" value={p.phone || ""} onChange={(e) => onChangePerson(i, "phone", e.target.value)} style={INLINE_INPUT} />
+                        <input placeholder="Phone" value={fmtPhoneInput(p.phone || "")} onChange={(e) => onChangePerson(i, "phone", e.target.value.replace(/\D/g, "").slice(0, 10))} maxLength={14} style={INLINE_INPUT} />
                       </div>
                     </div>
                   ))}
@@ -483,7 +489,6 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   }), [profile?.email, profile?.full_name, profile?.id, profile?.name, profile?.user_id]);
 
   const [tab, setTab] = useState("directory");
-  const [entryType, setEntryType] = useState("all");
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [schemaMissing, setSchemaMissing] = useState(false);
@@ -543,11 +548,13 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
 
   const attachmentsByEntity = useMemo(() => groupDirectoryAttachments(attachments), [attachments]);
   const entries = useMemo(() => buildDirectoryEntries({ orgs, contacts, attachmentsByEntity }), [orgs, contacts, attachmentsByEntity]);
-  const visibleEntries = useMemo(() => filterDirectoryEntries(entries, { entryType, query }), [entries, entryType, query]);
+  const visibleEntries = useMemo(() => filterDirectoryEntries(entries, { entryType: "organizations", query }), [entries, query]);
   const counts = useMemo(() => {
     const summary = summarizeDirectory(orgs, contacts);
-    return { ...summary, total: summary.organizations + summary.individuals };
+    return { ...summary, total: summary.organizations };
   }, [orgs, contacts]);
+  // People not attached to an org — surfaced as a cleanup tray, not directory rows.
+  const unassignedContacts = useMemo(() => contacts.filter((c) => !c.org_id), [contacts]);
 
   const importCandidates = useMemo(
     () => buildDirectoryImportCandidates({ targets, existingOrgs: orgs, existingContacts: contacts }),
@@ -783,21 +790,19 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   // Stop a row-level action from also toggling the row's expansion.
   const rowAction = (fn) => (ev) => { if (ev) ev.stopPropagation(); fn(); };
 
-  // ── Directory table columns (shared DenseTable) ──
+  // ── Directory table columns (shared DenseTable) — organizations only ──
   const directoryColumns = [
     {
       key: "name",
       header: "Name",
-      width: "minmax(200px, 2.2fr)",
+      width: "minmax(190px, 2fr)",
       sortable: true,
       sortValue: (e) => e.sortName,
       render: (e) => {
-        const isOrg = e.kind === "org";
-        const name = isOrg ? getDirectoryOrgName(e.org) : getDirectoryContactName(e.contact);
-        const sub = isOrg ? getDirectoryOrgAddressText(e.org) : (e.contact.title || "");
+        const sub = getDirectoryOrgAddressText(e.org);
         return (
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 700, color: C.text, fontSize: 12, lineHeight: 1.25, wordBreak: "break-word" }}>{name}</div>
+            <div style={{ fontWeight: 700, color: C.text, fontSize: 12, lineHeight: 1.25, wordBreak: "break-word" }}>{getDirectoryOrgName(e.org)}</div>
             {sub ? <div style={{ marginTop: 2, fontSize: 11, color: C.textMut, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</div> : null}
           </div>
         );
@@ -808,58 +813,66 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
       header: "Type",
       width: 132,
       sortable: true,
-      sortValue: (e) => (e.kind === "org" ? (e.org.org_type || "~") : "Individual"),
-      render: (e) => (e.kind === "org"
-        ? (e.org.org_type ? <StatusPill tone="primary">{e.org.org_type}</StatusPill> : <span style={MUTED}>—</span>)
-        : <StatusPill tone="info">Individual</StatusPill>),
+      sortValue: (e) => e.org.org_type || "~",
+      render: (e) => (e.org.org_type ? <StatusPill tone="primary">{e.org.org_type}</StatusPill> : <span style={MUTED}>—</span>),
     },
     {
       key: "contact",
       header: "Contact",
-      width: "minmax(150px, 1.4fr)",
+      width: "minmax(150px, 1.3fr)",
       render: (e) => {
-        const phone = e.kind === "org" ? e.org.phone : e.contact.phone;
-        const email = e.kind === "org" ? e.org.email : e.contact.email;
+        const { phone, email } = e.org;
         if (!phone && !email) return <span style={MUTED}>—</span>;
         return (
           <div style={{ minWidth: 0, fontSize: 11, lineHeight: 1.4 }}>
-            {phone ? <div style={{ color: C.text, fontWeight: 600, whiteSpace: "nowrap" }}>{phone}</div> : null}
+            {phone ? <div style={{ color: C.text, fontWeight: 600, whiteSpace: "nowrap" }}>{fmtPhoneInput(phone)}</div> : null}
             {email ? <div style={{ color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</div> : null}
           </div>
         );
       },
     },
     {
-      key: "source",
-      header: "Source",
-      width: 96,
+      key: "contacts",
+      header: "Contacts",
+      width: 80,
+      align: "center",
       sortable: true,
-      sortValue: (e) => ((e.kind === "org" ? e.org.grassroots_target_id : e.contact.grassroots_target_id) ? "1" : "0"),
+      sortValue: (e) => e.contacts.length,
+      render: (e) => <span style={{ fontSize: 12, fontWeight: 700, color: e.contacts.length ? C.text : C.textMut }}>{e.contacts.length}</span>,
+    },
+    {
+      key: "events",
+      header: "Events",
+      width: 76,
+      align: "center",
+      sortable: true,
+      sortValue: (e) => countDirectoryPairedTargets(e.org, targets),
+      headerTitle: "Paired marketing-tracker events / visits / partnerships",
       render: (e) => {
-        const linked = e.kind === "org" ? e.org.grassroots_target_id : e.contact.grassroots_target_id;
-        return linked ? <StatusPill tone="success" title="Linked to the marketing tracker">Tracker</StatusPill> : <span style={MUTED}>Manual</span>;
+        const n = countDirectoryPairedTargets(e.org, targets);
+        return <span style={{ fontSize: 12, fontWeight: 700, color: n ? C.text : C.textMut }}>{n}</span>;
       },
     },
     {
-      key: "contacts",
-      header: "Contacts",
-      width: 84,
-      align: "center",
+      key: "last",
+      header: "Last interacted",
+      width: "minmax(118px, 1fr)",
       sortable: true,
-      sortValue: (e) => (e.kind === "org" ? e.contacts.length : -1),
-      render: (e) => (e.kind === "org"
-        ? <span style={{ fontSize: 12, fontWeight: 700, color: e.contacts.length ? C.text : C.textMut }}>{e.contacts.length}</span>
-        : <span style={MUTED}>—</span>),
+      sortValue: (e) => getDirectoryLastInteractedAt(e.org, { history, targets }) || "",
+      render: (e) => {
+        const last = getDirectoryLastInteractedAt(e.org, { history, targets });
+        return <span style={{ fontSize: 11, color: C.textMut, whiteSpace: "nowrap" }}>{last ? fmtDate(last) : "—"}</span>;
+      },
     },
     {
       key: "actions",
       header: "",
-      width: 108,
+      width: 76,
       align: "end",
       render: (e) => (canManage ? (
         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-          <RowActionButton tone="primary" onClick={rowAction(() => (e.kind === "org" ? openOrgEditor(e.org) : openContactEditor(e.contact, e.contact.org_id)))}>Edit</RowActionButton>
-          <IconButton tone="danger" title="Delete" icon={<Glyph icon={I.Trash} size={12} />} onClick={rowAction(() => (e.kind === "org" ? deleteOrg(e.org) : deleteContact(e.contact)))} />
+          <IconButton tone="primary" title="Edit organization" icon={<Glyph icon={I.Pencil} size={12} />} onClick={rowAction(() => openOrgEditor(e.org))} />
+          <IconButton tone="danger" title="Delete organization" icon={<Glyph icon={I.Trash} size={12} />} onClick={rowAction(() => deleteOrg(e.org))} />
         </div>
       ) : null),
     },
@@ -909,7 +922,6 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   const titleActions = canManage && !schemaMissing ? (
     <>
       {importCount > 0 ? <Btn variant="secondary" icon={<Glyph icon={I.Download} size={15} />} onClick={() => setImportOpen(true)}>Import from tracker ({importCount})</Btn> : null}
-      <Btn variant="secondary" icon={<Glyph icon={I.Users} size={15} />} onClick={() => openContactEditor(null, null)}>Add individual</Btn>
       <Btn variant="primary" icon={<Glyph icon={I.Plus} size={15} />} onClick={() => openOrgEditor(null)}>Add organization</Btn>
     </>
   ) : null;
@@ -939,25 +951,31 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
         <div style={{ padding: "40px 16px", textAlign: "center", color: C.textMut, fontSize: 13 }}>Loading directory…</div>
       ) : tab === "directory" ? (
         <>
-          <ListSearchRow value={query} onChange={setQuery} placeholder="Search organizations, people, type…">
-            {MARKETING_DIRECTORY_ENTRY_TYPES.map((option) => {
-              const count = option.value === "all" ? counts.total : option.value === "organizations" ? counts.organizations : counts.individuals;
-              return (
-                <PillFilter key={option.value} active={entryType === option.value} count={count} onClick={() => setEntryType(option.value)}>
-                  {option.label}
-                </PillFilter>
-              );
-            })}
-          </ListSearchRow>
+          <ListSearchRow value={query} onChange={setQuery} placeholder="Search organizations, people, type…" />
           <ListExplainer>
             Organizations and their affiliated contacts for marketing outreach. “Import from tracker” pulls in event organizers and visited businesses; saving a linked org syncs its contact info back.
           </ListExplainer>
+          {unassignedContacts.length ? (
+            <div style={{ marginTop: 12, padding: "10px 14px", border: `1px solid ${C.warn}55`, borderRadius: 12, background: C.warnLt }}>
+              <div style={{ fontSize: 12.5, color: C.textSec, fontWeight: 600, marginBottom: 8 }}>
+                {unassignedContacts.length} {unassignedContacts.length === 1 ? "person isn’t" : "people aren’t"} attached to an organization yet — every person belongs to an org.
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {unassignedContacts.map((c) => (
+                  <div key={c.id} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "4px 6px 4px 12px", border: `1px solid ${C.border}`, borderRadius: 999, background: C.surface }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{getDirectoryContactName(c)}</span>
+                    {canManage ? <RowActionButton tone="primary" onClick={() => convertToOrg(c)}>Make org</RowActionButton> : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div style={{ marginTop: 12 }}>
             <DenseTable
               columns={directoryColumns}
               rows={visibleEntries}
               getRowKey={(e) => `${e.kind}:${e.id}`}
-              minWidth={760}
+              minWidth={880}
               onRowClick={(e) => toggleExpand(e.id)}
               isRowExpanded={(e) => expandedIds.has(e.id)}
               renderExpansion={(e) => (
