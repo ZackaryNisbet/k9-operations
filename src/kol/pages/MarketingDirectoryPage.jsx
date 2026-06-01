@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from "../../supabaseClient";
 import { C, fmtPhoneInput } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Btn, Inp, Modal } from "../../shared/ui";
+import { Btn, CalendarPicker, Inp, Modal } from "../../shared/ui";
 import {
   DenseTable,
   IconButton,
@@ -510,7 +510,7 @@ function fmtUpdateStamp(value) {
 // Inline updates area beneath an org row — a verbatim copy of the marketing
 // tracker's Updates expansion: an optional Log composer on top, then every
 // historical update (actor — date · time / text), newest first.
-function UpdatesExpansion({ feed, logging, logBody, onLogBodyChange, onCancelLog, onSaveLog, savingLog, canManage }) {
+function UpdatesExpansion({ feed, logging, logBody, onLogBodyChange, logNextDate, onLogNextDateChange, onCancelLog, onSaveLog, savingLog, canManage }) {
   return (
     <div style={{ background: C.bg, borderLeft: `3px solid ${C.pri}` }}>
       {logging && canManage ? (
@@ -526,6 +526,14 @@ function UpdatesExpansion({ feed, logging, logBody, onLogBodyChange, onCancelLog
             style={{ width: "100%", minHeight: 110, padding: "10px 12px", border: `1.5px solid ${C.pri}`, borderRadius: 6, fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none", boxSizing: "border-box" }}
             autoFocus
           />
+
+          <div style={{ marginTop: 6 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              Next Follow-Up Date <span style={{ fontWeight: 600, color: C.textMut, textTransform: "none", letterSpacing: 0 }}>(optional)</span>
+            </div>
+            <CalendarPicker value={logNextDate || ""} min={new Date().toISOString().slice(0, 10)} onChange={onLogNextDateChange} />
+          </div>
+
           <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
             <button onClick={onCancelLog} style={{ padding: "6px 14px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
               Cancel
@@ -543,6 +551,7 @@ function UpdatesExpansion({ feed, logging, logBody, onLogBodyChange, onCancelLog
             <div key={row.id} style={{ marginBottom: idx === arr.length - 1 ? 0 : 6, paddingBottom: idx === arr.length - 1 ? 0 : 6, borderBottom: idx === arr.length - 1 ? "none" : `1px solid ${C.borderLight}` }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: C.pri, marginBottom: 1 }}>{row.by} — {fmtUpdateStamp(row.at)}</div>
               <div style={{ fontSize: 11, color: C.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{row.text || "—"}</div>
+              {row.next ? <div style={{ fontSize: 9, color: C.textSec, marginTop: 1 }}>Follow-up: {fmtDate(row.next)}</div> : null}
             </div>
           ))}
         </div>
@@ -580,6 +589,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   const [importOpen, setImportOpen] = useState(false);
   const [preview, setPreview] = useState(null); // { attachment, url, loading }
   const [logBody, setLogBody] = useState("");
+  const [logNextDate, setLogNextDate] = useState("");
   const [savingLog, setSavingLog] = useState(false);
 
   const toast = useCallback((message, type = "success") => addGlobalToast(message, type), [addGlobalToast]);
@@ -642,7 +652,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
   // updates mode is a verbatim copy of the marketing tracker's updates column.
   const toggleContacts = useCallback((id) => setExpandedRow((prev) => (prev && prev.id === id && prev.mode === "contacts" ? null : { id, mode: "contacts" })), []);
   const openUpdates = useCallback((id) => setExpandedRow((prev) => (prev && prev.id === id && prev.mode === "updates" && !prev.logging ? null : { id, mode: "updates", logging: false })), []);
-  const openLog = useCallback((id) => { setLogBody(""); setExpandedRow((prev) => (prev && prev.id === id && prev.mode === "updates" && prev.logging ? null : { id, mode: "updates", logging: true })); }, []);
+  const openLog = useCallback((id) => { setLogBody(""); setLogNextDate(""); setExpandedRow((prev) => (prev && prev.id === id && prev.mode === "updates" && prev.logging ? null : { id, mode: "updates", logging: true })); }, []);
   const cancelLog = useCallback(() => setExpandedRow((prev) => (prev ? { ...prev, logging: false } : prev)), []);
 
   // ── editor lifecycle ──
@@ -773,7 +783,8 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
       toast(mode === "org" ? "Organization saved" : "Contact saved");
     } catch (err) {
       console.error("Failed to save directory record", err);
-      toast(err?.message || "Failed to save", "error");
+      const msg = err?.code === "23505" ? "An organization with that name already exists." : (err?.message || "Failed to save");
+      toast(msg, "error");
     } finally {
       setSaving(false);
     }
@@ -839,9 +850,10 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
     if (!body || !orgId || !locationId) return;
     setSavingLog(true);
     try {
-      const { error } = await supabase.from("marketing_directory_notes").insert(buildDirectoryNotePayload(body, locationId, actor, { orgId }));
+      const { error } = await supabase.from("marketing_directory_notes").insert(buildDirectoryNotePayload(body, locationId, actor, { orgId, nextContactDate: logNextDate }));
       if (error) throw error;
       setLogBody("");
+      setLogNextDate("");
       setExpandedRow((prev) => (prev ? { ...prev, logging: false } : prev));
       await loadDirectory();
       toast("Update logged");
@@ -861,7 +873,7 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
         if (candidate.kind === "org") {
           const orgPayload = buildDirectoryOrgPayload({ ...makeBlankDirectoryOrg(locationId), ...candidate, isDraft: true }, locationId, actor);
           const { data, error } = await supabase.from("marketing_directory_orgs").insert(orgPayload).select("*").single();
-          if (error) throw error;
+          if (error) { if (error.code === "23505") continue; throw error; }
           if (candidate.contact) {
             const contactPayload = buildDirectoryContactPayload({ ...makeBlankDirectoryContact(locationId, data.id), ...candidate.contact, org_id: data.id, grassroots_target_id: candidate.grassroots_target_id, isDraft: true }, locationId, actor);
             const { error: cErr } = await supabase.from("marketing_directory_contacts").insert(contactPayload);
@@ -1117,6 +1129,8 @@ export default function MarketingDirectoryPage({ profile, nav, locationId, addGl
                   logging={Boolean(expandedRow.logging)}
                   logBody={logBody}
                   onLogBodyChange={setLogBody}
+                  logNextDate={logNextDate}
+                  onLogNextDateChange={setLogNextDate}
                   onCancelLog={cancelLog}
                   onSaveLog={saveLog}
                   savingLog={savingLog}
