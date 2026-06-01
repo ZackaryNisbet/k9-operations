@@ -127,9 +127,16 @@ export function StackBadge({ children, tone = "danger" }) {
  * Inline expansion: pass `isRowExpanded(row)` + `renderExpansion(row)` to open an
  * edge-to-edge panel beneath a row with a 3px primary left-border.
  */
+// Nested-sticky offset: approximate height of the column-header row (padding
+// 6px×2 + ~18px content + 1px border). Group headers stick just beneath it.
+const STICKY_HEADER_HEIGHT = 31;
+
 export function DenseTable({
   columns,
   rows = [],
+  groups,
+  renderGroupHeader,
+  renderSubHeader,
   getRowKey,
   sort: controlledSort,
   onSortChange,
@@ -142,6 +149,8 @@ export function DenseTable({
   columnGap = LIST_TOKENS.columnGap,
   minWidth,
   stickyHeader = false,
+  stickyGroups = false,
+  stickyTop = 0,
   className,
   style,
 }) {
@@ -152,17 +161,95 @@ export function DenseTable({
   const [internalSort, setInternalSort] = useState(defaultSort);
   const sort = isControlled ? controlledSort : internalSort;
 
+  // Grouped mode renders caller-ordered sections; column sorting is reserved for
+  // the flat list. When `groups` is present the column header sticks so labels
+  // stay visible, and each group header sticks just beneath it.
+  const grouped = Array.isArray(groups);
+  const headerSticky = stickyHeader || grouped;
+
   const handleSort = (key) => {
     if (isControlled) onSortChange(key);
     else setInternalSort((cur) => nextSort(cur, key));
   };
 
   const displayRows = useMemo(
-    () => (isControlled ? rows : sortRows(rows, sort, cols)),
-    [isControlled, rows, sort, cols]
+    () => (isControlled || grouped ? rows : sortRows(rows, sort, cols)),
+    [isControlled, grouped, rows, sort, cols]
   );
 
   const keyFor = (row, i) => (getRowKey ? getRowKey(row, i) : row?.id ?? i);
+
+  // One item row (grid + cells + optional inline expansion) — shared by the flat
+  // and grouped code paths so they never drift.
+  const renderItemRow = (row, i) => {
+    const expanded = isRowExpanded ? !!isRowExpanded(row) : false;
+    return (
+      <div key={keyFor(row, i)}>
+        <div
+          onClick={onRowClick ? () => onRowClick(row) : undefined}
+          style={{
+            display: "grid",
+            gridTemplateColumns: grid,
+            columnGap,
+            padding: LIST_TOKENS.row.padding,
+            borderBottom: `1px solid ${C.borderLight}`,
+            fontSize: LIST_TOKENS.row.fontSize,
+            alignItems: "start",
+            cursor: onRowClick ? "pointer" : "default",
+            ...(rowStyle ? rowStyle(row) : null),
+          }}
+        >
+          {cols.map((col) => (
+            <div
+              key={col.key}
+              style={{ minWidth: 0, textAlign: ALIGN_TEXT[col.align], ...col.cellStyle }}
+            >
+              {col.render ? col.render(row) : null}
+            </div>
+          ))}
+        </div>
+        {expanded && renderExpansion && (
+          // Inline detail reads as a recessed drawer via a subtle tonal
+          // shift + hairline top/bottom borders — not a colored side-stripe.
+          <div
+            style={{
+              background: C.surfaceHover,
+              borderTop: `1px solid ${C.border}`,
+              borderBottom: `1px solid ${C.border}`,
+            }}
+          >
+            {renderExpansion(row)}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // A full-width section header that spans every column. The caller's
+  // renderGroupHeader supplies the inner content. Sticky is opt-in (stickyGroups):
+  // when on, group headers nest just beneath the sticky column header and
+  // subheaders beneath those; off by default to avoid fragile nested-sticky offsets.
+  const groupHeaderRow = (content, isSub) => (
+    <div
+      style={{
+        background: isSub ? C.surfaceHover : "#fff",
+        borderBottom: `1px solid ${isSub ? C.borderLight : C.border}`,
+        ...(stickyGroups
+          ? {
+              position: "sticky",
+              top: stickyTop + STICKY_HEADER_HEIGHT + (isSub ? STICKY_HEADER_HEIGHT : 0),
+              zIndex: isSub ? 2 : 3,
+            }
+          : null),
+      }}
+    >
+      {content}
+    </div>
+  );
+
+  // Empty only when no group survives (e.g. a search matched nothing). Groups
+  // with no rows still render their header — that's how a collapsed section reads.
+  const hasGroupedRows = grouped && groups.length > 0;
 
   return (
     <div
@@ -171,8 +258,11 @@ export function DenseTable({
         background: C.surface,
         border: `${LIST_TOKENS.container.border} solid ${C.border}`,
         borderRadius: LIST_TOKENS.container.radius,
-        overflowX: minWidth ? "auto" : "hidden",
-        overflowY: "hidden",
+        // Sticky descendants need a non-clipping ancestor, so grouped tables
+        // don't clip on the y-axis; flat tables keep the original clipping.
+        ...(grouped
+          ? { overflow: minWidth ? "auto" : "visible" }
+          : { overflowX: minWidth ? "auto" : "hidden", overflowY: "hidden" }),
         ...style,
       }}
     >
@@ -192,7 +282,7 @@ export function DenseTable({
             textTransform: "uppercase",
             letterSpacing: LIST_TOKENS.header.letterSpacing,
             alignItems: "center",
-            ...(stickyHeader ? { position: "sticky", top: 0, zIndex: 1 } : null),
+            ...(headerSticky ? { position: "sticky", top: stickyTop, zIndex: 4 } : null),
           }}
         >
           {cols.map((col) => {
@@ -223,54 +313,35 @@ export function DenseTable({
         </div>
 
         {/* Body */}
-        {displayRows.length === 0 ? (
+        {grouped ? (
+          !hasGroupedRows ? (
+            <div style={{ padding: "32px 14px", textAlign: "center", color: C.textSec, fontSize: 13 }}>
+              {emptyText}
+            </div>
+          ) : (
+            groups.map((group) => (
+              <div key={group.key}>
+                {groupHeaderRow(renderGroupHeader ? renderGroupHeader(group) : group.header, false)}
+                {Array.isArray(group.subgroups)
+                  ? group.subgroups.map((sub) => {
+                      const subContent = renderSubHeader ? renderSubHeader(sub, group) : sub.header;
+                      return (
+                        <div key={sub.key}>
+                          {subContent != null ? groupHeaderRow(subContent, true) : null}
+                          {(sub.rows || []).map(renderItemRow)}
+                        </div>
+                      );
+                    })
+                  : (group.rows || []).map(renderItemRow)}
+              </div>
+            ))
+          )
+        ) : displayRows.length === 0 ? (
           <div style={{ padding: "32px 14px", textAlign: "center", color: C.textSec, fontSize: 13 }}>
             {emptyText}
           </div>
         ) : (
-          displayRows.map((row, i) => {
-            const expanded = isRowExpanded ? !!isRowExpanded(row) : false;
-            return (
-              <div key={keyFor(row, i)}>
-                <div
-                  onClick={onRowClick ? () => onRowClick(row) : undefined}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: grid,
-                    columnGap,
-                    padding: LIST_TOKENS.row.padding,
-                    borderBottom: `1px solid ${C.borderLight}`,
-                    fontSize: LIST_TOKENS.row.fontSize,
-                    alignItems: "start",
-                    cursor: onRowClick ? "pointer" : "default",
-                    ...(rowStyle ? rowStyle(row) : null),
-                  }}
-                >
-                  {cols.map((col) => (
-                    <div
-                      key={col.key}
-                      style={{ minWidth: 0, textAlign: ALIGN_TEXT[col.align], ...col.cellStyle }}
-                    >
-                      {col.render ? col.render(row) : null}
-                    </div>
-                  ))}
-                </div>
-                {expanded && renderExpansion && (
-                  // Inline detail reads as a recessed drawer via a subtle tonal
-                  // shift + hairline top/bottom borders — not a colored side-stripe.
-                  <div
-                    style={{
-                      background: C.surfaceHover,
-                      borderTop: `1px solid ${C.border}`,
-                      borderBottom: `1px solid ${C.border}`,
-                    }}
-                  >
-                    {renderExpansion(row)}
-                  </div>
-                )}
-              </div>
-            );
-          })
+          displayRows.map(renderItemRow)
         )}
       </div>
     </div>
