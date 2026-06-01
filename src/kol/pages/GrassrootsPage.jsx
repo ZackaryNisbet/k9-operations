@@ -92,9 +92,9 @@ const HISTORY_EVENT_LABELS = {
   target_updated: "Edited",
   target_moved: "Moved",
   target_deleted: "Deleted",
-  development_logged: "Logged development",
+  development_logged: "Logged update",
   drop_logged: "Logged visit",
-  development_updated: "Edited development",
+  development_updated: "Edited update",
   drop_updated: "Edited visit",
 };
 
