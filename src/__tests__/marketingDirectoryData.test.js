@@ -6,6 +6,8 @@ import {
   buildDirectoryImportCandidates,
   buildDirectoryOrgPayload,
   buildGrassrootsTargetWriteback,
+  diffDirectoryPeople,
+  makeOrgDraftFromIndividual,
   filterDirectoryEntries,
   formatDirectoryFileSize,
   getDirectoryAttachmentPreviewKind,
@@ -257,6 +259,40 @@ describe("buildDirectoryImportCandidates", () => {
     const { orgs, individuals } = buildDirectoryImportCandidates({ targets, existingOrgs, existingContacts });
     expect(orgs.map((o) => o.name)).toEqual(["Globex"]); // Happy Paws deduped by name
     expect(individuals).toHaveLength(0); // Jordan Avery deduped by name
+  });
+});
+
+describe("diffDirectoryPeople", () => {
+  it("splits rows into insert / update / delete and ignores nameless rows", () => {
+    const original = [{ id: CON_A, first_name: "Jane", last_name: "Smith" }, { id: ORG_B, first_name: "Gone", last_name: "Person" }];
+    const rows = [
+      { id: CON_A, first_name: "Jane", last_name: "Doe" }, // edited → update
+      { first_name: "New", last_name: "Hire" }, // no id → insert
+      { first_name: "  ", last_name: "" }, // blank → ignored
+    ];
+    const diff = diffDirectoryPeople(original, rows);
+    expect(diff.toUpdate.map((r) => r.id)).toEqual([CON_A]);
+    expect(diff.toInsert.map((r) => r.first_name)).toEqual(["New"]);
+    expect(diff.toDeleteIds).toEqual([ORG_B]); // original person dropped from the rows
+  });
+  it("treats an existing row whose name was cleared as a delete", () => {
+    const diff = diffDirectoryPeople([{ id: CON_A, first_name: "Jane" }], [{ id: CON_A, first_name: "", last_name: "" }]);
+    expect(diff.toUpdate).toHaveLength(0);
+    expect(diff.toDeleteIds).toEqual([CON_A]);
+  });
+});
+
+describe("makeOrgDraftFromIndividual", () => {
+  it("recombines the name and carries over contact info + tracker link", () => {
+    const draft = makeOrgDraftFromIndividual(
+      { first_name: "Animal Welfare", last_name: "Association", email: "g@awanj.org", grassroots_target_id: TGT_A, notes: "Organizer" },
+      LOC,
+    );
+    expect(draft.isDraft).toBe(true);
+    expect(draft.name).toBe("Animal Welfare Association");
+    expect(draft.email).toBe("g@awanj.org");
+    expect(draft.grassroots_target_id).toBe(TGT_A);
+    expect(draft.notes).toBe("Organizer");
   });
 });
 
