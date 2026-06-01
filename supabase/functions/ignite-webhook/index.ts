@@ -1103,6 +1103,63 @@ Deno.serve(async (req: Request): Promise<Response> => {
       });
     }
 
+    // ── Identity dedup for ignite_leads ──────────────────────────────────────
+    // Ignite sends the same web-form lead twice (a preliminary copy, then an
+    // enriched one with the form Details) seconds–minutes apart, each with a
+    // different/absent ignite_lead_id, so the URL-based idempotency check above
+    // misses them. Before inserting, look for a very recent lead with the same
+    // location + lead_type + matching phone/email and ENRICH it in place instead
+    // of creating a duplicate row. The 30-min window keeps genuine re-inquiries
+    // (hours/days later) as separate leads. Never dedup synthetic health probes.
+    if (!isSynthetic) {
+      const DEDUP_WINDOW_MS = 30 * 60 * 1000;
+      const leadPhoneNorm = normalizePhone(parsed.phone);
+      const leadEmailNorm = (parsed.email || "").trim().toLowerCase();
+      if (leadPhoneNorm || leadEmailNorm) {
+        const sinceIso = new Date(Date.now() - DEDUP_WINDOW_MS).toISOString();
+        const { data: recent } = await supabaseClient
+          .from("ignite_leads")
+          .select("id, phone, email, form_data, raw_email_subject")
+          .eq("location_id", locationId)
+          .eq("lead_type", parsed.leadType)
+          .eq("is_synthetic", false)
+          .gte("created_at", sinceIso)
+          .order("created_at", { ascending: false })
+          .limit(25);
+        const match = (recent || []).find((r: { phone: string | null; email: string | null }) => {
+          const pMatch = leadPhoneNorm && normalizePhone(r.phone) === leadPhoneNorm;
+          const eMatch = leadEmailNorm && (r.email || "").trim().toLowerCase() === leadEmailNorm;
+          return Boolean(pMatch || eMatch);
+        }) as { id: string; form_data: Record<string, unknown> | null; raw_email_subject: string | null } | undefined;
+        if (match) {
+          // Enrich the existing lead: union form_data (new values win), backfill
+          // identity fields, and upgrade the stored email when the new copy is
+          // richer. Keep the original created_at (the lead's true received time).
+          const mergedFormData = { ...(match.form_data || {}), ...(parsed.formData || {}) };
+          const richer = Object.keys(parsed.formData || {}).length >= Object.keys(match.form_data || {}).length;
+          const enrich: Record<string, unknown> = {
+            form_data: mergedFormData,
+            ...(parsed.firstName ? { first_name: parsed.firstName } : {}),
+            ...(parsed.lastName ? { last_name: parsed.lastName } : {}),
+            ...(parsed.email ? { email: parsed.email } : {}),
+            ...(parsed.phone ? { phone: parsed.phone } : {}),
+            ...(parsed.sourceDetail ? { source_detail: parsed.sourceDetail } : {}),
+            ...(richer ? { raw_email_html: html, raw_email_subject: subject || match.raw_email_subject } : {}),
+          };
+          const { error: enrichErr } = await supabaseClient
+            .from("ignite_leads")
+            .update(enrich)
+            .eq("id", match.id);
+          if (enrichErr) {
+            console.error("[ignite-webhook] Enrich (dedup) error:", enrichErr);
+          } else {
+            console.log(`[ignite-webhook] Enriched existing lead ${match.id} (identity dedup within 30m) — no duplicate created`);
+          }
+          return jsonResponse({ success: true, deduped: true, leadId: match.id });
+        }
+      }
+    }
+
     // Match to existing clients via gingr_owners
     const { data: owners } = await supabaseClient
       .from("gingr_owners")
