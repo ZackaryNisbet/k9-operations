@@ -541,15 +541,8 @@ export function buildDirectoryImportCandidates({
   const existingOrgNames = new Set(
     (existingOrgs || []).map((org) => normalizeDirectorySearchText(org.name)).filter(Boolean),
   );
-  const existingIndividualNames = new Set(
-    (existingContacts || [])
-      .filter((contact) => getDirectoryEntryIsIndividual(contact))
-      .map((contact) => normalizeDirectorySearchText(getDirectoryContactName(contact)))
-      .filter(Boolean),
-  );
-
   const orgs = [];
-  const individuals = [];
+  const individuals = []; // always empty — the directory is organizations only
 
   (targets || []).forEach((target) => {
     if (!target || typeof target !== "object") return;
@@ -557,23 +550,32 @@ export function buildDirectoryImportCandidates({
     const category = stringValue(target.category);
 
     if (category === "events") {
+      // Every directory entry is an organization, so an event organizer joins as an
+      // org named after the organizer (people can be added under it afterward).
       const organizer = normalizeText(target.organizer);
       if (!organizer) return;
       const nameKey = normalizeDirectorySearchText(organizer);
-      if ((targetId && linkedTargetIds.has(targetId)) || existingIndividualNames.has(nameKey)) return;
-      const { first_name, last_name } = splitPersonName(organizer);
-      individuals.push({
+      if ((targetId && linkedTargetIds.has(targetId)) || existingOrgNames.has(nameKey)) return;
+      existingOrgNames.add(nameKey);
+      orgs.push({
         key: `event:${targetId || nameKey}`,
-        kind: "individual",
-        first_name,
-        last_name,
-        title: "Event organizer",
-        email: normalizeText(target.contact_email),
+        kind: "org",
+        name: organizer,
+        org_type: "Community Org",
+        address: "",
+        address_line_1: "",
+        address_line_2: "",
+        address_city: "",
+        address_state: "",
+        address_postal_code: "",
+        address_country: "",
+        google_place_id: "",
         phone: normalizeText(target.contact_phone),
-        notes: target.name ? `Organizer for "${normalizeText(target.name)}"` : "",
+        email: normalizeText(target.contact_email),
+        website: "",
         grassroots_target_id: targetId,
         sourceLabel: CATEGORY_SOURCE_LABELS.events,
-        displayName: organizer,
+        contact: null,
       });
       return;
     }
@@ -583,6 +585,7 @@ export function buildDirectoryImportCandidates({
     if (!name) return;
     const nameKey = normalizeDirectorySearchText(name);
     if ((targetId && linkedTargetIds.has(targetId)) || existingOrgNames.has(nameKey)) return;
+    existingOrgNames.add(nameKey);
 
     const personName = normalizeText([target.first_name, target.last_name].filter(Boolean).join(" "));
     orgs.push({
@@ -616,8 +619,49 @@ export function buildDirectoryImportCandidates({
   });
 
   orgs.sort((a, b) => a.name.localeCompare(b.name));
-  individuals.sort((a, b) => a.displayName.localeCompare(b.displayName));
   return { orgs, individuals };
+}
+
+// How many marketing-tracker records (events / visits / partnerships) reference this
+// org — by direct grassroots_target_id link or by matching name/organizer. Drives
+// the "Events" column.
+export function countDirectoryPairedTargets(org = {}, targets = []) {
+  const linkId = normalizeUuid(org.grassroots_target_id);
+  const nameKey = normalizeDirectorySearchText(org.name);
+  if (!linkId && !nameKey) return 0;
+  let count = 0;
+  (targets || []).forEach((t) => {
+    if (!t || typeof t !== "object") return;
+    if (linkId && normalizeUuid(t.id) === linkId) { count += 1; return; }
+    if (nameKey && (normalizeDirectorySearchText(t.name) === nameKey || normalizeDirectorySearchText(t.organizer) === nameKey)) count += 1;
+  });
+  return count;
+}
+
+// Most recent time this org was touched — its own updated_at, any directory-history
+// event, or a linked tracker record's last contact / update. Drives "Last interacted"
+// so we can spot who we haven't talked to in a while. Returns "" if unknown.
+export function getDirectoryLastInteractedAt(org = {}, { history = [], targets = [] } = {}) {
+  const orgId = normalizeUuid(org.id);
+  const linkId = normalizeUuid(org.grassroots_target_id);
+  const nameKey = normalizeDirectorySearchText(org.name);
+  const candidates = [org.updated_at, org.created_at];
+  (history || []).forEach((entry) => {
+    if (entry && normalizeUuid(entry.entity_id) === orgId) candidates.push(entry.event_at);
+  });
+  (targets || []).forEach((t) => {
+    if (!t || typeof t !== "object") return;
+    const matches = (linkId && normalizeUuid(t.id) === linkId)
+      || (nameKey && (normalizeDirectorySearchText(t.name) === nameKey || normalizeDirectorySearchText(t.organizer) === nameKey));
+    if (matches) candidates.push(t.last_contact_date, t.updated_at);
+  });
+  const stamps = candidates
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .map((value) => ({ raw: value, time: new Date(value).getTime() }))
+    .filter((entry) => !Number.isNaN(entry.time));
+  if (stamps.length === 0) return "";
+  return stamps.sort((a, b) => b.time - a.time)[0].raw;
 }
 
 // ─── History (powers the History subtab) ────────────────────────────────────
