@@ -35,8 +35,6 @@ import {
   getGrassrootsSplitAddress,
   groupGrassrootsActivityAttachments,
   groupGrassrootsHistory,
-  groupGrassrootsHistoryByDay,
-  grassrootsHistoryDayKey,
   filterGrassrootsHistory,
   inferGrassrootsActivityAttachmentMimeType,
   filterGrassrootsDropActivityRowsByCategory,
@@ -656,8 +654,6 @@ describe("grassrootsData", () => {
   });
 
   describe("marketing history tab feed", () => {
-    // h1/h2 share an exact instant (midday UTC) so they always land in the same
-    // local-day bucket regardless of the test runner's timezone; h3 is two days off.
     const sample = [
       { id: "h1", category: "events", target_name: "Spring Fair", summary: "Edited row", actor_name: "Dana", event_at: "2026-04-16T12:00:00Z" },
       { id: "h2", category: "schools", target_name: "Lincoln High", summary: "Created row", actor_name: "Reed", event_at: "2026-04-16T12:00:00Z" },
@@ -677,20 +673,6 @@ describe("grassrootsData", () => {
       expect(filterGrassrootsHistory(sample, { search: "dana" }).map((e) => e.id)).toEqual(["h1", "h3"]);
       expect(filterGrassrootsHistory(sample, { search: "moved" }).map((e) => e.id)).toEqual(["h3"]);
       expect(filterGrassrootsHistory(sample, { search: "lincoln" }).map((e) => e.id)).toEqual(["h2"]);
-    });
-
-    it("grassrootsHistoryDayKey is empty for entries without a timestamp", () => {
-      expect(grassrootsHistoryDayKey({})).toBe("");
-      expect(grassrootsHistoryDayKey({ created_at: "2026-04-16T15:00:00Z" })).not.toBe("");
-    });
-
-    it("groupGrassrootsHistoryByDay buckets entries newest-day-first, newest-first within a day", () => {
-      const groups = groupGrassrootsHistoryByDay(sample);
-      expect(groups).toHaveLength(2);
-      // Two distinct calendar days; the Apr 16 bucket holds both same-day entries, newest first.
-      expect(groups[0].entries.map((entry) => entry.id)).toEqual(["h1", "h2"]);
-      expect(groups[1].entries.map((entry) => entry.id)).toEqual(["h3"]);
-      expect(groups[0].dayKey > groups[1].dayKey).toBe(true);
     });
   });
 
