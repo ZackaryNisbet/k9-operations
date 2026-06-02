@@ -584,7 +584,8 @@ export function buildLeadHistoryDayMetrics(rows, dateValue = "") {
 }
 
 /** Row payload inserted into ignite_lead_updates. */
-export function buildUpdatePayload({ leadId, locationId, type = "note", notes = "", nextFollowUp = "", createdById = null, createdByName = "" }) {
+export function buildUpdatePayload({ leadId, locationId, type = "note", notes = "", nextFollowUp = "", createdById = null, createdByName = "", prevStatus = null, newStatus = null }) {
+  const statusChanged = newStatus != null && newStatus !== prevStatus;
   return {
     lead_id: leadId,
     location_id: locationId,
@@ -593,6 +594,8 @@ export function buildUpdatePayload({ leadId, locationId, type = "note", notes = 
     next_follow_up_date: nextFollowUp || null,
     created_by_user_id: createdById || null,
     created_by_name: String(createdByName || "").trim() || null,
+    prev_status: statusChanged ? (prevStatus || null) : null,
+    new_status: statusChanged ? newStatus : null,
   };
 }
 

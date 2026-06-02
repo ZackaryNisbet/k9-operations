@@ -55,6 +55,7 @@ import {
   updateTypeLabel,
   UPDATE_TYPES,
   CRM_LEAD_STATUSES,
+  CRM_DEFAULT_STATUS,
   CRM_OPEN_STATUSES,
   leadStatusValue,
   getLeadStatusMeta,
@@ -281,7 +282,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
         searchable: false,
         render: (r) => (
           <div onClick={(e) => e.stopPropagation()} style={{ display: "flex" }}>
-            <StatusSelect value={leadStatusValue(r)} options={CRM_LEAD_STATUSES} onChange={(v) => setLeadStatus(r, v)} />
+            <StatusSelect value={leadStatusValue(r)} options={CRM_LEAD_STATUSES} disabled />
           </div>
         ),
       }] : []),
@@ -320,7 +321,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
                   Log
                 </RowActionButton>
               </div>
-              {latest && (
+              {latest && !latest.system && (
                 <div style={{ fontSize: 10.5, color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {updateTypeLabel(latest.update_type)}: {latest.notes || "—"}
                 </div>
@@ -489,11 +490,13 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
           profile={profile}
           locationId={locationId}
           today={today}
+          updates={leadUpdates(logLead, updatesByLead)}
           onClose={() => setLogLead(null)}
           onSaved={(row) => {
             onLogged(logLead.id, row);
             setLogLead(null);
           }}
+          onStatusChanged={(id, status) => setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, lead_status: status } : l)))}
           toast={toast}
         />
       )}
@@ -508,6 +511,9 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
           meta: (
             <>
               <span style={{ fontWeight: 700, color: C.pri }}>{updateTypeLabel(u.update_type)}</span>
+              {u.new_status && (
+                <span>· {getLeadStatusMeta(u.prev_status).short} → <span style={{ fontWeight: 800, color: getLeadStatusMeta(u.new_status).fg }}>{getLeadStatusMeta(u.new_status).short}</span></span>
+              )}
               {u.next_follow_up_date && <span>· Next follow-up: {fmtDate(u.next_follow_up_date)}</span>}
             </>
           ),
@@ -518,7 +524,7 @@ export default function CrmPage({ profile, locationId, addGlobalToast }) {
             title={cleanLeadName(lead) || "Submission"}
             context={<>
               <div style={{ marginBottom: 14 }}>
-                <StatusSelect value={leadStatusValue(lead)} options={CRM_LEAD_STATUSES} onChange={(v) => setLeadStatus(lead, v)} />
+                <StatusSelect value={leadStatusValue(lead)} options={CRM_LEAD_STATUSES} disabled />
               </div>
               <SubmissionDetails lead={lead} />
             </>}
@@ -756,19 +762,34 @@ function UpdatesPanel({ lead, updates, onLog }) {
 // Log update modal → inserts a row into ignite_lead_updates
 // ─────────────────────────────────────────────────────────────────────────────
 
-function LogUpdateModal({ lead, profile, locationId, today, onClose, onSaved, toast }) {
+function LogUpdateModal({ lead, profile, locationId, today, updates, onClose, onSaved, onStatusChanged, toast }) {
   // Suggest a next-day follow-up from the moment the picker is opened.
   const recDate = addDays(today, 1);
   const [saving, setSaving] = useState(false);
 
   const createdByName = (profile && (profile.full_name || profile.name || profile.email)) || "Staff";
 
-  // Persistence lives here; the clean dialog shell + Type/Notes/Follow-up fields
-  // come from the shared LogEntryModal so this surface and every other tracker
-  // log update are visually identical.
-  const save = async ({ type, notes, date }) => {
+  // Status is pipeline-driven: every log carries the status decision. A New lead
+  // must advance; once it's moved, "Leave unchanged" is allowed. The call-attempt
+  // hint enforces the 3-call cadence from the activity log (not the status).
+  const currentStatus = leadStatusValue(lead);
+  const requireStatusChange = currentStatus === CRM_DEFAULT_STATUS;
+  const callCount = (Array.isArray(updates) ? updates : []).filter((u) => u.update_type === "call").length;
+  const chasing = currentStatus === CRM_DEFAULT_STATUS || currentStatus === "contacted_talking";
+  const attemptNo = callCount + 1;
+  const statusHint = chasing
+    ? (attemptNo >= 3
+        ? `If this is a call, that's attempt ${attemptNo} — you're at the 3-call cadence, so set Unresponsive if there's still no answer.`
+        : `If this is a call, it's attempt ${attemptNo} of 3 before the cadence is up.`)
+    : null;
+
+  // Persistence lives here; the clean dialog shell + Type/Status/Notes/Follow-up
+  // fields come from the shared LogEntryModal.
+  const save = async ({ type, notes, date, status }) => {
     if (saving) return;
     setSaving(true);
+    const prevStatus = currentStatus;
+    const resolved = status ?? prevStatus;
     const payload = buildUpdatePayload({
       leadId: lead.id,
       locationId,
@@ -777,6 +798,8 @@ function LogUpdateModal({ lead, profile, locationId, today, onClose, onSaved, to
       nextFollowUp: date,
       createdById: (profile && profile.id) || null,
       createdByName,
+      prevStatus,
+      newStatus: resolved,
     });
     const { data, error } = await supabase.from("ignite_lead_updates").insert(payload).select().single();
     if (error) {
@@ -784,6 +807,15 @@ function LogUpdateModal({ lead, profile, locationId, today, onClose, onSaved, to
       console.error("Failed to log update", error);
       toast(error.message || "Couldn't save the update.", "error");
       return;
+    }
+    if (resolved !== prevStatus) {
+      const { error: stErr } = await supabase.from("ignite_leads").update({ lead_status: resolved }).eq("id", lead.id);
+      if (stErr) {
+        console.error("Failed to update lead status", stErr);
+        toast("Update logged, but the status change didn't save.", "error");
+      } else if (onStatusChanged) {
+        onStatusChanged(lead.id, resolved);
+      }
     }
     toast("Update logged.", "success");
     onSaved(data);
@@ -794,6 +826,11 @@ function LogUpdateModal({ lead, profile, locationId, today, onClose, onSaved, to
       title={`Log update — ${cleanLeadName(lead) || "submission"}`}
       types={UPDATE_TYPES}
       initialType="call"
+      statuses={CRM_LEAD_STATUSES}
+      currentStatus={currentStatus}
+      requireStatusChange={requireStatusChange}
+      statusSectionLabel="Update status"
+      statusHint={statusHint}
       notesLabel="Notes"
       notesPlaceholder="What happened on this outreach…"
       followUpLabel="Next follow-up date"
