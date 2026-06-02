@@ -615,15 +615,29 @@ function LogEntryModal({
   recommendedHint = null,
   saveLabel = "Save update",
   savingLabel = "Saving…",
+  statuses = null,
+  currentStatus = null,
+  requireStatusChange = false,
+  statusSectionLabel = "Update status",
+  statusHint = null,
   onClose,
   onSave,
   saving = false,
 }) {
   const typeList = Array.isArray(types) ? types : [];
+  const statusList = Array.isArray(statuses) ? statuses : [];
+  const curMeta = statusList.find((s) => s.value === currentStatus) || null;
   const [type, setType] = useState(initialType || (typeList[0] && typeList[0].id) || null);
   const [notes, setNotes] = useState(initialNotes);
   const [date, setDate] = useState(initialDate || recommendedDate || "");
-  const submit = () => { if (saving) return; onSave({ type, notes, date }); };
+  // null = no status choice made yet. When statuses are in play, a log can't be
+  // saved until the user either advances the status or explicitly leaves it.
+  const [pickedStatus, setPickedStatus] = useState(null);
+  const needsStatus = statusList.length > 0 && pickedStatus == null;
+  const submit = () => {
+    if (saving || needsStatus) return;
+    onSave({ type, notes, date, ...(statusList.length ? { status: pickedStatus ?? currentStatus } : {}) });
+  };
   return (
     <Modal title={title} onClose={onClose}>
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -645,6 +659,44 @@ function LogEntryModal({
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {statusList.length > 0 && (
+          <div>
+            <div style={MODAL_LABEL}>{statusSectionLabel}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {curMeta && (
+                <span style={{ display: "inline-flex", alignItems: "center", padding: "3px 9px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: curMeta.bg, color: curMeta.fg, textDecoration: "line-through", opacity: 0.6 }}>
+                  {curMeta.short || curMeta.label}
+                </span>
+              )}
+              <span style={{ color: C.textMut, fontWeight: 800 }}>→</span>
+              {statusList.filter((s) => s.value !== currentStatus).map((s) => {
+                const on = pickedStatus === s.value;
+                return (
+                  <button
+                    key={s.value}
+                    type="button"
+                    onClick={() => setPickedStatus(s.value)}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${on ? s.fg : C.border}`, background: on ? s.bg : "transparent", color: on ? s.fg : C.textMut }}
+                  >
+                    <span style={{ width: 7, height: 7, borderRadius: 999, background: s.bg, border: `1.5px solid ${s.fg}`, flexShrink: 0 }} />
+                    {s.short || s.label}
+                  </button>
+                );
+              })}
+              {!requireStatusChange && (
+                <button
+                  type="button"
+                  onClick={() => setPickedStatus(currentStatus)}
+                  style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", border: `1.5px solid ${pickedStatus === currentStatus ? C.pri : C.border}`, background: pickedStatus === currentStatus ? C.priLt : "transparent", color: pickedStatus === currentStatus ? C.pri : C.textMut }}
+                >
+                  Leave unchanged
+                </button>
+              )}
+            </div>
+            {statusHint && <div style={{ marginTop: 7, fontSize: 11.5, color: C.textMut, lineHeight: 1.4 }}>{statusHint}</div>}
           </div>
         )}
 
@@ -674,7 +726,7 @@ function LogEntryModal({
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
           <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
-          <Btn size="sm" onClick={submit} disabled={saving}>{saving ? savingLabel : saveLabel}</Btn>
+          <Btn size="sm" onClick={submit} disabled={saving || needsStatus}>{saving ? savingLabel : saveLabel}</Btn>
         </div>
       </div>
     </Modal>
