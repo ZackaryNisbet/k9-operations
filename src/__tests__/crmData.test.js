@@ -388,9 +388,16 @@ describe("updates (relational follow-up log)", () => {
       next_follow_up_date: "2026-06-02",
       created_by_user_id: null,
       created_by_name: "Pat",
+      prev_status: null,
+      new_status: null,
     });
     expect(buildUpdatePayload({ leadId: "l1", locationId: "loc", type: "smoke" }).update_type).toBe("note");
     expect(buildUpdatePayload({ leadId: "l1", locationId: "loc", notes: "" }).notes).toBeNull();
+    // A status change records the transition; "leave unchanged" (same status) records none.
+    expect(buildUpdatePayload({ leadId: "l1", locationId: "loc", prevStatus: "new_lead_action_needed", newStatus: "contacted_talking" }))
+      .toMatchObject({ prev_status: "new_lead_action_needed", new_status: "contacted_talking" });
+    expect(buildUpdatePayload({ leadId: "l1", locationId: "loc", prevStatus: "on_fence", newStatus: "on_fence" }))
+      .toMatchObject({ prev_status: null, new_status: null });
     expect(updateTypeLabel("email")).toBe("Email");
   });
 });
