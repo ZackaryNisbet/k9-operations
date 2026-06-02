@@ -78,3 +78,23 @@ verify_jwt = false
 # publishable/service keys, not user JWTs. The function loads scoped Gingr
 # credentials server-side and validates required parameters in-function.
 verify_jwt = false
+
+[functions.stripo-token]
+# Mints a Stripo editor token. Verifies the caller via Supabase Auth in-function;
+# gateway JWT verification can reject newer ES256 auth JWTs before code runs.
+verify_jwt = false
+
+[functions.send-campaign]
+# Sends CRM email campaigns. The scheduled-send drain is invoked by pg_cron with the
+# Supabase service key (not a user JWT); explicit sends are authorized in-function.
+verify_jwt = false
+
+[functions.email-events]
+# Public Resend delivery webhook (no user session). Authenticity is verified in-function
+# via the Svix signature when RESEND_WEBHOOK_SECRET is set.
+verify_jwt = false
+
+[functions.unsubscribe]
+# Public one-click unsubscribe link clicked from an email (no session); token-gated
+# in-function. MUST stay false so inbox List-Unsubscribe-Post requests aren't 401'd.
+verify_jwt = false

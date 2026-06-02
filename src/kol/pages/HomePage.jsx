@@ -1463,6 +1463,7 @@ function ManagerHome({
         <QuickCard label="Calendar" desc="Aggregated schedule across the resort" icon="Calendar" onClick={() => nav("calendar")} accent="#6366F1" />
         <QuickCard label="CRM" desc="Booking and employment inquiries" icon="MessageSquare" onClick={() => nav("crm")} accent="#0891B2" />
         <QuickCard label="Marketing Directory" desc="Organizations and contacts" icon="Users" onClick={() => nav("marketing-directory")} accent="#DB2777" />
+        <QuickCard label="Email Campaigns" desc="Send branded email blasts to leads" icon="Send" onClick={() => nav("email-campaigns")} accent="#183661" />
       </div>
 
       <WorkflowProgressPanel rows={snapshot.workflowProgress} nav={nav} />
@@ -1569,6 +1570,7 @@ function AdminHome({
         <QuickCard label="Calendar" desc="Aggregated schedule across the resort" icon="Calendar" onClick={() => nav("calendar")} accent="#6366F1" />
         <QuickCard label="CRM" desc="Booking and employment inquiries" icon="MessageSquare" onClick={() => nav("crm")} accent="#0891B2" />
         <QuickCard label="Marketing Directory" desc="Organizations and contacts" icon="Users" onClick={() => nav("marketing-directory")} accent="#DB2777" />
+        <QuickCard label="Email Campaigns" desc="Send branded email blasts to leads" icon="Send" onClick={() => nav("email-campaigns")} accent="#183661" />
         <QuickCard label="Resort Upkeep" desc="Cleaning and facility checklists" icon="ClipboardCheck" onClick={() => nav("resort-upkeep")} accent="#0D9488" />
       </div>
 

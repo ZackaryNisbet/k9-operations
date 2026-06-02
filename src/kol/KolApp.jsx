@@ -62,6 +62,7 @@ import GrassrootsPage from "./pages/GrassrootsPage";
 import CalendarPage from "./pages/CalendarPage";
 import CrmPage from "./pages/CrmPage";
 import MarketingDirectoryPage from "./pages/MarketingDirectoryPage";
+import CampaignsPage from "./pages/CampaignsPage";
 import ResortUpkeepPage from "./pages/ResortUpkeepPage";
 import EnrichmentsPage from "./pages/EnrichmentsPage";
 import GingrIconsPage from "./pages/GingrIconsPage";
@@ -142,6 +143,7 @@ const LITE_PAGE_SLUGS = {
   "calendar": "calendar",
   "crm": "crm",
   "marketing-directory": "marketing-directory",
+  "email-campaigns": "email-campaigns",
 };
 const LITE_SLUG_TO_PAGE = {};
 Object.entries(LITE_PAGE_SLUGS).forEach(([k, v]) => { if (!LITE_SLUG_TO_PAGE[v]) LITE_SLUG_TO_PAGE[v] = k; });
@@ -442,6 +444,7 @@ const PAGE_PERMISSION_MAP = {
   "calendar": "Calendar Access",
   "crm": "CRM Access",
   "marketing-directory": "Marketing Directory Access",
+  "email-campaigns": "Email Campaigns Access",
   "inventory": "Inventory Management",
   "inventory-report": "Inventory Management",
   "occupancy-report": "Occupancy Reports",
@@ -479,6 +482,7 @@ const PAGE_OWNED_DATA_PAGES = new Set([
   "calendar",
   "crm",
   "marketing-directory",
+  "email-campaigns",
   "resources",
   "settings",
   "gingr-icons",
@@ -1055,7 +1059,7 @@ function LeanAppInner() {
   }, [data]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "gingr-icons", "training", "client-management", "enrichments", "resources", "grassroots", "resort-upkeep", "calendar", "crm", "marketing-directory", "enterprise-directory", "enterprise-org-chart", "enterprise-ops", "enterprise-attendance", "enterprise-performance", "enterprise-vendors", "enterprise-licenses", "enterprise-locations", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "gingr-icons", "training", "client-management", "enrichments", "resources", "grassroots", "resort-upkeep", "calendar", "crm", "marketing-directory", "email-campaigns", "enterprise-directory", "enterprise-org-chart", "enterprise-ops", "enterprise-attendance", "enterprise-performance", "enterprise-vendors", "enterprise-licenses", "enterprise-locations", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -1080,6 +1084,7 @@ function LeanAppInner() {
       case "calendar": return "Calendar";
       case "crm": return "CRM";
       case "marketing-directory": return "Marketing Directory";
+      case "email-campaigns": return "Email Campaigns";
       case "funnel": return "Lead Funnel";
       case "ops-hub": return "Ops Overview";
       case "ops-opening": return "Opening Checklist";
@@ -1398,6 +1403,8 @@ function LeanAppInner() {
         return <CrmPage profile={profile} nav={nav} locationId={currentLocation} addGlobalToast={addGlobalToast} />;
       case "marketing-directory":
         return <MarketingDirectoryPage profile={profile} nav={nav} locationId={currentLocation} addGlobalToast={addGlobalToast} />;
+      case "email-campaigns":
+        return <CampaignsPage profile={profile} nav={nav} locationId={currentLocation} addGlobalToast={addGlobalToast} />;
       case "resort-upkeep":
         return <ResortUpkeepPage profile={profile} locationId={currentLocation} addGlobalToast={addGlobalToast} />;
       case "scheduling":

@@ -107,6 +107,7 @@ const LEAN_PERMISSION_AREAS = [
   "Calendar Access",
   "CRM Access",
   "Marketing Directory Access",
+  "Email Campaigns Access",
 ];
 
 const LEAN_PERMISSION_CATEGORIES = [
@@ -164,6 +165,7 @@ const LEAN_PERMISSION_CATEGORIES = [
     { key: "Grassroots Log Activity", label: "Log Development", desc: "Log marketing development updates and visits" },
     { key: "Grassroots Edit Targets", label: "Edit Targets", desc: "Create, edit, move, and delete marketing targets" },
     { key: "Marketing Directory Access", label: "Marketing Directory", desc: "Open the marketing organizations and contacts directory" },
+    { key: "Email Campaigns Access", label: "Email Campaigns", desc: "Compose and send email campaigns to CRM booking-form leads" },
   ]},
   { key: "resort-upkeep", label: "Resort Upkeep", permissions: [
     { key: "Resort Upkeep Access", label: "Resort Upkeep Access", desc: "Open building maintenance, local vendors, licenses, and troubleshooting" },
@@ -231,6 +233,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Calendar Access": false,
     "CRM Access": false,
     "Marketing Directory Access": false,
+    "Email Campaigns Access": false,
   },
   csr: {
     "My Work": true,
@@ -284,6 +287,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Calendar Access": false,
     "CRM Access": false,
     "Marketing Directory Access": false,
+    "Email Campaigns Access": false,
   },
   supervisor: {
     "My Work": true,
@@ -337,6 +341,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Calendar Access": true,
     "CRM Access": true,
     "Marketing Directory Access": true,
+    "Email Campaigns Access": true,
   },
   manager: {
     "My Work": true,
@@ -390,6 +395,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Calendar Access": true,
     "CRM Access": true,
     "Marketing Directory Access": true,
+    "Email Campaigns Access": true,
   },
   location_admin: {
     "My Work": true,
@@ -443,6 +449,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Calendar Access": true,
     "CRM Access": true,
     "Marketing Directory Access": true,
+    "Email Campaigns Access": true,
   },
   multi_location_admin: {
     "My Work": true,
@@ -496,6 +503,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Calendar Access": true,
     "CRM Access": true,
     "Marketing Directory Access": true,
+    "Email Campaigns Access": true,
   },
   enterprise_admin: {
     "My Work": true,
@@ -549,6 +557,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Calendar Access": true,
     "CRM Access": true,
     "Marketing Directory Access": true,
+    "Email Campaigns Access": true,
   },
 };
 
