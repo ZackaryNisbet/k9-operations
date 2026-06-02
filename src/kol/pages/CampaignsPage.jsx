@@ -27,7 +27,6 @@ import {
 import { hasLeanPermission } from "../../shared/permissions";
 import { normalizeOptionalUuid } from "../trainingData";
 import StripoEditor from "../StripoEditor";
-import { K9_RESORTS_MASTER_HTML } from "../emailMasterTemplate";
 import {
   CAMPAIGN_AUDIENCE_STATUSES,
   audienceCountsByStatus,
@@ -232,7 +231,10 @@ function CampaignComposer({ draft, leads, suppressionSet, user, busy, onClose, o
               ref={editorRef}
               emailId={field.id || "new"}
               user={user}
-              initialHtml={field.design?.html || field.compiled_html || K9_RESORTS_MASTER_HTML}
+              // New campaigns open on Stripo's native (empty) canvas so structures + content
+              // blocks are fully draggable; a saved design reloads its own HTML. (A branded
+              // native starter template is the follow-up — raw HTML disables block insertion.)
+              initialHtml={field.design?.html || field.compiled_html || ""}
               initialCss={field.design?.css || ""}
               onDirty={() => { /* dirty tracking handled on save */ }}
             />
