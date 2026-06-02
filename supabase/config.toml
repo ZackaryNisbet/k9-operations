@@ -78,3 +78,11 @@ verify_jwt = false
 # publishable/service keys, not user JWTs. The function loads scoped Gingr
 # credentials server-side and validates required parameters in-function.
 verify_jwt = false
+
+[functions.ignite-webhook]
+# Public lead-intake endpoint: Resend posts inbound booking-form emails with NO
+# Supabase JWT, so gateway verification must stay OFF — otherwise a real
+# submission (and the health-check dry-run) 401s before the function runs. The
+# function authorizes by website slug / probe token in-body. Declared here so a
+# CLI redeploy can't silently re-enable verify_jwt and break intake.
+verify_jwt = false
