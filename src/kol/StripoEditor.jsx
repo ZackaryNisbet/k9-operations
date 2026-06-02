@@ -14,7 +14,8 @@ import { C } from "../shared/theme";
 import { EDITOR_BRAND_PALETTE, MERGE_TAGS, K9_OPERATIONS_BRAND } from "./campaignsData";
 
 const STRIPO_SCRIPT_SRC = "https://plugins.stripo.email/resources/uieditor/latest/UIEditor.js";
-const SCRIPT_ID = "k9-stripo-uieditor";
+// Stripo's UIEditor.js locates itself by this exact script-tag id — it MUST be "UiEditorScript".
+const SCRIPT_ID = "UiEditorScript";
 
 // Load the Stripo module script exactly once; resolve when window.UIEditor is ready.
 let scriptPromise = null;
