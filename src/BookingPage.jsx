@@ -8,6 +8,7 @@ import { B } from './shared/bookingTheme';
 import { HERO_IMAGES, ROOM_IMAGES, ROOM_INFO, ROOM_ORDER, BATH_OPTIONS, GLOBAL_CSS, DEF_BREEDS } from './booking/constants';
 import { gid, getMinDate, countNights, fmtDate, fmtCurrency, getAvailableCount } from './booking/lib';
 import { Icons } from './booking/components/Icons';
+import { K9Logo } from './booking/components/K9Logo';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ERROR BOUNDARY — catches render errors and shows useful info
@@ -41,10 +42,6 @@ class BookingErrorBoundary extends Component {
 
 
 
-// K9 Resorts Official Logo
-const K9Logo = ({ size = 48 }) => (
-  <img src="/k9-logo.png" alt="K9 Resorts" style={{ width: size, height: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }} />
-);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SCROLL REVEAL HOOK
