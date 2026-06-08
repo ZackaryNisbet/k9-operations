@@ -103,6 +103,7 @@ import PerformanceReviewComplianceGrid, {
   PerformanceReviewComplianceGridStyles,
   ReviewCycleCell,
 } from "../components/PerformanceReviewComplianceGrid";
+import { CompactProgressBar } from "./training/components/CompactProgressBar";
 import { ProgressBar } from "./training/components/ProgressBar";
 import { HourAnalysisPositionMoveControl } from "./training/components/HourAnalysisPositionMoveControl";
 import { LaborModelHoursLineGraph } from "./training/components/LaborModelHoursLineGraph";
@@ -1033,14 +1034,6 @@ function StatusBadge({ status }) {
 }
 
 
-function CompactProgressBar({ percent, color = C.info, height = 5 }) {
-  const p = safeTrainingProgress(percent);
-  return (
-    <div style={{ width: "100%", height, borderRadius: height / 2, background: C.borderLight, overflow: "hidden" }}>
-      <div style={{ width: `${p}%`, height: "100%", borderRadius: height / 2, background: color, transition: "width 0.3s" }} />
-    </div>
-  );
-}
 
 function PctReadinessDualProgress({ demonstratedPercent = 0, verifiedPercent = 0 }) {
   const rows = [
