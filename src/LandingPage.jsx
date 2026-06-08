@@ -668,6 +668,80 @@ function FeatureGraphic({ type, color }) {
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// CONTENT — what the platform actually does (grounded in shipped features)
+// ═══════════════════════════════════════════════════════════════════════════════
+const PLATFORM_PILLARS = [
+  {
+    icon: 'lifecycle',
+    subtitle: 'Customer Lifecycle',
+    title: 'Every client, from first lead to loyal regular',
+    description: 'K9 Operations reads your Gingr history and sorts every client into where they actually are — new leads, active regulars, and lapsed clients worth winning back — then gives your team the tools to move them forward.',
+    bullets: [
+      'Automatic lead, active, and lapsed segmentation from real booking history',
+      'A built-in CRM with call, text, email, and note logging plus follow-up reminders',
+      'Grassroots and marketing outreach tracked so nothing slips',
+      'Ignite lead capture that turns inquiries into booked tours',
+    ],
+    accentColor: C.pri,
+  },
+  {
+    icon: 'ops',
+    subtitle: 'Daily Operations',
+    title: 'The work that has to happen, tracked to done',
+    description: 'Opening and closing roll calls, feeding and medications, room cleaning, bathing, private play, weekly maintenance — every routine becomes a live checklist with real-time progress, so nothing gets missed on a busy day.',
+    bullets: [
+      'Role-based checklists for every shift and station',
+      'Live completion tracking across the whole team, in real time',
+      'Feeding, medication, and care reports built from what staff log',
+      'Resort upkeep and weekly maintenance on a schedule',
+    ],
+    accentColor: C.accDk,
+  },
+  {
+    icon: 'tv',
+    subtitle: 'Front of House',
+    title: 'A calm checkout, on every screen',
+    description: "A live checkout board for the lobby TV shows who's going home and when, while staff capture checkout notes and photos that make pickups personal — and keep the front desk ahead of the rush.",
+    bullets: [
+      'A lobby checkout board that updates in real time',
+      'Checkout notes and photo pairing for every pet',
+      'Cash tips and pickup details handled without the scramble',
+    ],
+    accentColor: C.priL,
+  },
+  {
+    icon: 'reports',
+    subtitle: 'Reporting & Intelligence',
+    title: 'The numbers, in plain language',
+    description: 'Revenue, occupancy, labor, end-of-day, and package performance — pulled straight from your operations. Ask a question in plain English and get the chart, or open the analytics workspace for the full picture.',
+    bullets: [
+      'Revenue, occupancy, and labor dashboards from live operations',
+      'End-of-day reporting and reconciliation',
+      'Plain-language queries — ask for a metric, get the chart',
+      'Daily and weekly email reports delivered to your inbox',
+    ],
+    accentColor: C.pri,
+  },
+];
+
+const CAPABILITIES = [
+  { icon: 'funnel', title: 'Scheduling & demand', text: 'Staff schedules matched to forecasted demand and capacity.' },
+  { icon: 'star', title: 'Labor & training', text: 'Roster, 30/60/90 reviews, interviews, and capacity planning.' },
+  { icon: 'reports', title: 'Inventory', text: 'Catalog, counts, and depletion tracking that stays current.' },
+  { icon: 'lifecycle', title: 'Enrichment programs', text: 'Plan and track enrichment for every pet in your care.' },
+  { icon: 'shield', title: 'Incidents & compliance', text: 'Incident logging, agreements, and a full audit trail.' },
+  { icon: 'ops', title: 'Enterprise & multi-location', text: 'Roll up every location with a shared directory and org chart.' },
+  { icon: 'sync', title: 'Gingr & Ignite sync', text: 'Continuous sync keeps every record current — no double entry.' },
+  { icon: 'tv', title: 'Online booking pages', text: 'Branded booking pages your customers use to reserve.' },
+];
+
+const STEPS = [
+  { n: '01', title: 'Connect your Gingr data', text: 'K9 Operations securely syncs your reservations, clients, and pets from Gingr — no migration and no double entry.' },
+  { n: '02', title: 'Your team runs the day', text: 'Checklists, CRM, scheduling, and the checkout board give every role exactly what they need, on any device.' },
+  { n: '03', title: "You see what's working", text: "Live dashboards and plain-language reporting turn the day's operations into decisions." },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN LANDING PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function LandingPage() {
@@ -692,12 +766,17 @@ export default function LandingPage() {
   };
 
   return (
-    <div style={{ background: C.bg, color: C.text, fontFamily: "'Outfit', -apple-system, system-ui, sans-serif", minHeight: '100vh', overflowX: 'hidden' }}>
+    <div id="top" style={{ background: C.bg, color: C.text, fontFamily: "'Outfit', -apple-system, system-ui, sans-serif", minHeight: '100vh', overflowX: 'hidden' }}>
 
       {/* ─── NAVIGATION ─── */}
       <nav style={navStyle}>
         <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 64 }}>
-          <K9Logo size={34} />
+          <a href="#top" style={{ textDecoration: 'none' }}><K9Logo size={34} /></a>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <a href="#platform" className="nav-link">Platform</a>
+            <a href="#how" className="nav-link">How it works</a>
+            <a href="/login" onClick={handleSignIn} className="nav-signin">Sign In</a>
+          </div>
         </div>
       </nav>
 
@@ -744,14 +823,23 @@ export default function LandingPage() {
 
           <h1 className="hero-heading" style={{
             fontWeight: 900, lineHeight: 1.08,
-            color: C.pri, margin: '0 0 36px', letterSpacing: 0,
+            color: C.pri, margin: '0 0 24px', letterSpacing: 0,
           }}>
-            Gingr data,<br />
-            <span style={{ color: C.acc }}>transformed</span> into<br />
-            operational intelligence
+            Gingr runs the bookings.<br />
+            K9 Operations runs the <span style={{ color: C.acc }}>day</span>.
           </h1>
 
-          <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <p className="hero-sub" style={{
+            fontSize: 19, lineHeight: 1.6, color: C.textSec,
+            maxWidth: 660, margin: '0 auto 36px',
+          }}>
+            A complete operations platform for boarding &amp; daycare facilities, built on
+            top of your Gingr data — daily checklists, customer lifecycle, staff scheduling,
+            and the reporting that ties it together, in one calm workspace your whole team
+            actually uses.
+          </p>
+
+          <div className="hero-cta" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
             <a
               href="/login"
               onClick={handleSignIn}
@@ -761,6 +849,115 @@ export default function LandingPage() {
               <span>Sign In</span>
               <span className="signin-button-glow" aria-hidden="true" />
             </a>
+            <a href="#platform" className="ghost-button">Explore the platform</a>
+          </div>
+        </div>
+      </section>
+
+      {/* ─── CONCEPT BAND: built on your data ─── */}
+      <section style={{ padding: '88px 24px', borderTop: `1px solid ${C.borderLight}` }}>
+        <div style={{ maxWidth: 1000, margin: '0 auto', textAlign: 'center' }}>
+          <div className="eyebrow">Built on your data</div>
+          <h2 className="section-title">Gingr is the source. K9&nbsp;Operations is the system.</h2>
+          <p className="section-intro">
+            Your bookings, clients, and pets already live in Gingr. K9 Operations syncs that
+            data continuously and turns it into something your team can act on — sorting
+            clients by where they are in their lifecycle, surfacing the day's work, and
+            keeping the front desk and the back office on the same page.
+          </p>
+          <div style={{ marginTop: 28 }}>
+            <DataFlowAnimation />
+          </div>
+        </div>
+      </section>
+
+      {/* ─── PLATFORM PILLARS ─── */}
+      <section id="platform" className="anchor" style={{ padding: '88px 24px 40px', background: C.bgAlt }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto', textAlign: 'center' }}>
+          <div className="eyebrow">The platform</div>
+          <h2 className="section-title">One workspace for the whole operation</h2>
+          <p className="section-intro">
+            From the first inquiry to the end-of-day report, every part of running a boarding
+            &amp; daycare facility lives in one calm, consistent interface.
+          </p>
+        </div>
+        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+          {PLATFORM_PILLARS.map((p, i) => (
+            <FeatureSection
+              key={p.subtitle}
+              icon={p.icon}
+              subtitle={p.subtitle}
+              title={p.title}
+              description={p.description}
+              bullets={p.bullets}
+              accentColor={p.accentColor}
+              reversed={i % 2 === 1}
+            />
+          ))}
+        </div>
+      </section>
+
+      {/* ─── CAPABILITY GRID ─── */}
+      <section style={{ padding: '88px 24px' }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+          <div style={{ textAlign: 'center', marginBottom: 40 }}>
+            <div className="eyebrow">And everything else</div>
+            <h2 className="section-title">Built for the whole facility</h2>
+            <p className="section-intro">
+              The day-to-day modules a real pet-care operation needs — already included.
+            </p>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(248px, 1fr))', gap: 16 }}>
+            {CAPABILITIES.map((c) => (
+              <div key={c.title} className="cap-card">
+                <div className="cap-icon"><Icon name={c.icon} size={20} color={C.pri} /></div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6 }}>{c.title}</div>
+                <div style={{ fontSize: 14, color: C.textSec, lineHeight: 1.55 }}>{c.text}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ─── HOW IT WORKS ─── */}
+      <section id="how" className="anchor" style={{ padding: '88px 24px', background: C.bgAlt }}>
+        <div style={{ maxWidth: 1000, margin: '0 auto' }}>
+          <div style={{ textAlign: 'center', marginBottom: 44 }}>
+            <div className="eyebrow">How it works</div>
+            <h2 className="section-title">Three steps to a running floor</h2>
+            <p className="section-intro">
+              No rip-and-replace. K9 Operations layers onto the Gingr you already run.
+            </p>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 24 }}>
+            {STEPS.map((s) => (
+              <div key={s.n} className="step-card">
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.acc, letterSpacing: '0.12em' }}>{s.n}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: '10px 0 10px' }}>{s.title}</div>
+                <div style={{ fontSize: 15, color: C.textSec, lineHeight: 1.6 }}>{s.text}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ─── CLOSING CTA ─── */}
+      <section style={{ padding: '40px 24px 88px' }}>
+        <div style={{
+          maxWidth: 920, margin: '0 auto',
+          background: `linear-gradient(135deg, ${C.pri} 0%, ${C.priL} 100%)`,
+          borderRadius: 28, padding: '56px 40px', textAlign: 'center',
+          boxShadow: '0 24px 60px rgba(20,83,45,0.22)',
+        }}>
+          <h2 style={{ fontSize: 34, fontWeight: 900, color: '#fff', margin: '0 0 14px', lineHeight: 1.15 }}>
+            See it the way your team will.
+          </h2>
+          <p style={{ fontSize: 17, color: 'rgba(255,255,255,0.82)', lineHeight: 1.6, maxWidth: 560, margin: '0 auto 32px' }}>
+            Sign in to your workspace, or reach out and we'll walk you through K9 Operations on your own data.
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+            <a href="/login" onClick={handleSignIn} className="cta-primary">Sign In</a>
+            <a href="mailto:zack.nisbet@k9operations.com" className="cta-secondary">Contact us</a>
           </div>
         </div>
       </section>
@@ -1022,7 +1219,72 @@ export default function LandingPage() {
             font-size: 36px;
           }
         }
+        html { scroll-behavior: smooth; }
+        .anchor { scroll-margin-top: 84px; }
+        .nav-link {
+          font-size: 14px; font-weight: 600; color: #475569;
+          text-decoration: none; padding: 8px 12px; border-radius: 8px;
+          transition: color 0.18s ease, background 0.18s ease;
+        }
+        .nav-link:hover { color: #14532D; background: #F1F5F9; }
+        .nav-signin {
+          font-size: 14px; font-weight: 800; color: #fff; background: #14532D;
+          text-decoration: none; padding: 9px 18px; border-radius: 10px;
+          box-shadow: 0 8px 18px rgba(20,83,45,0.20);
+          transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+        }
+        .nav-signin:hover { background: #166534; transform: translateY(-1px); box-shadow: 0 12px 24px rgba(20,83,45,0.26); }
+        .ghost-button {
+          display: inline-flex; align-items: center; height: 54px; padding: 0 26px;
+          border-radius: 14px; border: 1.5px solid #E2E8F0; background: #fff;
+          color: #14532D; font-size: 15px; font-weight: 700; text-decoration: none;
+          transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+        }
+        .ghost-button:hover { border-color: #84CC16; background: #F7FEE7; transform: translateY(-2px); }
+        .eyebrow {
+          font-size: 12px; font-weight: 700; color: #4D7C0F; letter-spacing: 0.08em;
+          text-transform: uppercase; margin-bottom: 12px;
+        }
+        .section-title {
+          font-size: 38px; font-weight: 800; color: #0F172A; line-height: 1.15;
+          margin: 0 auto 16px; max-width: 760px; letter-spacing: -0.01em;
+        }
+        .section-intro {
+          font-size: 18px; color: #475569; line-height: 1.65; max-width: 620px; margin: 0 auto;
+        }
+        .cap-card {
+          background: #fff; border: 1px solid #E2E8F0; border-radius: 14px; padding: 22px 20px;
+          transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+        }
+        .cap-card:hover { border-color: #D9F99D; box-shadow: 0 10px 28px rgba(20,83,45,0.08); transform: translateY(-2px); }
+        .cap-icon {
+          width: 40px; height: 40px; border-radius: 10px; background: #F7FEE7;
+          display: flex; align-items: center; justify-content: center; margin-bottom: 14px;
+        }
+        .step-card {
+          background: #fff; border: 1px solid #E2E8F0; border-radius: 16px; padding: 28px 24px;
+        }
+        .cta-primary {
+          display: inline-flex; align-items: center; height: 52px; padding: 0 30px; border-radius: 13px;
+          background: #84CC16; color: #14532D; font-size: 15px; font-weight: 800; text-decoration: none;
+          box-shadow: 0 12px 28px rgba(132,204,22,0.32);
+          transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+        }
+        .cta-primary:hover { background: #A3E635; transform: translateY(-2px); box-shadow: 0 16px 36px rgba(132,204,22,0.4); }
+        .cta-secondary {
+          display: inline-flex; align-items: center; height: 52px; padding: 0 28px; border-radius: 13px;
+          border: 1.5px solid rgba(255,255,255,0.4); color: #fff; font-size: 15px; font-weight: 700; text-decoration: none;
+          transition: background 0.18s ease, border-color 0.18s ease;
+        }
+        .cta-secondary:hover { background: rgba(255,255,255,0.1); border-color: #fff; }
+        @media (max-width: 768px) {
+          .nav-link { display: none; }
+          .hero-sub { font-size: 16px; }
+          .section-title { font-size: 28px; }
+          .section-intro { font-size: 16px; }
+        }
         @media (prefers-reduced-motion: reduce) {
+          html { scroll-behavior: auto; }
           .signin-button,
           .signin-button-glow,
           .signin-grid,
