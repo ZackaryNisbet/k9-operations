@@ -4,6 +4,16 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from './supabaseClient';
+import { createReloadScheduler } from './shared/reloadScheduler';
+
+// Coalesce window for realtime-triggered full reloads. A single user action often
+// writes several tables at once (e.g. a reservation save touches reservations,
+// payments and the audit log); without coalescing each write would fire its own
+// full-dataset refetch. 600ms collapses that burst into one reload.
+const REALTIME_RELOAD_DEBOUNCE_MS = 600;
+// Safety-net poll. Realtime drives freshness; this only covers missed events and
+// dropped websocket reconnects, and is suppressed entirely while the tab is hidden.
+const SAFETY_POLL_MS = 60_000;
 
 // ============================================================
 // Normalized data hook — V2 schema (60 tables, UUID PKs)
@@ -1604,17 +1614,40 @@ export function useData(profile) {
       'questionnaires',
     ];
 
+    // Coalesce realtime bursts and the safety poll into a single, visibility-aware
+    // refetch path. Previously every change fired its own immediate full reload and
+    // the poll ran every 30s even for hidden/background tabs — the dominant egress
+    // source. The scheduler debounces bursts, polls only while visible, and runs one
+    // catch-up reload when a hidden tab returns to the foreground.
+    const scheduler = createReloadScheduler(load, {
+      debounceMs: REALTIME_RELOAD_DEBOUNCE_MS,
+      pollMs: SAFETY_POLL_MS,
+    });
+
+    // Only reload for changes that belong to this location. Many rows carry a
+    // location_id; when it is present and points at a different location we skip the
+    // refetch (in a multi-location deployment this stops one site's writes from
+    // forcing every other site to re-download its entire dataset). Rows without a
+    // location_id — and DELETEs, whose payload may carry only the primary key — fall
+    // through and reload, preserving the previous behaviour.
+    const onLocationChange = (payload) => {
+      const row = payload?.new ?? payload?.old;
+      if (row && row.location_id != null && row.location_id !== locationId) return;
+      scheduler.requestReload();
+    };
+
     let channel = supabase
       .channel(`location-${locationId}`);
 
     for (const tbl of [...entityTables, ...settingsTables]) {
-      channel = channel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, () => load());
+      channel = channel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, onLocationChange);
     }
-    channel = channel.on('postgres_changes', { event: '*', schema: 'public', table: 'enterprise_packages' }, () => load());
+    // enterprise_packages is global (not location-scoped); any change is relevant.
+    channel = channel.on('postgres_changes', { event: '*', schema: 'public', table: 'enterprise_packages' }, () => scheduler.requestReload());
 
     channel.subscribe();
-    const poll = setInterval(() => load(), 30000);
-    return () => { supabase.removeChannel(channel); clearInterval(poll); };
+    scheduler.start();
+    return () => { scheduler.stop(); supabase.removeChannel(channel); };
   }, [locationId]);
 
   // ── SAVE ──
