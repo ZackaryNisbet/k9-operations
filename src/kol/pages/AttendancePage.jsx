@@ -24,7 +24,6 @@ import {
 import {
   ATTENDANCE_DEFAULT_SORT,
   ATTENDANCE_MARK_FILTER_FIELDS,
-  ATTENDANCE_ROSTER_SORT_COLUMNS,
   ATTENDANCE_SUMMARY_DEFAULT_SORT,
   ATTENDANCE_SUMMARY_GROUP_DIVIDER,
   DEFAULT_ATTENDANCE_POSITION_ORDER,
@@ -41,90 +40,12 @@ import {
   parseAttendanceDateOnly,
 } from "./attendance/format";
 
-function AttendanceSortControl({ sort, onChange }) {
-  const [open, setOpen] = useState(false);
-  const activeColumn = ATTENDANCE_ROSTER_SORT_COLUMNS.find((column) => column.key === sort.key) || ATTENDANCE_ROSTER_SORT_COLUMNS[0];
-  const isDefault = sort.key === ATTENDANCE_DEFAULT_SORT.key && sort.direction === ATTENDANCE_DEFAULT_SORT.direction;
-  const label = isDefault ? `Sort: ${activeColumn.label}` : `Sort: ${activeColumn.label} ${sort.direction === "desc" ? "Descending" : "Ascending"}`;
-  return (
-    <div className="attendance-sort-control">
-      <button type="button" className={`attendance-sort-trigger${open ? " is-open" : ""}${!isDefault ? " is-active" : ""}`} onClick={() => setOpen((prev) => !prev)}>
-        <I.SortNone />
-        <span>{label}</span>
-        <I.ChevronDown />
-      </button>
-      {open && (
-        <div className="attendance-sort-panel">
-          <button
-            type="button"
-            className={`attendance-sort-reset${isDefault ? " is-active" : ""}`}
-            onClick={() => {
-              onChange(ATTENDANCE_DEFAULT_SORT);
-              setOpen(false);
-            }}
-          >
-            Reset to position order
-          </button>
-          <div className="attendance-sort-options">
-            {ATTENDANCE_ROSTER_SORT_COLUMNS.map((column, index) => (
-              <div key={column.key} className="attendance-sort-row" style={{ animationDelay: `${index * 28}ms` }}>
-                <span>{column.label}</span>
-                <div>
-                  {["asc", "desc"].map((direction) => (
-                    <button
-                      key={direction}
-                      type="button"
-                      className={sort.key === column.key && sort.direction === direction ? "is-active" : ""}
-                      onClick={() => {
-                        onChange({ key: column.key, direction });
-                        setOpen(false);
-                      }}
-                    >
-                      {direction === "desc" ? "Descending" : "Ascending"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function StatusPill({ active }) {
-  return active ? <Badge color="success">Active</Badge> : <Badge color="warning">Inactive</Badge>;
-}
-
-function TypePill({ label, color }) {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "3px 10px",
-        borderRadius: 999,
-        fontSize: 11,
-        fontWeight: 700,
-        background: `${color}18`,
-        color,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </span>
-  );
-}
-
-function EmptyState({ title, subtitle }) {
-  return (
-    <Card style={{ padding: 36, textAlign: "center", color: C.textMut }}>
-      <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6 }}>{title}</div>
-      {subtitle && <div style={{ fontSize: 13 }}>{subtitle}</div>}
-    </Card>
-  );
-}
+import {
+  AttendanceSortControl,
+  EmptyState,
+  StatusPill,
+  TypePill,
+} from "./attendance/components";
 
 export default function AttendanceTrackerPage({ data, save, nav, profile, addGlobalToast = () => {}, params = {}, embedded = false, tabPreset = "full", canLogAttendance = null, laborPositionOrder = [], searchSlot = null, introValue = "", canEditIntro = false, onSaveIntro = null }) {
   const [tab, setTab] = useState("roster");
