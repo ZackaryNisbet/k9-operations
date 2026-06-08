@@ -440,3 +440,7 @@ export const LABOR_MODEL_DEFAULT_BREAKERS_BY_DAY = Object.fromEntries(LABOR_MODE
   dayKey,
   ["saturday", "sunday"].includes(dayKey) ? LABOR_MODEL_WEEKEND_BREAKERS : LABOR_MODEL_WEEKDAY_BREAKERS,
 ]));
+
+export const normalizeCapacityPlanningView = (value) => CAPACITY_PLANNING_VIEW_IDS.has(value) ? value : "staffing-capacity";
+
+export const HOUR_ANALYSIS_RESEARCH_TARGET_LABEL = HOUR_ANALYSIS_FRONTLINE_TARGET_RANGE_LABEL;
