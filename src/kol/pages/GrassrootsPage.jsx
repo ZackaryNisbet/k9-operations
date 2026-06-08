@@ -107,6 +107,8 @@ import {
   getTrackerGridColumns,
   getGrassrootsColumnMap,
 } from "./grassroots/columns";
+import { StatusBadge, BusinessCategoryBadge, FilterIcon } from "./grassroots/badges";
+import { EventDateCell, EventDateDisplay } from "./grassroots/eventDateDisplay";
 
 const INPUT_STYLE = {
   width: "100%",
@@ -120,63 +122,6 @@ const INPUT_STYLE = {
   fontFamily: "inherit",
   outline: "none",
 };
-
-function EventDateCell({ target }) {
-  const dates = normalizeGrassrootsEventDates(target);
-  if (dates.length === 0) {
-    return <div style={{ fontSize: 12, fontWeight: 800, color: C.textMut }}>No date</div>;
-  }
-  const [firstDate, ...additionalDates] = dates;
-  return (
-    <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: 12, fontWeight: 900, color: C.text, whiteSpace: "nowrap" }}>{fmtDate(firstDate.event_date)}</div>
-      {additionalDates.length > 0 && (
-        <div style={{ marginTop: 3, fontSize: 11, fontWeight: 800, color: C.textMut }}>
-          +{additionalDates.length} more {additionalDates.length === 1 ? "date" : "dates"}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// The events table's date cell: one date shows weekday + time; a consecutive run
-// shows a date range + day count; scattered dates show the first + a chain. Whether
-// it's single vs multi-day is conveyed by the shape, never a literal label.
-function EventDateDisplay({ target }) {
-  const sum = summarizeGrassrootsEventDates(target);
-  if (sum.count === 0) return <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>No date</span>;
-  const wrap = { display: "flex", flexDirection: "column", gap: 1, lineHeight: 1.2, minWidth: 0 };
-  const dateLine = { fontSize: 12, fontWeight: 800, color: C.text };
-  const subLine = { fontSize: 10, fontWeight: 600, color: C.textMut };
-
-  if (!sum.isMultiDay) {
-    const timeStr = fmtClockRange(sum.first.start_time, sum.first.end_time);
-    return (
-      <div style={wrap}>
-        <span style={dateLine}>{fmtEventDayLine(sum.first.event_date)}</span>
-        <span style={subLine}>{fmtWeekdayLong(sum.first.event_date)}{timeStr ? ` · ${timeStr}` : ""}</span>
-      </div>
-    );
-  }
-  if (sum.isConsecutive) {
-    return (
-      <div style={wrap}>
-        <span style={dateLine}>{fmtEventDateRange(sum.first.event_date, sum.last.event_date)}</span>
-        <span style={subLine}>{fmtWeekdayShort(sum.first.event_date)}–{fmtWeekdayShort(sum.last.event_date)} · {sum.count} days</span>
-      </div>
-    );
-  }
-  // Scattered (non-consecutive) linked dates.
-  return (
-    <div style={wrap}>
-      <span style={dateLine}>{fmtEventDayLine(sum.first.event_date)}</span>
-      <span style={{ ...subLine, color: C.pri, display: "inline-flex", alignItems: "center", gap: 3 }} title={`${sum.count} separate dates linked to this event`}>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg>
-        {sum.count} linked dates
-      </span>
-    </div>
-  );
-}
 
 function createGrassrootsClientUuid() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -1847,39 +1792,6 @@ function EventTargetInlineEditor({ draft, saving, activities = [], attachmentsBy
         </div>
         </div>
     </div>
-  );
-}
-
-function StatusBadge({ status }) {
-  const colors = {
-    identified: C.info,
-    corresponding: "#7C3AED",
-    booked: C.suc,
-    abandoned: C.dan,
-  };
-  const normalizedStatus = normalizeGrassrootsStatus(status);
-  const color = colors[normalizedStatus] || C.textMut;
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 10px", borderRadius: 10, background: `${color}12`, color, border: `1px solid ${color}30`, fontSize: 11, fontWeight: 900 }}>
-      {getGrassrootsStatusLabel(normalizedStatus)}
-    </span>
-  );
-}
-
-function BusinessCategoryBadge({ value }) {
-  const label = value || "Uncategorized";
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", width: "fit-content", padding: "4px 10px", borderRadius: 10, background: value ? C.priLt : C.bg, color: value ? C.pri : C.textMut, border: `1px solid ${value ? `${C.pri}30` : C.borderLight}`, fontSize: 11, fontWeight: 900 }}>
-      {label}
-    </span>
-  );
-}
-
-function FilterIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round">
-      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-    </svg>
   );
 }
 
