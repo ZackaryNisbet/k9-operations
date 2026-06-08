@@ -3,7 +3,7 @@
 // Uses live Supabase data from scheduling_matrix_daily.
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { C, K9_LOCATIONS, todayStr, addDays } from "../../shared/theme";
+import { C, todayStr, addDays } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn, CalendarPicker } from "../../shared/ui";
 import { supabase } from "../../supabaseClient";
@@ -67,6 +67,7 @@ import {
   getYearStart,
   shiftDemandAnchor,
 } from "./scheduling/schedulingDates";
+import { isUuid, resolveSchedulingLocationName } from "./scheduling/schedulingLocation";
 
 export {
   buildHistoricalRangeSummary,
@@ -81,44 +82,6 @@ const MATRIX_TABLE_FONT = "'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe U
 
 function formatVisibleSchedulingCopy(value) {
   return String(value ?? "").replace(/\bGingr\b/g, "Gingr");
-}
-
-const KNOWN_LOCATION_DISPLAY_NAMES = new Map([
-  ["11111111-1111-1111-1111-111111111111", "Adair Forsythe"],
-]);
-
-function isUuid(value) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim());
-}
-
-function humanizeLocationKey(value) {
-  return String(value || "")
-    .replace(/[-_]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function cleanReadableLocationName(value) {
-  const text = String(value || "").trim();
-  if (!text || isUuid(text)) return "";
-  return text;
-}
-
-function resolveSchedulingLocationName({ profile, locationMeta, locationId }) {
-  const staticLocation = K9_LOCATIONS.find((location) => location.id === locationId || location.slug === locationId);
-  return cleanReadableLocationName(locationMeta?.name)
-    || cleanReadableLocationName(locationMeta?.display_name)
-    || cleanReadableLocationName(locationMeta?.data?.name)
-    || cleanReadableLocationName(locationMeta?.data?.display_name)
-    || cleanReadableLocationName(locationMeta?.data?.location_name)
-    || cleanReadableLocationName(profile?.location_name)
-    || cleanReadableLocationName(profile?.locationName)
-    || cleanReadableLocationName(profile?.resort_name)
-    || cleanReadableLocationName(profile?.location)
-    || cleanReadableLocationName(staticLocation?.name)
-    || KNOWN_LOCATION_DISPLAY_NAMES.get(String(locationId || "").trim())
-    || (locationId && !isUuid(locationId) ? humanizeLocationKey(locationId) : "K9 Operations Location");
 }
 
 function normalizeRotationLaneRole(lane) {
