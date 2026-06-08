@@ -3,10 +3,11 @@ import { supabase } from "../../supabaseClient";
 import { C, fmtDate } from "../../shared/theme";
 import { Badge, Btn, Card, Modal } from "../../shared/ui";
 import { I } from "../../shared/icons";
-
-const RESOURCE_BUCKET = "vaccine-records";
-const LEGACY_RESOURCE_SETTING_KEY = "resource_library_items";
-const LEGACY_RESOURCE_SECTIONS_SETTING_KEY = "resource_library_sections";
+import {
+  RESOURCE_BUCKET,
+  LEGACY_RESOURCE_SETTING_KEY,
+  LEGACY_RESOURCE_SECTIONS_SETTING_KEY,
+} from "./resources/constants";
 
 function formatBytes(bytes) {
   const value = Number(bytes || 0);
