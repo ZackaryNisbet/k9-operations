@@ -103,6 +103,8 @@ import PerformanceReviewComplianceGrid, {
   PerformanceReviewComplianceGridStyles,
   ReviewCycleCell,
 } from "../components/PerformanceReviewComplianceGrid";
+import { buildComplianceAuditDetailParts, buildComplianceHistoryDetailParts, buildOutOfPositionLaborSummary, getLaborModelCoverageRoleStyle, getLaborModelNextCoverageValue, getTrainingComplianceState } from "./training/helpers";
+export { buildOutOfPositionLaborSummary };
 import { PctReadinessDualProgress } from "./training/components/PctReadinessDualProgress";
 import { HourAnalysisSplitControl } from "./training/components/HourAnalysisSplitControl";
 import { LaborModelTimeControl } from "./training/components/LaborModelTimeControl";
@@ -1182,15 +1184,6 @@ export function isDefaultReviewComplianceRequirement(row = {}) {
 
 
 
-function getLaborModelCoverageRoleStyle(groupKey = "", roleColors = null) {
-  const palette = getLaborModelRolePalette(groupKey, roleColors);
-  return {
-    "--labor-model-cell-strong": palette.strong,
-    "--labor-model-cell-accent": palette.accent,
-    "--labor-model-cell-soft": palette.soft,
-    "--labor-model-cell-text": palette.text,
-  };
-}
 
 
 
@@ -1207,11 +1200,6 @@ function getLaborModelCoverageRoleStyle(groupKey = "", roleColors = null) {
 
 
 
-function getLaborModelNextCoverageValue(value = "", rowGroupKey = "") {
-  const kind = getLaborModelCoverageKind(value);
-  if (kind === "empty") return getLaborModelDefaultCoverageValueForRow(rowGroupKey);
-  return "";
-}
 
 
 
@@ -1646,94 +1634,6 @@ export function selectStaffingCapacitySettings({
 
 
 
-export function buildOutOfPositionLaborSummary({ staffPlans = [], employees = [], weekStart = todayStr() } = {}) {
-  const start = getLaborCapacityWeekStart(weekStart);
-  const end = addDaysToDateString(start, 6);
-  const employeeById = new Map();
-  const employeeByName = new Map();
-  toObjectRows(employees).forEach((employee) => {
-    const id = getLaborEmployeeRowId(employee);
-    if (id && !employeeById.has(String(id))) employeeById.set(String(id), employee);
-    const name = normalizeEmployeeName(employee.full_name || employee.name || [employee.first_name, employee.last_name].filter(Boolean).join(" "));
-    if (name && !employeeByName.has(name)) employeeByName.set(name, employee);
-  });
-
-  const rows = [];
-  toObjectRows(staffPlans)
-    .filter((plan) => {
-      const planDate = String(plan.plan_date || plan.date || "").slice(0, 10);
-      return planDate >= start && planDate <= end;
-    })
-    .forEach((plan) => {
-      const planDate = String(plan.plan_date || plan.date || "").slice(0, 10);
-      const date = new Date(`${planDate}T12:00:00`);
-      const dayLabel = Number.isNaN(date.getTime())
-        ? planDate
-        : date.toLocaleDateString(undefined, { weekday: "short" });
-      getStaffPlanEntries(plan).forEach((entry) => {
-        const employeeNameKey = normalizeEmployeeName(entry.name);
-        const entryLaborEmployeeId = String(entry.labor_employee_id || "").trim();
-        const employee = entryLaborEmployeeId
-          ? employeeById.get(entryLaborEmployeeId)
-          : employeeNameKey
-            ? employeeByName.get(employeeNameKey)
-            : null;
-        const matchMethod = employee
-          ? entryLaborEmployeeId ? "labor_employee_id" : "name"
-          : "unmatched";
-        const homeRoleKey = employee ? getHourAnalysisGroupKey(employee) : "";
-        const workedRoleKey = normalizeStaffingRoleKey(entry.position);
-        const homeCompare = getOutOfPositionCompareKey(homeRoleKey);
-        const workedCompare = getOutOfPositionCompareKey(workedRoleKey);
-        const isUnclassified = !employee || !homeRoleKey || !workedRoleKey;
-        const isMismatch = !isUnclassified && homeCompare !== workedCompare;
-        rows.push({
-          id: `${plan.id || planDate || "plan"}-${entry.id}`,
-          labor_employee_id: entryLaborEmployeeId || getLaborEmployeeRowId(employee) || "",
-          match_method: matchMethod,
-          employee_name: entry.name || "Unassigned",
-          date: planDate,
-          day_label: dayLabel,
-          home_role_key: homeRoleKey,
-          home_role_label: getOutOfPositionRoleLabel(homeRoleKey),
-          worked_role_key: workedRoleKey,
-          worked_role_label: getOutOfPositionRoleLabel(workedRoleKey),
-          shift_label: [entry.shift_start, entry.shift_end].filter(Boolean).join("-") || String(plan.shift || "").toUpperCase() || "Shift",
-          shift: String(plan.shift || "").toUpperCase(),
-          hours: normalizeHourAnalysisNumber(entry.hours, 0),
-          classification: isUnclassified ? "unclassified" : isMismatch ? "mismatch" : "matched",
-          reason: !employee ? "Employee not matched to roster" : !homeRoleKey ? "Home role missing" : !workedRoleKey ? "Worked role missing" : "",
-        });
-      });
-    });
-
-  const mismatchRows = rows.filter((row) => row.classification === "mismatch");
-  const unclassifiedRows = rows.filter((row) => row.classification === "unclassified");
-  const mismatchBuckets = mismatchRows.reduce((acc, row) => {
-    const key = `${row.home_role_label} -> ${row.worked_role_label}`;
-    const bucket = acc[key] || { key, shifts: 0, hours: 0 };
-    bucket.shifts += 1;
-    bucket.hours = normalizeHourAnalysisNumber(bucket.hours + row.hours, 0);
-    acc[key] = bucket;
-    return acc;
-  }, {});
-
-  return {
-    weekStart: start,
-    weekEnd: end,
-    totalShifts: mismatchRows.length,
-    totalHours: normalizeHourAnalysisNumber(mismatchRows.reduce((sum, row) => sum + row.hours, 0), 0),
-    unclassifiedShifts: unclassifiedRows.length,
-    unclassifiedHours: normalizeHourAnalysisNumber(unclassifiedRows.reduce((sum, row) => sum + row.hours, 0), 0),
-    topMismatches: Object.values(mismatchBuckets).sort((left, right) => (right.shifts - left.shifts) || (right.hours - left.hours)).slice(0, 5),
-    rows: [...mismatchRows, ...unclassifiedRows].sort((left, right) => {
-      const leftPriority = left.classification === "mismatch" ? 0 : 1;
-      const rightPriority = right.classification === "mismatch" ? 0 : 1;
-      if (leftPriority !== rightPriority) return leftPriority - rightPriority;
-      return `${left.date}-${left.employee_name}`.localeCompare(`${right.date}-${right.employee_name}`);
-    }),
-  };
-}
 
 
 
@@ -2598,25 +2498,6 @@ function compareCompliancePolicyRequirements(left = {}, right = {}) {
 
 
 
-function getTrainingComplianceState(row) {
-  const cprCompliant = ["current", "due_soon"].includes(String(row?.cpr_status || ""));
-  const completedTraining = Number(row?.completed_training_record_count || 0) > 0
-    || ["complete", "completed", "passed"].includes(String(row?.active_training_status || "").toLowerCase());
-  const inTraining = Boolean(row?.active_training_record_id)
-    || ["in_progress", "not_started"].includes(String(row?.active_training_status || "").toLowerCase());
-  const daysSinceStart = getDaysSince(row?.start_date);
-  const withinGraceWindow = daysSinceStart != null && daysSinceStart < TRAINING_GRACE_PERIOD_DAYS;
-
-  if (completedTraining && cprCompliant) {
-    return { label: "Compliant", color: "success", inProgress: false };
-  }
-
-  if (withinGraceWindow && (inTraining || !cprCompliant || !completedTraining)) {
-    return { label: "In Progress", color: "warning", inProgress: true };
-  }
-
-  return { label: "Non-Compliant", color: "danger", inProgress: false };
-}
 
 
 
@@ -2736,31 +2617,6 @@ function getHistoryTimestampValue(value) {
 
 
 
-function buildComplianceHistoryDetailParts({ event = {}, reviewInstance = {}, checkpointLabel = "" } = {}) {
-  const previousState = readComplianceHistoryState(event, "old");
-  const nextState = readComplianceHistoryState(event, "new");
-  const eventMetadata = readComplianceHistoryMetadata(event);
-  const instanceMetadata = readComplianceHistoryMetadata(reviewInstance);
-  const completionEvidence = readComplianceHistoryMetadata(nextState).completion_evidence
-    || eventMetadata.completion_evidence
-    || instanceMetadata.completion_evidence
-    || {};
-  const completionWaiver = readComplianceHistoryMetadata(nextState).completion_waiver
-    || eventMetadata.completion_waiver
-    || instanceMetadata.completion_waiver
-    || {};
-  const dueDate = nextState.due_date || previousState.due_date || reviewInstance.due_date || eventMetadata.due_date;
-  const completedDate = nextState.completed_at || reviewInstance.completed_at || completionEvidence.completed_on || completionWaiver.completed_on;
-  const reviewItemLabel = eventMetadata.review_item_label || "";
-  const parts = [
-    dueDate ? `Due ${formatLaborDate(dueDate)}` : "",
-    completedDate ? `Action ${formatLaborDate(completedDate)}` : "",
-    reviewItemLabel && reviewItemLabel !== checkpointLabel ? reviewItemLabel : "",
-    completionEvidence.file_name ? `Evidence ${completionEvidence.file_name}` : "",
-    completionWaiver.reason ? `Waiver ${completionWaiver.reason}` : "",
-  ].filter(Boolean);
-  return parts;
-}
 
 
 export function buildComplianceHistoryRows({
@@ -2835,19 +2691,6 @@ export function buildComplianceHistoryRows({
 
 
 
-function buildComplianceAuditDetailParts(event = {}) {
-  const before = readComplianceAuditSnapshot(event, "before_snapshot");
-  const after = readComplianceAuditSnapshot(event, "after_snapshot");
-  const snapshot = Object.keys(after).length > 0 ? after : before;
-  const metadata = readComplianceHistoryMetadata(snapshot);
-  return [
-    snapshot.due_date ? `Due ${formatLaborDate(snapshot.due_date)}` : "",
-    snapshot.completed_on ? `Action ${formatLaborDate(snapshot.completed_on)}` : "",
-    snapshot.evidence_label ? `Evidence ${snapshot.evidence_label}` : "",
-    snapshot.source_note ? String(snapshot.source_note) : "",
-    metadata.completion_mode ? `State ${getComplianceStateLabel(metadata.completion_mode)}` : "",
-  ].filter(Boolean);
-}
 
 function buildComplianceCellHistoryRows({
   laborEmployeeId = "",
