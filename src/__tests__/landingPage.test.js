@@ -9,10 +9,11 @@ const source = readFileSync(new URL("../LandingPage.jsx", import.meta.url), "utf
 
 describe("LandingPage marketing content", () => {
   it("mounts the rich marketing components (not dead code)", () => {
-    expect(source).toContain("PLATFORM_PILLARS.map");
-    expect(source).toContain("<DataFlowAnimation />");
+    expect(source).toContain("PILLARS.map");
     expect(source).toContain("CAPABILITIES.map");
+    expect(source).toContain("EDITIONS.map");
     expect(source).toContain("STEPS.map");
+    expect(source).toContain("<AppFrame");
   });
 
   it("explains what the product does in plain language", () => {
