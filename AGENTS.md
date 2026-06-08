@@ -55,3 +55,33 @@ Default vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 ### Domain docs
 
 Single-context. See `docs/agents/domain.md`.
+
+## Cursor Cloud specific instructions
+
+### Stack
+
+Single **React + Vite** SPA (`npm run dev`). No Docker, local Supabase, or docker-compose. All data/auth runs against a **hosted Supabase** project via `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env` (see `.env.example`).
+
+### First-time / missing `.env`
+
+If `.env` is absent after clone, seed it: `cp .env.example .env` and fill in real Supabase values. Without valid Supabase credentials the dev server still boots and serves `/` (landing) and `/login`, but authenticated ops flows will not work.
+
+### Commands
+
+| Task | Command |
+|------|---------|
+| Install deps | `npm install` (or `.superset/setup.sh`, which also seeds `.env`) |
+| Dev server | `npm run dev` — Vite on **5173** by default |
+| Unit tests | `npm test` (Vitest, no external services) |
+| Production build | `npm run build` |
+| Supabase auth probe | `npm run auth:probe` (requires valid `.env`) |
+
+There is no ESLint script in `package.json`; rely on Vitest for automated checks.
+
+### Node version
+
+`package.json` specifies **Node 20.x**. Node 22 installs with an `EBADENGINE` warning but tests/build/dev work. Prefer `nvm use 20` when available.
+
+### Services to run locally
+
+Only **Vite** needs to run locally. Supabase Edge Functions, Postgres, Auth, Storage, and Realtime are hosted — not started in this repo.
