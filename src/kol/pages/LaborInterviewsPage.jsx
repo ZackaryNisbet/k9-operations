@@ -151,6 +151,9 @@ import { ResumePanel } from "./laborInterviews/components/ResumePanel";
 import { InterviewRoster } from "./laborInterviews/components/InterviewRoster";
 import { CandidateHeader } from "./laborInterviews/components/CandidateHeader";
 import { RestrictedInterviewDetail } from "./laborInterviews/components/RestrictedInterviewDetail";
+import { TranscriptModal } from "./laborInterviews/components/TranscriptModal";
+import { PdfFieldClickLayer } from "./laborInterviews/components/PdfFieldClickLayer";
+import { PdfFieldValueLayer } from "./laborInterviews/components/PdfFieldValueLayer";
 
 
 function useStorageObjectPreviewUrl({ bucket, path, versionKey = "", setPreviewUrl, enabled = true }) {
@@ -1037,178 +1040,10 @@ function AudioUploadPanel({
   );
 }
 
-function TranscriptModal({ turns, currentTime, segmentationSource = "", onClose }) {
-  const safeTurns = Array.isArray(turns) ? turns : [];
-  const wordSegmentMode = segmentationSource === "xai_word_segments" && safeTurns.length > 40 && !safeTurns.some((turn) => /^(Speaker|Person)\s+\d+/i.test(turn.speaker || ""));
-  const providerWords = wordSegmentMode ? wordsFromProviderSegments(safeTurns) : [];
-  const providerWordChunks = wordSegmentMode ? chunkProviderWords(providerWords) : [];
-  const hasSpeakers = safeTurns.some((turn) => turn.speaker !== "Transcript");
-  return (
-    <div className="interview-modal-backdrop" onClick={onClose}>
-      <div onClick={(event) => event.stopPropagation()} style={{ width: "min(960px, 92vw)", maxHeight: "86vh", background: "#fff", borderRadius: 8, overflow: "hidden", boxShadow: "0 24px 70px rgba(2,6,23,0.24)", display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", animation: "interviewModalEnter 260ms cubic-bezier(0.22, 1, 0.36, 1)" }}>
-        <div style={{ padding: "16px 18px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 19, fontWeight: 950, color: C.text }}>Transcript</div>
-            <div style={{ marginTop: 3, fontSize: 12, color: C.textMut }}>{wordSegmentMode ? providerWordChunks.length : safeTurns.length} {hasSpeakers && !wordSegmentMode ? "speaker turn" : "timeline row"}{(wordSegmentMode ? providerWordChunks.length : safeTurns.length) === 1 ? "" : "s"}</div>
-          </div>
-          <IconButton label="Close transcript" onClick={onClose}>{"x"}</IconButton>
-        </div>
-        <div style={{ padding: 18, overflowY: "auto", background: C.surfaceHover }}>
-          {safeTurns.length === 0 ? (
-            <EmptyState title="No Transcript" body="Replace the audio to regenerate this record with structured transcript turns." />
-          ) : wordSegmentMode ? (
-            <div style={{ display: "grid", gap: 10 }}>
-              {providerWordChunks.map((turn) => (
-                <div key={turn.id} className="interview-transcript-line" style={{ display: "grid", gridTemplateColumns: "86px minmax(0, 1fr)", gap: 12, alignItems: "start", background: isTurnActive(turn, currentTime) ? "#f0fdf4" : "#fff", border: `1px solid ${isTurnActive(turn, currentTime) ? "#bbf7d0" : C.borderLight}`, borderRadius: 8, padding: "11px 12px" }}>
-                  <div style={{ fontSize: 12, color: C.textMut, fontWeight: 850 }}>{turn.timestamp || "--:--"}</div>
-                  <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55 }}><TranscriptWords turn={turn} currentTime={currentTime} /></div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {safeTurns.map((turn) => (
-                <div key={turn.id} className="interview-transcript-line" style={{ display: "grid", gridTemplateColumns: "86px 120px minmax(0, 1fr)", gap: 12, alignItems: "start", background: isTurnActive(turn, currentTime) ? "#f0fdf4" : "#fff", border: `1px solid ${isTurnActive(turn, currentTime) ? "#bbf7d0" : C.borderLight}`, borderRadius: 8, padding: "11px 12px" }}>
-                  <div style={{ fontSize: 12, color: C.textMut, fontWeight: 850 }}>{turn.timestamp || "--:--"}</div>
-                  <div style={{ fontSize: 12, color: C.pri, fontWeight: 900 }}>{turn.speaker}</div>
-                  <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.55 }}><TranscriptWords turn={turn} currentTime={currentTime} /></div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 
 
-function PdfFieldClickLayer({ fields, activePageNumber, activeKey, containerSize, pageSize: explicitPageSize = null, onSelectField }) {
-  const pageFields = fields.filter((field) => Number(field.page_number || 1) === Number(activePageNumber || 1));
-  if (!pageFields.length) return null;
-  const pageSize = explicitPageSize || getPdfFieldPageSize(pageFields[0], pageFields);
-  const pageBox = getPdfPageOverlayBox(containerSize, pageSize);
-  if (!pageBox) return null;
-  return (
-    <div className="interview-pdf-click-layer" style={{ position: "absolute", inset: 0, zIndex: 3, pointerEvents: "none" }}>
-      {pageFields.map((field) => {
-        const style = getPdfFieldOverlayStyle(field, pageBox, pageSize);
-        if (!style) return null;
-        const key = responseKeyForPdfField(field);
-        const isActive = key === activeKey;
-        return (
-          <button
-            type="button"
-            key={field.name}
-            aria-label={`Review ${humanizePdfFieldName(field.name)}`}
-            title={humanizePdfFieldName(field.name)}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSelectField?.(field);
-            }}
-            className="interview-pdf-field-hotspot"
-            style={{
-              position: "absolute",
-              left: style.left,
-              top: style.top,
-              width: style.width,
-              height: style.height,
-              borderRadius: 3,
-              border: `1.5px solid ${isActive ? "rgba(22, 101, 52, 0.85)" : "rgba(22, 101, 52, 0)"}`,
-              background: isActive ? "rgba(22, 163, 74, 0.08)" : "rgba(255,255,255,0.001)",
-              cursor: "pointer",
-              padding: 0,
-              pointerEvents: "auto",
-            }}
-          />
-        );
-      })}
-    </div>
-  );
-}
 
-function PdfFieldValueLayer({ fields, activePageNumber, activeKey, containerSize, pageSize: explicitPageSize = null, fieldValues = {} }) {
-  const pageFields = fields.filter((field) => Number(field.page_number || 1) === Number(activePageNumber || 1));
-  if (!pageFields.length) return null;
-  const pageSize = explicitPageSize || getPdfFieldPageSize(pageFields[0], pageFields);
-  const pageBox = getPdfPageOverlayBox(containerSize, pageSize);
-  if (!pageBox) return null;
-  return (
-    <div className="interview-pdf-value-layer" style={{ position: "absolute", inset: 0, zIndex: 2, pointerEvents: "none" }}>
-      {pageFields.map((field) => {
-        const rawValue = String(fieldValues?.[field.name] || "").trim();
-        const isActive = responseKeyForPdfField(field) === activeKey;
-        const value = isActive ? rawValue.replace(/\s+/g, " ").trim() : fitPdfFieldValueForSlot(rawValue, field);
-        if (!value) return null;
-        const style = getPdfFieldValueOverlayStyle(field, pageBox, pageSize);
-        if (!style) return null;
-        const rect = getInterviewPdfFieldDisplayRect(field) || {};
-        const smallField = Number(rect.width || 0) <= 14 && Number(rect.height || 0) <= 14;
-        const normalizedRaw = rawValue.replace(/\s+/g, " ").trim();
-        const doesFit = normalizedRaw === value;
-        if (!smallField && !isActive && !doesFit) {
-          return (
-            <div
-              key={field.name}
-              title={rawValue}
-              aria-label={`${humanizePdfFieldName(field.name)} filled`}
-              style={{
-                position: "absolute",
-                left: style.left,
-                top: style.top + Math.max(1, style.height / 2 - 3),
-                width: Math.min(26, Math.max(12, style.width * 0.08)),
-                height: 5,
-                borderRadius: 999,
-                background: "rgba(22, 163, 74, 0.78)",
-                boxShadow: "0 0 0 1px rgba(255,255,255,0.9)",
-              }}
-            />
-          );
-        }
-        const activeFitSize = normalizedRaw
-          ? Math.max(5.2, Math.min(10.5, style.width / Math.max(1, normalizedRaw.length * 0.48)))
-          : 10.5;
-        const fontSize = smallField
-          ? Math.max(8, style.height * 0.74)
-          : isActive
-            ? Math.min(activeFitSize, Math.max(8.5, Math.min(10.5, style.height * 0.72)))
-            : Math.max(7.25, Math.min(8.75, style.height * 0.72));
-        const height = smallField ? style.height : Math.max(style.height, isActive ? 17 : 12);
-        return (
-          <div
-            key={field.name}
-            title={rawValue}
-            style={{
-              position: "absolute",
-              left: style.left,
-              top: style.top,
-              width: style.width,
-              height,
-              boxSizing: "border-box",
-              color: "#0f172a",
-              display: smallField ? "grid" : "block",
-              placeItems: smallField ? "center" : undefined,
-              overflow: "hidden",
-              whiteSpace: "nowrap",
-              textOverflow: "ellipsis",
-              fontFamily: smallField ? "Arial, sans-serif" : "\"Times New Roman\", Times, serif",
-              fontSize,
-              lineHeight: smallField ? 1 : `${Math.max(10, height - 3)}px`,
-              fontWeight: smallField ? 800 : 500,
-              padding: smallField ? 0 : "0 3px",
-              background: smallField ? "transparent" : "rgba(255,255,255,0.98)",
-              borderRadius: smallField ? 0 : 2,
-              boxShadow: smallField ? undefined : "0 0 0 1px rgba(255,255,255,0.8)",
-            }}
-          >
-            {smallField ? "X" : value}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, summaryPages, activePageNumber, activeKey, activeSummary = false, onSelectField, onSelectSummary }) {
   const containerRef = useRef(null);
