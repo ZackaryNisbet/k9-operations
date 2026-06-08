@@ -148,6 +148,9 @@ import { InterviewWorkspaceTabs } from "./laborInterviews/components/InterviewWo
 import { MergeTrace } from "./laborInterviews/components/MergeTrace";
 import { SegmentedRecommendation } from "./laborInterviews/components/SegmentedRecommendation";
 import { ResumePanel } from "./laborInterviews/components/ResumePanel";
+import { InterviewRoster } from "./laborInterviews/components/InterviewRoster";
+import { CandidateHeader } from "./laborInterviews/components/CandidateHeader";
+import { RestrictedInterviewDetail } from "./laborInterviews/components/RestrictedInterviewDetail";
 
 
 function useStorageObjectPreviewUrl({ bucket, path, versionKey = "", setPreviewUrl, enabled = true }) {
@@ -201,140 +204,8 @@ function useStorageObjectPreviewUrl({ bucket, path, versionKey = "", setPreviewU
 
 
 
-function InterviewRoster({ records, onOpen, onAdd, canAdd, searchSlot = null, introValue = "", canEditIntro = false, onSaveIntro = null }) {
-  const [q, setQ] = useState("");
-  const query = q.trim().toLowerCase();
-  const filtered = query
-    ? records.filter((record) => {
-        const name = getInterviewCandidateDisplayLabel(record) || "";
-        const position = record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key) || "";
-        const contact = getInterviewCandidateContactLabel(record) || "";
-        return `${name} ${position} ${contact}`.toLowerCase().includes(query);
-      })
-    : records;
-  return (
-    <div className="interview-roster-shell">
-      {(() => { const __searchBlock = (
-      <div className="interview-search-block">
-        <LaborSearchBar value={q} onChange={setQ} placeholder="Search candidate, position, or contact…">
-          {canAdd ? (
-            <Btn variant="primary" size="sm" onClick={onAdd}>Add New Interview</Btn>
-          ) : null}
-        </LaborSearchBar>
-        <LaborIntro
-          value={introValue}
-          defaultValue={LABOR_INTRO_DEFAULTS.interviews}
-          canEdit={canEditIntro}
-          onSave={onSaveIntro}
-          prefix={<>{filtered.length} of {records.length} interview{records.length === 1 ? "" : "s"} · </>}
-        />
-      </div>
-      ); return searchSlot ? createPortal(__searchBlock, searchSlot) : __searchBlock; })()}
-      {records.length === 0 ? (
-        <EmptyState title="No Interviews Yet" body="Create the first interview after a position template is published." />
-      ) : (
-      <div className="interview-table-shell">
-      <div className="interview-roster-table" style={{ minWidth: 900 }}>
-        <div className="interview-roster-header" style={{ display: "grid", gridTemplateColumns: "minmax(240px, 1.5fr) minmax(190px, 1.1fr) 170px 150px 90px", gap: 0, padding: "9px 16px", borderBottom: `1px solid ${C.border}`, color: C.textMut, fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-          <div>Candidate</div>
-          <div>Position</div>
-          <div>Date Interviewed</div>
-          <div>Next Step</div>
-          <div />
-        </div>
-        {filtered.map((record, index) => (
-          <button
-            type="button"
-            key={record.id}
-            onClick={() => onOpen(record.id)}
-            className="interview-row"
-            style={{
-              width: "100%",
-              display: "grid",
-              gridTemplateColumns: "minmax(240px, 1.5fr) minmax(190px, 1.1fr) 170px 150px 90px",
-              gap: 0,
-              alignItems: "center",
-              padding: "8px 16px",
-              border: "none",
-              borderBottom: `1px solid ${C.borderLight}`,
-              background: "#fff",
-              textAlign: "left",
-              cursor: "pointer",
-              fontFamily: "inherit",
-              animationDelay: `${Math.min(index, 10) * 24}ms`,
-            }}
-          >
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{getInterviewCandidateDisplayLabel(record)}</div>
-              <div style={{ marginTop: 2, fontSize: 11, color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{getInterviewCandidateContactLabel(record)}</div>
-            </div>
-            <div style={{ fontSize: 12, color: C.textSec, fontWeight: 700 }}>{record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key)}</div>
-            <div style={{ fontSize: 12, color: C.textSec }}>{record.interview_date ? fmtDate(record.interview_date) : "-"}</div>
-            <div><RecommendationBadge value={getInterviewRecommendation(record)} /></div>
-            <div style={{ color: C.pri, fontSize: 12, fontWeight: 900, textAlign: "right" }}><span className="interview-open-pill">Open</span></div>
-          </button>
-        ))}
-        {filtered.length === 0 ? (
-          <div style={{ padding: "16px", fontSize: 13, color: C.textMut }}>No interviews match “{q}”.</div>
-        ) : null}
-      </div>
-      </div>
-      )}
-    </div>
-  );
-}
 
-function CandidateHeader({ record, recommendation, payRateSummary, onRecommendationChange, onEdit, onDelete, onBack, saving, canManage = true }) {
-  const position = record.candidate_position || getInterviewRoleLabel(record.template_snapshot?.template?.role_key);
-  const canAccessIdentity = canAccessInterviewIdentity(record, canManage);
-  return (
-    <div className="interview-detail-card" style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", overflow: "hidden" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: 18, borderBottom: `1px solid ${C.borderLight}`, alignItems: "flex-start", flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-start", minWidth: 0 }}>
-          <IconButton label="Back to interviews" onClick={onBack}>{"<"}</IconButton>
-          <div style={{ minWidth: 0 }}>
-            <h2 style={{ margin: 0, color: C.text, fontSize: 26, lineHeight: 1.1, fontWeight: 950, letterSpacing: 0 }}>{getInterviewCandidateDisplayLabel(record, { canAccessIdentity })}</h2>
-            <div style={{ marginTop: 7, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13, color: C.textSec, fontWeight: 800 }}>{position || "Interview"}</span>
-            </div>
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <SegmentedRecommendation value={recommendation} onChange={onRecommendationChange} disabled={saving || !canManage} />
-          {canManage && <Btn variant="secondary" size="sm" onClick={onEdit}>Edit Details</Btn>}
-          {canManage && <Btn variant="danger" size="sm" onClick={onDelete}>Delete</Btn>}
-        </div>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16, padding: 18 }}>
-        <StaticField label="Date" value={compactDateTime(record)} />
-        <StaticField label="Pay Range" value={payRateSummary} />
-        <StaticField label="Candidate Email" value={canAccessIdentity ? record.candidate_email : "Restricted"} />
-        <StaticField label="Candidate Phone" value={canAccessIdentity ? record.candidate_phone : "Restricted"} />
-        <StaticField label="Zoom Link" value={canAccessIdentity ? record.zoom_recording_url : "Restricted"} />
-        <StaticField label="Zoom Passcode" value={canAccessIdentity ? record.zoom_passcode : "Restricted"} />
-      </div>
-    </div>
-  );
-}
 
-function RestrictedInterviewDetail({ record }) {
-  return (
-    <div className="interview-detail-card" style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 18, display: "grid", gap: 14 }}>
-      <div>
-        <div style={{ fontSize: 18, fontWeight: 950, color: C.text }}>Identity Restricted</div>
-        <div style={{ marginTop: 5, color: C.textMut, fontSize: 13, lineHeight: 1.45 }}>
-          This view intentionally excludes candidate contact details, transcripts, resumes, audio, generated PDFs, and signed storage links.
-        </div>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-        <StaticField label="Candidate" value={getInterviewCandidateDisplayLabel(record)} />
-        <StaticField label="Position" value={record.candidate_position || "Interview"} />
-        <StaticField label="Interview Date" value={compactDateTime(record)} />
-        <StaticField label="Next Step" value={getInterviewRecommendationOption(getInterviewRecommendation(record))?.label || "Pending"} />
-      </div>
-    </div>
-  );
-}
 
 
 
