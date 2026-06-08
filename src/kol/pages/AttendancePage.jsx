@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../../supabaseClient";
-import { C, fmtDate, fmtDateFull, LC_OP_LABELS, todayStr } from "../../shared/theme";
+import { C, fmtDate, LC_OP_LABELS, todayStr } from "../../shared/theme";
 import { Badge, Btn, Card, CustomSelect, Inp, MiniDatePicker, Modal, LaborSearchBar, LaborIntro } from "../../shared/ui";
 import { nextSort, compareValues } from "../../shared/listSurface";
 import { LABOR_INTRO_DEFAULTS } from "../laborIntros";
@@ -31,50 +31,15 @@ import {
   INCIDENT_COLOR_BY_VALUE,
 } from "./attendance/constants";
 
-function formatTimestamp(value) {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "—";
-  return parsed.toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
-
-function formatDateOnly(value) {
-  return value ? fmtDateFull(value) : "—";
-}
-
-function normalizeAttendancePositionTitle(value = "") {
-  const title = String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
-  if (!title) return "";
-  if (/^(gm|general manager)$/.test(title)) return "general manager";
-  if (/^(am|agm|assistant manager|assistant general manager)$/.test(title)) return "assistant manager";
-  if (/^(csr|customer service representative|front desk|guest service representative)$/.test(title)) return "customer service representative";
-  if (/^(pct|pet care technician|pet care tech|technician|kennel technician)$/.test(title)) return "pet care technician";
-  if (/^(supervisor|shift supervisor|shift lead|lead)$/.test(title)) return "supervisor";
-  return title;
-}
-
-function formatAttendancePositionTitle(value = "") {
-  const raw = String(value || "").trim().replace(/\s+/g, " ");
-  const normalized = normalizeAttendancePositionTitle(raw);
-  if (normalized === "general manager") return "General Manager";
-  if (normalized === "assistant manager") return "Assistant Manager";
-  if (normalized === "supervisor") return "Supervisor";
-  if (normalized === "customer service representative") return "Customer Service Representative";
-  if (normalized === "pet care technician") return "Pet Care Technician";
-  return raw;
-}
-
-function compareAttendanceSortValues(left, right) {
-  if (typeof left === "number" && typeof right === "number") return left - right;
-  return String(left ?? "").localeCompare(String(right ?? ""), undefined, { numeric: true, sensitivity: "base" });
-}
+import {
+  attendanceMarkNeedsValue,
+  compareAttendanceSortValues,
+  formatAttendancePositionTitle,
+  formatDateOnly,
+  formatTimestamp,
+  normalizeAttendancePositionTitle,
+  parseAttendanceDateOnly,
+} from "./attendance/format";
 
 function AttendanceSortControl({ sort, onChange }) {
   const [open, setOpen] = useState(false);
@@ -126,16 +91,6 @@ function AttendanceSortControl({ sort, onChange }) {
       )}
     </div>
   );
-}
-
-function attendanceMarkNeedsValue(op) {
-  return !["today"].includes(op);
-}
-
-function parseAttendanceDateOnly(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  return raw.includes("T") ? raw.split("T")[0] : raw;
 }
 
 function StatusPill({ active }) {
