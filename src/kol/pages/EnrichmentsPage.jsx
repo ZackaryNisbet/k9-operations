@@ -53,55 +53,8 @@ import {
 } from "./enrichments/constants";
 import { PAGE_CSS } from "./enrichments/pageStyles";
 
-function createDraft(event, locationId) {
-  const source = event || buildBlankEnrichmentEvent({ date: todayStr(), locationId });
-  return {
-    id: source.id || null,
-    legacy_source_id: source.legacy_source_id || null,
-    event_date: normalizeDate(source.event_date),
-    title: source.title || "",
-    subtitle: source.subtitle || "",
-    category: source.category || "Weekly Theme",
-    focus_area: source.focus_area || "brainwork",
-    visual_theme: source.visual_theme || "neutral",
-    customer_visible: !!source.customer_visible,
-    price: String(Math.round(Number(source.price_cents || 0) / 100)),
-    status: source.status || "planned",
-    summary: source.summary || "",
-    sop_details: source.sop_details || "",
-    staff_notes: source.staff_notes || "",
-    setup_locations: serializeLines(source.setup_locations || []),
-    products: serializeProducts(source.products || []),
-    checklist: serializeLines(source.checklist || []),
-    calendar_note: source.calendar_note || "",
-    source_label: source.source_label || "K9 Operations",
-  };
-}
-
-function draftToEvent(draft, locationId) {
-  return {
-    id: draft.id,
-    legacy_source_id: draft.legacy_source_id,
-    location_id: locationId,
-    event_date: normalizeDate(draft.event_date),
-    title: draft.title,
-    subtitle: draft.subtitle,
-    category: draft.category,
-    focus_area: draft.focus_area,
-    visual_theme: draft.visual_theme,
-    customer_visible: draft.customer_visible,
-    price_cents: Math.max(0, Math.round(Number(draft.price || 0) * 100)),
-    status: draft.status,
-    summary: draft.summary,
-    sop_details: draft.sop_details,
-    staff_notes: draft.staff_notes,
-    setup_locations: parseLines(draft.setup_locations),
-    products: parseProducts(draft.products),
-    checklist: parseLines(draft.checklist),
-    calendar_note: draft.calendar_note,
-    source_label: draft.source_label,
-  };
-}
+import { createDraft, draftToEvent } from "./enrichments/eventDrafts";
+import { addMonthsPreserveDay } from "./enrichments/dateUtils";
 
 function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast }) {
   const locationId = profile?.location_id || currentLocation || "demo";
@@ -1810,19 +1763,6 @@ function formatEnrichmentPrice(event) {
   const cents = Number(event?.price_cents || 0);
   if (!cents) return "$15 add-on";
   return `$${Math.round(cents / 100)} add-on`;
-}
-
-function addMonthsPreserveDay(date, delta) {
-  const parsed = parseDateParts(date);
-  const target = new Date(parsed.year, parsed.month - 1 + delta, 1);
-  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
-  target.setDate(Math.min(parsed.day, lastDay));
-  return normalizeDate(target);
-}
-
-function parseDateParts(date) {
-  const [year, month, day] = normalizeDate(date).split("-").map(Number);
-  return { year, month, day };
 }
 
 function buildMarketingBrief({ monthDate, events, audience }) {
