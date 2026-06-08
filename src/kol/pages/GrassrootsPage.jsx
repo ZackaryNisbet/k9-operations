@@ -74,6 +74,22 @@ import {
 } from "../grassrootsAddress";
 import { normalizeOptionalUuid } from "../trainingData";
 import { ensureDirectoryOrgByName, fetchDirectoryOrgNames } from "../marketingDirectorySync";
+import {
+  todayStr,
+  addDays,
+  fmtDate,
+  fmtMonthYear,
+  fmtEventDayLine,
+  fmtWeekdayLong,
+  fmtWeekdayShort,
+  fmtClock,
+  fmtClockRange,
+  fmtEventDateRange,
+  fmtDateTime,
+  fmtTime,
+  parseNumberField,
+  fmtCurrencyNumber,
+} from "./grassroots/dateUtils";
 
 const INPUT_STYLE = {
   width: "100%",
@@ -183,26 +199,6 @@ function getTrackerGridColumns(categoryConfig) {
   return "42px minmax(230px, 2fr) minmax(140px, 0.85fr) minmax(130px, 0.75fr) 118px minmax(370px, 1.5fr)";
 }
 
-function todayStr() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function addDays(dateStr, days) {
-  const base = new Date(`${dateStr}T12:00:00`);
-  base.setDate(base.getDate() + days);
-  return base.toISOString().slice(0, 10);
-}
-
-function fmtDate(value) {
-  if (!value) return "—";
-  return new Date(`${value}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
-function fmtMonthYear(value) {
-  if (!/^\d{4}-\d{2}$/.test(String(value || ""))) return "This Month";
-  return new Date(`${value}-01T12:00:00`).toLocaleDateString("en-US", { month: "short", year: "numeric" });
-}
-
 function EventDateCell({ target }) {
   const dates = normalizeGrassrootsEventDates(target);
   if (dates.length === 0) {
@@ -219,40 +215,6 @@ function EventDateCell({ target }) {
       )}
     </div>
   );
-}
-
-// ── Rich event-date display (date + weekday + time, multi-day aware) ──────────
-function fmtEventDayLine(dateStr) {
-  if (!dateStr) return "—";
-  return new Date(`${dateStr}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-function fmtWeekdayLong(dateStr) {
-  if (!dateStr) return "";
-  return new Date(`${dateStr}T12:00:00`).toLocaleDateString("en-US", { weekday: "long" });
-}
-function fmtWeekdayShort(dateStr) {
-  if (!dateStr) return "";
-  return new Date(`${dateStr}T12:00:00`).toLocaleDateString("en-US", { weekday: "short" });
-}
-function fmtClock(hhmm) {
-  if (!hhmm) return "";
-  const [h, m] = String(hhmm).split(":");
-  const d = new Date();
-  d.setHours(Number(h) || 0, Number(m) || 0, 0, 0);
-  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-}
-function fmtClockRange(start, end) {
-  const s = fmtClock(start);
-  const e = fmtClock(end);
-  if (s && e) return `${s}–${e}`;
-  return s || e || "";
-}
-function fmtEventDateRange(startStr, endStr) {
-  if (!startStr) return "—";
-  const sameYear = String(startStr).slice(0, 4) === String(endStr).slice(0, 4);
-  const start = new Date(`${startStr}T12:00:00`).toLocaleDateString("en-US", sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
-  const end = new Date(`${endStr}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  return `${start} – ${end}`;
 }
 
 // The events table's date cell: one date shows weekday + time; a consecutive run
@@ -292,25 +254,6 @@ function EventDateDisplay({ target }) {
       </span>
     </div>
   );
-}
-
-function fmtDateTime(value) {
-  if (!value) return "—";
-  return new Date(value).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function fmtTime(value) {
-  if (!value) return "";
-  return new Date(value).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }
 
 function createGrassrootsClientUuid() {
@@ -361,12 +304,6 @@ function scrollGrassrootsEditorIntoView(element) {
   window.scrollTo({ top, behavior: "smooth" });
 }
 
-function parseNumberField(value) {
-  if (value === "" || value == null) return null;
-  const num = Number(value);
-  return Number.isNaN(num) ? null : num;
-}
-
 function getGooglePredictionSecondaryText(prediction) {
   const structured = prediction?.structured_formatting || {};
   const mainText = String(structured.main_text || "").trim();
@@ -409,12 +346,6 @@ function hasStructuredGrassrootsAddress(source = {}) {
     || String(source.address_state || "").trim()
     || String(source.address_postal_code || "").trim()
   ));
-}
-
-function fmtCurrencyNumber(value) {
-  if (value === "" || value == null) return "";
-  const num = Number(value);
-  return Number.isNaN(num) ? "" : num.toFixed(2);
 }
 
 function historyEventLabel(eventType) {
