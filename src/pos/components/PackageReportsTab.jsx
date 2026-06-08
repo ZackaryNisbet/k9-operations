@@ -1,6 +1,6 @@
 import { C } from "../constants/colors";
 import { Card } from "./ui";
-import { React, useState } from "react";
+import React, { useState } from "react";
 import { fmtDate, todayStr } from "../lib/format";
 
 function PackageReportsTab({ data }) {

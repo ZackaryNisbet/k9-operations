@@ -4,7 +4,7 @@ import { DEF_FOOD_TYPE_OPTIONS } from "../constants/dropdowns";
 import { DEF_PRICING } from "../constants/pricing";
 import { I } from "../icons";
 import { ROOM_TYPES } from "../constants/forms";
-import { ReactDOM } from "react-dom";
+import ReactDOM from "react-dom";
 import { gid } from "../lib/format";
 import { useState } from "react";
 

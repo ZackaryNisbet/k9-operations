@@ -2,7 +2,7 @@ import { Badge, Btn, Card } from "../components/ui";
 import { C } from "../constants/colors";
 import { DAY_NAMES_SHORT, OPS_TYPES } from "../constants/operations";
 import { ROOM_TYPES } from "../constants/forms";
-import { React, useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { formatTime12hr, todayStr } from "../lib/format";
 
 function DailyOpsPage({ data, save, sub, nav, profile }) {
