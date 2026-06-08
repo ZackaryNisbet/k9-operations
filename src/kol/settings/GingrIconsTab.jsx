@@ -27,149 +27,27 @@ import {
   ICON_FILTER_OP_LABELS,
 } from "./gingrIcons/constants";
 
-function getActiveIconFilterKeys(filters = {}) {
-  return [
-    filters.group ? "group" : "",
-    filters.assignedOperator && filters.assignedValue !== "" ? "assigned" : "",
-    filters.workflowKey ? "workflow" : "",
-  ].filter(Boolean);
-}
-
-function buildCompleteIconFilters(filters = {}, keys = getActiveIconFilterKeys(filters)) {
-  const selected = new Set(keys);
-  const next = { ...DEFAULT_ICON_FILTERS };
-  if (selected.has("group") && filters.group) {
-    next.group = filters.group;
-  }
-  if (selected.has("assigned") && filters.assignedOperator && filters.assignedValue !== "") {
-    next.assignedOperator = filters.assignedOperator;
-    next.assignedValue = filters.assignedValue;
-  }
-  if (selected.has("workflow") && filters.workflowKey) {
-    next.workflowKey = filters.workflowKey;
-    next.workflowState = filters.workflowState || "enabled";
-  }
-  return next;
-}
-
-function clean(value) {
-  return String(value || "").replace(/\s+/g, " ").trim();
-}
-
-function stableLower(value) {
-  return clean(value).toLowerCase();
-}
-
-function summarizeDataError(error) {
-  if (!error) return "";
-  return String(error.message || error.details || error.hint || "Request failed");
-}
-
-function getGingrSyncEntityErrors(data) {
-  const results = data?.results || {};
-  return Object.entries(results)
-    .filter(([, value]) => value?.error)
-    .map(([entity, value]) => `${entity}: ${value.error}`);
-}
-
-function sourceIdentity(prefix, id, label) {
-  const cleanId = clean(id);
-  if (cleanId) return `${prefix}:${cleanId}`;
-  return `${prefix}_name:${clean(label).replace(/\s+/g, " ").toLowerCase()}`;
-}
-
-function sourceLabel(row, ...fields) {
-  for (const field of fields) {
-    const value = clean(row?.[field]);
-    if (value) return value;
-  }
-  return "Unnamed";
-}
-
-function getRunLabel(row) {
-  const runName = sourceLabel(row, "run_name", "gingr_run_id");
-  const areaName = clean(row?.area_name);
-  return areaName ? `${areaName} / ${runName}` : runName;
-}
-
-function getRunSourceKey(row) {
-  return sourceIdentity("run", row?.gingr_run_id, getRunLabel(row));
-}
-
-function getInventoryKey(row) {
-  return row.inventory_key || row.icon_identity_key || row.icon_template_id || row.current_title;
-}
-
-function getIconSourceKey(row) {
-  const raw = row.icon_identity_key || row.inventory_key || row.icon_template_id || row.current_title;
-  const cleaned = clean(raw);
-  return cleaned.startsWith("icon:") ? cleaned : `icon:${cleaned}`;
-}
-
-function getIconSourceId(row) {
-  return row.icon_template_id || row.icon_identity_key || row.inventory_key || null;
-}
-
-function getAssignedCount(row) {
-  const count = Number(row?.active_assignment_count ?? 0);
-  return Number.isFinite(count) ? count : 0;
-}
-
-function isBathingIconCapability(capabilityKey) {
-  const key = clean(capabilityKey);
-  return key === "bathing.include" || key.startsWith("bathing.type.") || key.startsWith("bathing.modifier.");
-}
-
-function getLegacyIconSourceKey(row) {
-  const rawKey = row?.icon_identity_key || row?.inventory_key || row?.icon_template_id || row?.current_title;
-  return rawKey ? `icon:${clean(rawKey)}` : "";
-}
-
-function workflowInheritsIconCapability(workflow, capabilityKey) {
-  const key = clean(capabilityKey);
-  return Array.isArray(workflow?.legacyDisplayCapabilityKeys) && workflow.legacyDisplayCapabilityKeys.includes(key);
-}
-
-function serviceInheritsWorkflow(row, workflow) {
-  const label = stableLower(row?.label);
-  if (!label || !workflow?.key) return false;
-  if (workflow.key === "private_play") return label.includes("private play") || label.includes("play time");
-  if (workflow.key === "bathing") return label.includes("bath") || label.includes("groom");
-  if (workflow.key === "pamper") return label.includes("pamper");
-  if (workflow.key === "enrichment") return label.includes("enrichment");
-  if (workflow.key === "gourmet_ice_cream") return label.includes("ice cream") || label.includes("gourmet");
-  return false;
-}
-
-function uniqueWorkflowRows(rows = []) {
-  const byKey = new Map();
-  for (const row of rows) {
-    const key = [
-      row.source_type || "icon",
-      row.source_identity_key || getLegacyIconSourceKey(row) || row.inventory_key || row.id,
-      row.capability_key || row.current_label || row.current_title,
-    ].join("::");
-    if (!byKey.has(key)) byKey.set(key, row);
-  }
-  return [...byKey.values()];
-}
-
-function getSeverityStyle(severity) {
-  if (severity === "driver") {
-    return {
-      label: "REPORT ENTRY",
-      color: "#991B1B",
-      bg: "#FEF2F2",
-      border: "#FCA5A5",
-    };
-  }
-  return {
-    label: "DISPLAY",
-    color: "#166534",
-    bg: "#F0FDF4",
-    border: "#BBF7D0",
-  };
-}
+import {
+  getActiveIconFilterKeys,
+  buildCompleteIconFilters,
+  clean,
+  stableLower,
+  summarizeDataError,
+  getGingrSyncEntityErrors,
+  sourceIdentity,
+  sourceLabel,
+  getRunLabel,
+  getRunSourceKey,
+  getInventoryKey,
+  getIconSourceKey,
+  getIconSourceId,
+  getAssignedCount,
+  getLegacyIconSourceKey,
+  workflowInheritsIconCapability,
+  serviceInheritsWorkflow,
+  uniqueWorkflowRows,
+  getSeverityStyle,
+} from "./gingrIcons/helpers";
 
 function CompactToggle({ active, disabled, saving, severity, onClick, title }) {
   const sev = getSeverityStyle(severity);
