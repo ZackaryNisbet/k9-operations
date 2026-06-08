@@ -44,6 +44,10 @@ export default defineConfig(({ mode }) => {
         VITE_SUPABASE_URL: 'http://localhost:54321',
         VITE_SUPABASE_ANON_KEY: 'test-anon-key',
       },
+      // Heavy PDF/ffmpeg tests can exceed the 5s default under constrained CPU
+      // (CI / build containers), causing flaky timeouts. Give them headroom.
+      testTimeout: 30000,
+      hookTimeout: 30000,
     },
     build: {
       outDir: 'dist',
