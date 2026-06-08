@@ -101,3 +101,17 @@ export const POS_BE_TEMPLATE = [
   {id:"be_w7",time:"",label:"Disinfect bathing area",dayOfWeek:6},
   {id:"be_w8",time:"",label:"Vacuum and clean vents",dayOfWeek:0},
 ];
+
+// Services excluded from the dynamic Services section discovery
+export const EXCLUDED_SERVICES = ["food from home", "medication administration", "private play overnight rate"];
+
+// Color pills for the Next Day Collars card
+export const COLLAR_PILL_COLORS = [
+  { key: "pink", bg: "#FCE4EC", text: "#C2185B" },
+  { key: "red", bg: "#FFEBEE", text: "#C62828" },
+  { key: "green", bg: "#E8F5E9", text: "#2E7D32" },
+  { key: "blue", bg: "#E3F2FD", text: "#1565C0" },
+  { key: "yellow", bg: "#FFFDE7", text: "#F9A825" },
+  { key: "unclassified", label: "Unclassified", bg: "#F3F4F6", text: "#4B5563" },
+  { key: "halfAndHalf", label: "H&H", bg: "#F3E5F5", text: "#7B1FA2" },
+];
