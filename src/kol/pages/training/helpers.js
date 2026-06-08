@@ -11,6 +11,7 @@ import { HOUR_ANALYSIS_GROUP_SHORT_LABELS, HOUR_ANALYSIS_STAFFING_CAPACITY_GROUP
 import { getTeamReadinessTemplateDisplayLabel } from "../../trainingData";
 import { COMPLIANCE_EVIDENCE_REQUIRED_POLICIES, DEFAULT_LABOR_POSITION_ACRONYMS, HOUR_ANALYSIS_FRONTLINE_TARGET_RANGE_LABEL, LABOR_MODEL_DEFAULT_BREAKERS_BY_DAY } from "./constants";
 import { DEFAULT_HOUR_ANALYSIS_EXPECTATIONS } from "./constants";
+import { DEFAULT_LABOR_POSITION_TITLES, LABOR_MODEL_DAY_LABELS, LABOR_MODEL_ROLE_COVERAGE_OPTIONS, LABOR_MODEL_ROLE_PALETTE } from "./constants";
 
 export function buildPerformanceReviewSortKey(cycle = {}) {
   return `${REVIEW_CYCLE_SORT_KEY_PREFIX}${cycle.id || cycle.slug || cycle.requirementId || cycle.policyKey || "review"}`;
@@ -2772,5 +2773,121 @@ export function buildComplianceHistoryFilterOptions(rows = []) {
       { value: "", label: "All checkpoints / requirements" },
       ...options.categoryTasks.slice(1),
     ],
+  };
+}
+
+export function makeDefaultLaborPositionRows() {
+  return DEFAULT_LABOR_POSITION_TITLES.map((positionTitle, index) => ({
+    id: null,
+    position_title: positionTitle,
+    normalized_title: normalizePositionTitle(positionTitle),
+    position_acronym: getDefaultLaborPositionAcronym(positionTitle),
+    sort_order: (index + 1) * 10,
+  }));
+}
+
+export function getLaborModelCoverageRoleOptionForGroup(groupKey = "") {
+  const normalizedGroup = normalizeLaborModelGroupKey(groupKey);
+  return LABOR_MODEL_ROLE_COVERAGE_OPTIONS.find((option) => option.groupKey === normalizedGroup) || null;
+}
+
+export function buildLaborModelRolePalette(groupKey = "", primaryColor = "") {
+  const normalizedGroup = normalizeLaborModelGroupKey(groupKey);
+  const fallback = LABOR_MODEL_ROLE_PALETTE[normalizedGroup] || LABOR_MODEL_ROLE_PALETTE.other;
+  const strong = normalizeLaborModelHexColor(primaryColor, fallback.strong);
+  return {
+    strong,
+    accent: mixLaborModelHexColor(strong, "#ffffff", 0.28),
+    soft: mixLaborModelHexColor(strong, "#ffffff", 0.86),
+    text: strong,
+  };
+}
+
+export function getLaborModelCoverageOperatingWeight(value = "") {
+  const kind = getLaborModelCoverageKind(value);
+  if (kind === "half") return 0.5;
+  if (kind === "full" || kind === "role") return 1;
+  return 0;
+}
+
+export function getLaborModelCoverageMarketingWeight(value = "") {
+  return isLaborModelMarketingCoverage(value) ? 1 : 0;
+}
+
+export function getLaborModelCoverageDuration(value = "") {
+  const normalized = normalizeLaborModelCoverageCell(value);
+  if (!normalized) return "";
+  return getLaborModelCoverageKind(normalized) === "half" ? "half" : "full";
+}
+
+export function shouldCycleLaborModelCoveragePointer({ value = "", isFocused = false } = {}) {
+  const kind = getLaborModelCoverageKind(value);
+  if (kind === "empty") return true;
+  return false;
+}
+
+export function getLaborModelCoverageOperatingGroupKey(value = "", row = {}) {
+  const kind = getLaborModelCoverageKind(value);
+  if (kind === "empty" || kind === "marketing") return "";
+  const roleOption = getLaborModelCoverageExplicitRoleOption(value);
+  if (roleOption) return roleOption.groupKey;
+  return normalizeLaborModelGroupKey(row.group_key, row);
+}
+
+export function getLaborModelColumnBreakerMeta(dayKey = "", column = {}, laborModel = {}) {
+  const start = Number(column.start_minutes);
+  const end = Number(column.end_minutes);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return { className: "", style: {} };
+  const breakers = getLaborModelBreakersForDay(laborModel.breakers || laborModel, dayKey).map((breaker) => breaker.minutes);
+  const normalizedStart = ((start % 1440) + 1440) % 1440;
+  const normalizedEnd = end > start ? end : start + normalizeHourAnalysisNumber(column.hours, 0) * 60;
+  const leftBreaker = breakers.find((breaker) => Math.abs(breaker - normalizedStart) < 0.1);
+  if (Number.isFinite(leftBreaker)) return { className: " has-shift-breaker-left", style: {} };
+  const insideBreaker = breakers.find((breaker) => {
+    const candidate = breaker < normalizedStart ? breaker + 1440 : breaker;
+    return candidate > start && candidate < normalizedEnd;
+  });
+  if (!Number.isFinite(insideBreaker)) return { className: "", style: {} };
+  const candidate = insideBreaker < normalizedStart ? insideBreaker + 1440 : insideBreaker;
+  const pct = ((candidate - start) / Math.max(1, normalizedEnd - start)) * 100;
+  return { className: " has-shift-breaker-inside", style: { "--labor-model-breaker-pct": `${Math.max(3, Math.min(97, pct)).toFixed(2)}%` } };
+}
+
+export function makeDefaultLaborModelDay(dayKey, coverageWindow, columns = [], rowDefinitions = []) {
+  const normalizedColumns = columns.map(([label, hours], index) => ({
+    id: `${dayKey}-slot-${index + 1}`,
+    label,
+    hours: parseLaborModelTimeRange(label).valid ? parseLaborModelTimeRange(label).hours : Math.max(0, Math.round(Number(hours || 0) * 10) / 10),
+  }));
+  return {
+    day_key: dayKey,
+    day_label: LABOR_MODEL_DAY_LABELS[dayKey] || dayKey,
+    coverage_window: coverageWindow,
+    columns: normalizedColumns,
+    rows: rowDefinitions.map(([groupKey, label, coveragePattern], index) => ({
+      id: `${dayKey}-${slugifyLaborModelId(label)}-${index + 1}`,
+      group_key: groupKey,
+      role_label: label,
+      shift_type: normalizeLaborModelShiftType("", { role_label: label }),
+      break_enabled: true,
+      break_minutes: 30,
+      coverage: normalizeLaborModelCoverageCells(coveragePattern, normalizedColumns.length),
+    })),
+  };
+}
+
+export function normalizeHourAnalysisLaborModelRow(row = {}, index = 0, columns = [], dayKey = "day") {
+  const source = isObjectRow(row) ? row : {};
+  const roleLabel = String(source.role_label || source.roleLabel || source.label || source.shift_label || source.shiftLabel || `Line ${index + 1}`).trim();
+  const breakEnabledSource = source.break_enabled ?? source.breakEnabled ?? source.has_break ?? source.hasBreak;
+  const breakEnabled = breakEnabledSource == null ? true : Boolean(breakEnabledSource);
+  return {
+    id: String(source.id || `${dayKey}-${slugifyLaborModelId(roleLabel)}-${index + 1}`).trim(),
+    group_key: normalizeLaborModelGroupKey(source.group_key || source.groupKey || source.role_group || source.roleGroup || source.position_group || source.positionGroup, { ...source, role_label: roleLabel }),
+    role_label: roleLabel,
+    shift_type: normalizeLaborModelShiftType(source.shift_type || source.shiftType || source.time_type || source.timeType, { ...source, role_label: roleLabel }),
+    break_enabled: breakEnabled,
+    break_minutes: normalizeLaborModelBreakMinutes(source.break_minutes ?? source.breakMinutes ?? source.break_duration_minutes ?? source.breakDurationMinutes, 30),
+    coverage: normalizeLaborModelCoverageCells(source.coverage || source.cells || source.values, columns.length),
   };
 }
