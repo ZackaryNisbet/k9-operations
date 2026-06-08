@@ -414,3 +414,29 @@ export const LABOR_NOTE_TYPE_OPTIONS = [
   { value: "training", label: "Training" },
   { value: "hr", label: "HR" },
 ];
+
+export const CAPACITY_PLANNING_VIEW_IDS = new Set(CAPACITY_PLANNING_VIEWS.map((view) => view.id));
+
+export const HOUR_ANALYSIS_GROUP_LABELS = Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => [group.key, group.label]));
+
+export const HOUR_ANALYSIS_FRONTLINE_TARGET_RANGE_LABEL = `${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}-${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% frontline target range`;
+
+export const LABOR_MODEL_SHIFT_TYPE_LABELS = Object.fromEntries(LABOR_MODEL_SHIFT_TYPE_OPTIONS.map((option) => [option.value, option.label]));
+
+export const LABOR_MODEL_GROUP_OPTIONS = HOUR_ANALYSIS_GROUPS
+  .filter((group) => group.key !== "other")
+  .map((group) => ({ value: group.key, label: HOUR_ANALYSIS_GROUP_SHORT_LABELS[group.key] || group.label }));
+
+export const LABOR_MODEL_ROLE_COVERAGE_ALIAS_MAP = new Map(
+  LABOR_MODEL_ROLE_COVERAGE_OPTIONS.flatMap((option) => (
+    [option.label, option.groupKey, ...option.aliases].map((alias) => [
+      String(alias || "").trim().toLowerCase().replace(/[._-]+/g, " ").replace(/\s+/g, " "),
+      option,
+    ])
+  ))
+);
+
+export const LABOR_MODEL_DEFAULT_BREAKERS_BY_DAY = Object.fromEntries(LABOR_MODEL_DAY_KEYS.map((dayKey) => [
+  dayKey,
+  ["saturday", "sunday"].includes(dayKey) ? LABOR_MODEL_WEEKEND_BREAKERS : LABOR_MODEL_WEEKDAY_BREAKERS,
+]));
