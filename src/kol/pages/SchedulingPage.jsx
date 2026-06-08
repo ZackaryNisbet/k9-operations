@@ -82,7 +82,7 @@ import {
 import { countShiftCoverage, getShiftHourSummary, summarizeSupportRoles } from "./scheduling/shiftSummary";
 import { buildMatrixColumns, buildMonthWeekSegments } from "./scheduling/matrixColumns";
 import { CapacityPill, MetricPill, SectionCard, TrustBadge } from "./scheduling/schedulingPrimitives";
-import { SchedulingSubtabs } from "./scheduling/schedulingSubtabs";
+import { SchedulingSubtabs, getInitialSchedulingTab } from "./scheduling/schedulingSubtabs";
 import { renderAggregateMatrixCellValue, renderMatrixCellValue } from "./scheduling/matrixCellValue";
 import { ProjectionHistoryChart } from "./scheduling/projectionHistoryChart";
 
@@ -601,12 +601,6 @@ function StaffShiftPlanner({ day, rotation, matrixMode, onSave, onGenerated, dis
       </div>
     </div>
   );
-}
-
-function getInitialSchedulingTab() {
-  if (typeof window === "undefined") return "volume";
-  const tab = new URLSearchParams(window.location.search).get("tab");
-  return tab === "rotation" ? "rotation" : "volume";
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────
