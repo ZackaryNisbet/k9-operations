@@ -15,6 +15,7 @@ import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
 import { getInventoryWorkflow } from "./inventoryStatus";
 import { POS_FE_TEMPLATE, POS_BE_TEMPLATE } from "./operations/constants";
+import { fmtCompletionTime } from "./operations/helpers";
 
 function OperationsHub({ data, save, nav, profile }) {
   const td = todayStr();
@@ -201,17 +202,6 @@ function OperationsHub({ data, save, nav, profile }) {
     const allOps = data.dailyOps || [];
     return allOps.find(e => e.id === entryId);
   }, [data, viewDate]);
-
-  // Format timestamp for display
-  const fmtCompletionTime = (isoStr) => {
-    if (!isoStr) return "";
-    const d = new Date(isoStr);
-    const h = d.getHours();
-    const m = String(d.getMinutes()).padStart(2, "0");
-    const ampm = h >= 12 ? "PM" : "AM";
-    const hr = h > 12 ? h - 12 : h || 12;
-    return `${hr}:${m} ${ampm}`;
-  };
 
   // Auto-save toggle handler (OPS-008: auto-save on toggle, OPS-007: records timestamp)
   const handleChecklistToggle = useCallback(async (typeSub, itemId, checked) => {
