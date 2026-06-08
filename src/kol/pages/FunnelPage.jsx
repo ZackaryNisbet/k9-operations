@@ -19,7 +19,7 @@ function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
   const [range, setRange] = useState("mtd");
   const [animReady, setAnimReady] = useState(false);
   const initialMount = useRef(true);
-  useEffect(() => { if (initialMount.current) { initialMount.current = false; const t = setTimeout(() => setAnimReady(true), 50); return () => clearTimeout(t); } setAnimReady(true);   }, [range]);
+  useEffect(() => { if (initialMount.current) { initialMount.current = false; const t = setTimeout(() => setAnimReady(true), 50); return () => clearTimeout(t); } setAnimReady(true); }, [range]);
 
   // ── Date range computation ──
   const { startDate, endDate, rangeLabel } = useMemo(() => {
