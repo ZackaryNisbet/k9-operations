@@ -19,6 +19,7 @@ import { applyStructuredFilters } from "../../hooks/useFilters";
 import { SUPABASE_URL, PHOTO_BUCKET, photoPublicUrl, ACCEPTED_TYPES, MAX_FILE_SIZE } from "./photos/constants";
 import { generateThumbnail, generateAiImage, getImageDimensions } from "./photos/imageUtils";
 import { getSuggestedPairings, getDogsOnDate } from "./photos/pairingData";
+import "./photos/photoStyles";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const COMMON_BREEDS = [
@@ -92,57 +93,6 @@ async function getCheckedInDogs(locationId) {
     icon_url: iconMap[a.gingr_id] || null,
     isCheckedIn: checkedInSet.has(a.gingr_id),
   })).sort((a, b) => a.name.localeCompare(b.name));
-}
-
-
-// ─── CSS Keyframes (injected once) ──────────────────────────────────────────
-const STYLE_ID = "k9-photos-magic-styles";
-if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
-  const style = document.createElement("style");
-  style.id = STYLE_ID;
-  style.textContent = `
-    @keyframes k9PhotoCheckPop {
-      0% { transform: scale(0); opacity: 0; }
-      50% { transform: scale(1.3); }
-      100% { transform: scale(1); opacity: 1; }
-    }
-    @keyframes k9PhotoShimmer {
-      0% { background-position: -200% 0; }
-      100% { background-position: 200% 0; }
-    }
-    @keyframes k9PhotoFadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-    @keyframes k9PhotoSlideUp {
-      from { transform: translateY(100%); }
-      to { transform: translateY(0); }
-    }
-    @keyframes k9PhotoSlideDown {
-      from { transform: translateY(0); }
-      to { transform: translateY(100%); }
-    }
-    .k9-photo-grid-img {
-      background-color: #f3f4f6;
-      will-change: transform;
-    }
-    .k9-fullscreen-viewer {
-      position: fixed; inset: 0; z-index: 9999;
-      background: rgba(0,0,0,0.95);
-      display: flex; flex-direction: column;
-      touch-action: pan-y;
-    }
-    .k9-photo-transition {
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .k9-bottom-sheet {
-      animation: k9PhotoSlideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-    }
-    .k9-browse-panel {
-      animation: k9PhotoSlideUp 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-    }
-  `;
-  document.head.appendChild(style);
 }
 
 
