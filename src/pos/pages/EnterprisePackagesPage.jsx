@@ -2,7 +2,7 @@ import { Badge, Btn, Card, Modal } from "../components/ui";
 import { C } from "../constants/colors";
 import { EnterpriseCreatePkgForm } from "../components/EnterpriseCreatePkgForm";
 import { I } from "../icons";
-import { React, useState } from "react";
+import React, { useState } from "react";
 import { getAddOnPrices } from "../lib/pricing";
 import { gid, todayStr } from "../lib/format";
 import { supabase } from "../../supabaseClient";

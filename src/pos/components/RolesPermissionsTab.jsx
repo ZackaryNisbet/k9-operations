@@ -3,7 +3,7 @@ import { Badge, Btn, Card, Inp, Modal } from "./ui";
 import { C } from "../constants/colors";
 import { I } from "../icons";
 import { LEGACY_ROLE_MAP, hasPermission } from "../lib/roles";
-import { React, useState } from "react";
+import React, { useState } from "react";
 import { gid } from "../lib/format";
 
 function RolesPermissionsTab({ data, save, profile }) {
