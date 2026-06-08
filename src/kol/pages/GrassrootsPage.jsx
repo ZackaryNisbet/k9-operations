@@ -96,6 +96,17 @@ import {
   getGooglePredictionSecondaryText,
   renderGooglePredictionText,
 } from "./grassroots/googlePlaces";
+import {
+  BASE_FILTER_FIELDS,
+  CATEGORY_FILTER_FIELDS,
+  filterNeedsValue,
+} from "./grassroots/filterFields";
+import {
+  usesBusinessCategoryColumn,
+  usesNextDateColumn,
+  getTrackerGridColumns,
+  getGrassrootsColumnMap,
+} from "./grassroots/columns";
 
 const INPUT_STYLE = {
   width: "100%",
@@ -109,60 +120,6 @@ const INPUT_STYLE = {
   fontFamily: "inherit",
   outline: "none",
 };
-
-const BASE_FILTER_FIELDS = [
-  { section: "Workflow", key: "is_active", label: "Tracking State", type: "select", ops: ["is", "isNot"], options: ["active", "inactive", "all"] },
-  { section: "Workflow", key: "status", label: "Status", type: "select", ops: ["is", "isNot"], options: GRASSROOTS_STATUS_OPTIONS.map((option) => option.value) },
-  { section: "Workflow", key: "next_contact_date", label: "Next Date", type: "date", ops: ["overdue", "today", "thisWeek", "hasDate", "noDate", "after", "before", "inLastDays"] },
-  { section: "Workflow", key: "activity_count", label: "Updates", type: "number", ops: ["=", ">=", "<=", ">", "<"] },
-  { section: "Record", key: "name", label: "Name", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
-  { section: "Record", key: "address", label: "Address", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
-];
-
-const CATEGORY_FILTER_FIELDS = {
-  events: [
-    { section: "Event", key: "event_start_date", label: "Date", type: "date", ops: ["after", "before", "inLastDays", "hasDate", "noDate"] },
-    { section: "Event", key: "event_type", label: "Type", type: "select", ops: ["is", "isNot"], options: GRASSROOTS_EVENT_TYPE_OPTIONS },
-    { section: "Event", key: "leads_captured", label: "Leads Captured", type: "number", ops: ["=", ">=", "<=", ">", "<"] },
-  ],
-  drops: [
-    { section: "Drop", key: "business_category", label: "Category", type: "select", ops: ["is", "isNot"], options: GRASSROOTS_BUSINESS_CATEGORY_OPTIONS },
-    { section: "Drop", key: "address", label: "Address", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
-  ],
-  corporatePartnerships: [
-    { section: "Employees", key: "local_employees", label: "Local Employees", type: "number", ops: ["=", ">=", "<=", ">", "<"] },
-    { section: "Employees", key: "us_employees", label: "US Employees", type: "number", ops: ["=", ">=", "<=", ">", "<"] },
-    { section: "Contact", key: "contact_source", label: "Contact Source", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
-  ],
-  apartments: [
-    { section: "Contact", key: "contact_source", label: "Contact Source", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
-  ],
-  petProfessionalPartnerships: [
-    { section: "Business", key: "business_category", label: "Category", type: "select", ops: ["is", "isNot"], options: GRASSROOTS_BUSINESS_CATEGORY_OPTIONS },
-    { section: "Contact", key: "contact_source", label: "Contact Source", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
-  ],
-};
-
-function usesBusinessCategoryColumn(categoryConfig) {
-  return categoryConfig.id === "drops" || categoryConfig.id === "petProfessionalPartnerships";
-}
-
-function usesNextDateColumn(categoryConfig) {
-  return categoryConfig.id !== "events" && categoryConfig.id !== "drops";
-}
-
-function getTrackerGridColumns(categoryConfig) {
-  if (categoryConfig.id === "petProfessionalPartnerships") {
-    return "42px minmax(210px, 1.7fr) minmax(125px, 0.75fr) minmax(130px, 0.8fr) minmax(120px, 0.7fr) 118px minmax(340px, 1.4fr)";
-  }
-  if (categoryConfig.id === "drops") {
-    return "42px minmax(320px, 2.2fr) minmax(150px, 0.85fr) 118px minmax(370px, 1.5fr)";
-  }
-  if (categoryConfig.id === "events") {
-    return "42px minmax(260px, 2fr) minmax(130px, 0.7fr) minmax(180px, 0.8fr) minmax(220px, 0.85fr)";
-  }
-  return "42px minmax(230px, 2fr) minmax(140px, 0.85fr) minmax(130px, 0.75fr) 118px minmax(370px, 1.5fr)";
-}
 
 function EventDateCell({ target }) {
   const dates = normalizeGrassrootsEventDates(target);
@@ -2071,167 +2028,6 @@ const HEADER_CELL_STYLE = {
 // columns (Organizer / Event / Date / Status / Notes / Follow-Up / Updates) so the
 // "All" view can stack every category in one table. `get.*` are optional getters
 // (target, activities) -> value; when absent the built-in Events derivation is used.
-function getGrassrootsColumnMap(categoryId, subview = null) {
-  const lastActivityDate = (t, acts = []) => {
-    const d = [...acts].map((a) => a.activity_date || a.created_at).filter(Boolean).sort().pop();
-    return d ? fmtDate(d) : "—";
-  };
-  const events = {
-    headers: { organizer: "Organizer", event: "Event", eventDate: "Event Date", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
-    show: { event: true, eventDate: true, status: true, notes: true, followUp: true },
-    sortable: { eventDate: true, followUp: true },
-    statusVariant: "pill",
-    updatesMode: "log",
-    allowEventLink: true,
-    emptyText: "No events match. Add one or clear filters.",
-    get: {},
-  };
-  if (categoryId === "all") {
-    // Cross-category view: each row maps itself using its own category's config.
-    return {
-      headers: { organizer: "Organizer / Business", event: "Event / Category", eventDate: "Date", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
-      show: { event: true, eventDate: true, status: true, notes: true, followUp: true },
-      sortable: { eventDate: false, followUp: true },
-      statusVariant: "pill",
-      updatesMode: "log",
-      allowEventLink: true,
-      emptyText: "No grassroots targets match this view.",
-      get: {
-        organizer: (t, acts) => {
-          const m = getGrassrootsColumnMap(t.category);
-          return m.get.organizer ? m.get.organizer(t, acts) : (t.organizer || [t.first_name, t.last_name].filter(Boolean).join(" ") || t.name || t.contact_source || "—");
-        },
-        event: (t, acts) => {
-          const m = getGrassrootsColumnMap(t.category);
-          const val = m.show.event ? (m.get.event ? m.get.event(t, acts) : (t.name || "")) : "";
-          const typeLabel = t.category === "drops" ? "Visit" : t.category === "events" ? "Event" : null;
-          if (!typeLabel) return val;
-          return val ? `${typeLabel}: ${val}` : typeLabel;
-        },
-        eventDate: (t, acts) => {
-          const m = getGrassrootsColumnMap(t.category);
-          if (!m.show.eventDate) return "";
-          if (m.get.eventDate) return m.get.eventDate(t, acts);
-          const d = getGrassrootsPrimaryEventDate(t);
-          return d ? fmtDate(d) : "";
-        },
-      },
-    };
-  }
-  if (categoryId === "drops" && subview === "activity") {
-    return {
-      headers: { organizer: "Business", event: "Category", eventDate: "Date", status: "", notes: "Notes", followUp: "", updates: "" },
-      show: { event: true, eventDate: true, status: false, notes: true, followUp: false },
-      sortable: { eventDate: false, followUp: false },
-      statusVariant: "text",
-      updatesMode: "edit",
-      allowEventLink: false,
-      emptyText: "No visit activity matches this view.",
-      get: {
-        organizer: (r) => r.businessName || "—",
-        event: (r) => r.businessCategory || "—",
-        eventDate: (r) => (r.activityDate ? fmtDate(r.activityDate) : "—"),
-        // Outcome + notes are one thing now; show the note, falling back to a legacy
-        // outcome value (and joining both if an old record has them separately).
-        notes: (r) => [r.outcome, r.notes].filter(Boolean).join(" — ") || r.personSpokenWith || "",
-      },
-    };
-  }
-  if (categoryId === "drops") {
-    return {
-      headers: { organizer: "Business", event: "Category", eventDate: "Last Visit", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
-      show: { event: true, eventDate: true, status: false, notes: false, followUp: true },
-      sortable: { eventDate: false, followUp: true },
-      statusVariant: "pill",
-      updatesMode: "log",
-      allowEventLink: false,
-      emptyText: "No visit businesses match this view.",
-      get: {
-        organizer: (t) => t.name || "—",
-        event: (t) => t.business_category || "—",
-        eventDate: (t, acts) => lastActivityDate(t, acts),
-      },
-    };
-  }
-  if (categoryId === "corporatePartnerships" || categoryId === "corporate_partnerships") {
-    return {
-      headers: { organizer: "Corporation", event: "Employees", eventDate: "", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
-      show: { event: true, eventDate: false, status: true, notes: true, followUp: true },
-      sortable: { eventDate: false, followUp: true },
-      statusVariant: "pill",
-      updatesMode: "log",
-      allowEventLink: false,
-      emptyText: "No corporate partnerships match this view.",
-      get: {
-        organizer: (t) => t.name || "—",
-        event: (t) => {
-          const loc = t.local_employees, us = t.us_employees;
-          if (!loc && !us) return "—";
-          return [loc ? `${loc} local` : null, us ? `${us} US` : null].filter(Boolean).join(" · ");
-        },
-        eventDate: () => "",
-      },
-    };
-  }
-  if (categoryId === "apartments") {
-    return {
-      headers: { organizer: "Apartment Complex", event: "", eventDate: "", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
-      show: { event: false, eventDate: false, status: true, notes: true, followUp: true },
-      sortable: { eventDate: false, followUp: true },
-      statusVariant: "pill",
-      updatesMode: "log",
-      allowEventLink: false,
-      emptyText: "No apartments match this view.",
-      get: { organizer: (t) => t.name || "—", eventDate: () => "" },
-    };
-  }
-  if (categoryId === "petProfessionalPartnerships" || categoryId === "pet_professional_partnerships") {
-    return {
-      headers: { organizer: "Business", event: "Category", eventDate: "", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
-      show: { event: true, eventDate: false, status: true, notes: true, followUp: true },
-      sortable: { eventDate: false, followUp: true },
-      statusVariant: "pill",
-      updatesMode: "log",
-      allowEventLink: false,
-      emptyText: "No pet professional partnerships match this view.",
-      get: {
-        organizer: (t) => t.name || "—",
-        event: (t) => t.business_category || "—",
-        eventDate: () => "",
-      },
-    };
-  }
-  if (categoryId === "localBusinessPartnerships" || categoryId === "local_business_partnerships") {
-    return {
-      headers: { organizer: "Business", event: "Category", eventDate: "", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
-      show: { event: true, eventDate: false, status: true, notes: true, followUp: true },
-      sortable: { eventDate: false, followUp: true },
-      statusVariant: "pill",
-      updatesMode: "log",
-      allowEventLink: false,
-      emptyText: "No local business partnerships match this view.",
-      get: {
-        organizer: (t) => t.name || "—",
-        event: (t) => t.business_category || "—",
-        eventDate: () => "",
-      },
-    };
-  }
-  if (categoryId === "schools") {
-    return {
-      headers: { organizer: "School", event: "", eventDate: "", status: "Status", notes: "Notes", followUp: "Follow-Up", updates: "Updates" },
-      show: { event: false, eventDate: false, status: true, notes: true, followUp: true },
-      sortable: { eventDate: false, followUp: true },
-      statusVariant: "pill",
-      updatesMode: "log",
-      allowEventLink: false,
-      emptyText: "No schools match this view.",
-      get: { organizer: (t) => t.name || "—", eventDate: () => "" },
-    };
-  }
-  return events;
-}
-
 // Pencil affordance that opens the per-column micro-editor. When `needed` (a
 // required field group is empty), the pencil is PERSISTENT and amber so the gap is
 // obvious at a glance — a quiet "to-do" nudge. Otherwise it's subtle and only
@@ -3301,10 +3097,6 @@ function MetricCard({ label, value, color }) {
       <div style={{ fontSize: 26, fontWeight: 900, color }}>{value}</div>
     </Card>
   );
-}
-
-function filterNeedsValue(op) {
-  return !["empty", "notEmpty", "overdue", "today", "thisWeek", "hasDate", "noDate"].includes(op);
 }
 
 export default function GrassrootsPage({ profile, addGlobalToast = () => {} }) {
