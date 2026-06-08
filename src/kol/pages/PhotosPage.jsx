@@ -16,15 +16,9 @@ import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
+import { SUPABASE_URL, PHOTO_BUCKET, photoPublicUrl, ACCEPTED_TYPES, MAX_FILE_SIZE } from "./photos/constants";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const PHOTO_BUCKET = "pet-photos";
-const photoPublicUrl = (storagePath) =>
-  `${SUPABASE_URL}/storage/v1/object/public/${PHOTO_BUCKET}/${storagePath}`;
-
-const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
-const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 const THUMBNAIL_WIDTH = 300;
 const AI_IMAGE_WIDTH = 1600;
 
