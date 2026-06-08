@@ -5,22 +5,11 @@ import { supabase } from "../../supabaseClient";
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { normalizeLocationRows } from "./enterpriseAggregation";
-
-const LOCATION_SCOPED_ROLES = new Set(["pct", "csr", "supervisor", "manager", "location_admin"]);
-
-const ROLE_OPTIONS = [
-  { id: "pct", label: "PCT", scope: "Location" },
-  { id: "csr", label: "CSR", scope: "Location" },
-  { id: "supervisor", label: "Supervisor", scope: "Location" },
-  { id: "manager", label: "Manager", scope: "Location" },
-  { id: "location_admin", label: "Location Admin", scope: "Location" },
-  { id: "enterprise_admin", label: "Enterprise Admin", scope: "Enterprise" },
-];
-
-const USER_FILTER_OP_LABELS = {
-  is: "is",
-  isNot: "is not",
-};
+import {
+  LOCATION_SCOPED_ROLES,
+  ROLE_OPTIONS,
+  USER_FILTER_OP_LABELS,
+} from "./userManagement/constants";
 
 const INPUT = {
   width: "100%",
