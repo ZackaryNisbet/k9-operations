@@ -103,6 +103,7 @@ import PerformanceReviewComplianceGrid, {
   PerformanceReviewComplianceGridStyles,
   ReviewCycleCell,
 } from "../components/PerformanceReviewComplianceGrid";
+import { LaborCommitmentBadge } from "./training/components/LaborCommitmentBadge";
 import { CompactLaborTabSwitcher } from "./training/components/CompactLaborTabSwitcher";
 import { DEFAULT_HOUR_ANALYSIS_LABOR_MODEL } from "./training/laborModelDefaults";
 import { buildComplianceRequirementSlug, buildLaborModelCoverageValue, calculateLaborModelRowHourBuckets, getLaborModelCoverageRoleOptionForCell, normalizeHourAnalysisLaborModelDay, normalizeLaborModelRolePalette } from "./training/helpers";
@@ -628,30 +629,6 @@ const LABOR_ROSTER_FILTER_FIELDS = [
 
 
 
-function LaborCommitmentBadge({ value, compact = false }) {
-  const tone = getCommitmentBadgeTone(value);
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        minWidth: compact ? 34 : 74,
-        padding: compact ? "4px 8px" : "5px 10px",
-        borderRadius: 999,
-        border: `1px solid ${tone.border}`,
-        background: tone.bg,
-        color: tone.text,
-        fontSize: compact ? 10.5 : 11,
-        fontWeight: 900,
-        lineHeight: 1,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {getLaborEmploymentCommitmentLabel(value, { short: compact })}
-    </span>
-  );
-}
 
 function HourAnalysisNumberInput({ value, onCommit, disabled, ariaLabel, className = "hour-analysis-number-input", style = {} }) {
   const formattedValue = formatHourAnalysisHours(value);
