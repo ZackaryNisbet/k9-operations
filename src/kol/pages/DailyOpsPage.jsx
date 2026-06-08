@@ -14,6 +14,7 @@ import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
 import { K9Check } from "./dailyOps/K9Check";
+import { formatTime, ppNowTime } from "./dailyOps/timeHelpers";
 
 function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params }) {
   const td = todayStr();
@@ -314,12 +315,6 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     }
   };
 
-  const formatTime = (iso) => {
-    if (!iso) return "";
-    try { return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); }
-    catch { return ""; }
-  };
-
   const saveEntry = async () => {
     const entries = [...allOps];
     const idx = entries.findIndex(e => e.id === entryId);
@@ -478,12 +473,6 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   );
 
   // ─── Room Cleaning ───
-  const fmtTimeShort = (t) => {
-    if (!t) return null;
-    const [h, m] = t.split(":");
-    const hr = parseInt(h);
-    return `${hr > 12 ? hr - 12 : hr || 12}:${m} ${hr >= 12 ? "PM" : "AM"}`;
-  };
   const sanitizeRoomKey = (name) => (name || '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase();
   const roomTaskTypes = ["room_refresh", "full_disinfect", "setup", "sanitize"];
   const getRoomTaskLabel = (taskType) => {
@@ -1099,8 +1088,6 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
 
   // ─── Private Play ───
   const [ppEditTimePopover, setPpEditTimePopover] = useState(null); // { dogId, si }
-  const ppNowTime = () => { const n = new Date(); return n.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); };
-
   const ppToggleUD = (dogId, si, field, val, ses) => {
     if (isLocked) return;
     const ppName = profile?.full_name || "";
