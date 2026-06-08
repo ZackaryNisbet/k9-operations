@@ -9,6 +9,7 @@ import { HERO_IMAGES, ROOM_IMAGES, ROOM_INFO, ROOM_ORDER, BATH_OPTIONS, GLOBAL_C
 import { gid, getMinDate, countNights, fmtDate, fmtCurrency, getAvailableCount } from './booking/lib';
 import { Icons } from './booking/components/Icons';
 import { K9Logo } from './booking/components/K9Logo';
+import { RevealSection } from './booking/components/RevealSection';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ERROR BOUNDARY — catches render errors and shows useful info
@@ -43,27 +44,7 @@ class BookingErrorBoundary extends Component {
 
 
 
-// ═══════════════════════════════════════════════════════════════════════════
-// SCROLL REVEAL HOOK
-// ═══════════════════════════════════════════════════════════════════════════
-function useScrollReveal() {
-  const ref = useRef(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(([e]) => {
-      if (e.isIntersecting) { el.classList.add('visible'); obs.unobserve(el); }
-    }, { threshold: 0.15 });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
-  return ref;
-}
 
-function RevealSection({ children, style, className = '' }) {
-  const ref = useScrollReveal();
-  return <div ref={ref} className={`bk-reveal ${className}`} style={style}>{children}</div>;
-}
 
 // Page transitions handled via key-based remount with bk-fade-in CSS class
 
