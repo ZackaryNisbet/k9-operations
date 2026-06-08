@@ -32,6 +32,26 @@ succeeds.
 
 ## 2. ⚠️ Remaining before going public (NOT done in #96)
 
+> **Update (PR #121 branch):** the current‑tree PII below is now remediated and a
+> validated history‑purge tool is included. The only step left that needs a human
+> decision is running the force‑push purge.
+
+### ✅ Remediated on the PR #121 branch
+- **Directory‑migration PII** — `supabase/migrations/20260512050708_enterprise_directory_org_chart.sql`
+  is now seeded with **synthetic** data (names, emails, phones, name‑derived keys, and
+  a leaked local path) via `scripts/redact-directory-pii.mjs`. Verified: 0 real emails,
+  0 non‑`(555)` phones, 0 known real names; JSON still valid.
+- **Hardcoded vendor contact** in `src/kol/pages/ResortUpkeepPage.jsx` → generic.
+- **Personal email** in `src/Login.jsx` legal copy → business contact.
+- **History‑purge tooling** — `scripts/purge-git-history.sh` (git‑filter‑repo): removes
+  the sensitive files **and** redacts PII strings across **all** history while
+  **preserving the commit count** (`--prune-empty=never`). Validated via dry‑run on a
+  mirror: **1838 → 1838 commits**, sensitive files confirmed gone. **To publish:**
+  `bash scripts/purge-git-history.sh --push`, then **rotate credentials** defensively.
+- ⏳ **Deferred (non‑PII / lower‑risk, tracked below):** parameterizing the ~30
+  hardcoded infra identifiers (Supabase project ref, Cherry Hill UUID, Gingr subdomain)
+  and replacing the deleted Ignite samples with synthetic fixtures.
+
 ### Critical
 1. **Purge git history.** The items above were removed from the tree but still
    exist in history. Run `git filter-repo`/BFG, force‑push, and verify with

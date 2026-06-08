@@ -24,6 +24,8 @@ supabase/.temp/
 
 # ── Local customer / business data (PII — must never be committed) ──
 CherryHillReservations.json
+# Real→fake PII map emitted by scripts/redact-directory-pii.mjs (contains real PII)
+scripts/.pii-redactions.txt
 
 # ── Audit screenshots & reports (may contain customer data) ──
 audit/
