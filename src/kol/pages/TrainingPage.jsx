@@ -103,6 +103,7 @@ import PerformanceReviewComplianceGrid, {
   PerformanceReviewComplianceGridStyles,
   ReviewCycleCell,
 } from "../components/PerformanceReviewComplianceGrid";
+import { LaborRosterCopyValue } from "./training/components/LaborRosterCopyValue";
 import { EmptyState } from "./training/components/EmptyState";
 import { TrainingHistoryStatusChange } from "./training/components/TrainingHistoryStatusChange";
 import { CompactProgressBar } from "./training/components/CompactProgressBar";
@@ -1323,33 +1324,6 @@ function getReadinessCellActorLine(cell = {}, status = "") {
 
 
 
-function LaborRosterCopyValue({ value, displayValue, copied = false, onCopy, ariaLabel }) {
-  if (!value) return "—";
-  return (
-    <span className="labor-roster-copy-value">
-      <span className="labor-roster-copy-text">{displayValue || value}</span>
-      <button
-        type="button"
-        className={`labor-roster-copy-button${copied ? " is-copied" : ""}`}
-        aria-label={ariaLabel}
-        title={copied ? "Copied" : "Copy"}
-        onMouseDown={(event) => {
-          event.stopPropagation();
-        }}
-        onKeyDown={(event) => {
-          event.stopPropagation();
-        }}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onCopy?.();
-        }}
-      >
-        {copied ? <I.Check /> : <I.Clipboard />}
-      </button>
-    </span>
-  );
-}
 
 function CapacitySectionHeader({ title, subtitle, summary, collapsed, onToggle }) {
   return (
