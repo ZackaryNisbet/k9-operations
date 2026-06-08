@@ -103,6 +103,8 @@ import PerformanceReviewComplianceGrid, {
   PerformanceReviewComplianceGridStyles,
   ReviewCycleCell,
 } from "../components/PerformanceReviewComplianceGrid";
+import { applyLaborRosterFilters, buildTrainingHistoryDayMetrics, calculateLaborModelRowHours, formatLaborDate, getDaysSince, getLaborCapacityWeekStart, getLaborModelCoverageDisplay, getLaborModelDefaultCoverageValueForRow, getLaborModelRolePalette, getRestartedReviewStatus, getReviewCycleEvidenceDocument, removeLaborModelColumnFromDay, setLaborModelCoverageDuration, setLaborModelCoveragePosition } from "./training/helpers";
+export { applyLaborRosterFilters, buildTrainingHistoryDayMetrics, getLaborCapacityWeekStart, getLaborModelCoverageDisplay, getLaborModelDefaultCoverageValueForRow, removeLaborModelColumnFromDay, setLaborModelCoverageDuration, setLaborModelCoveragePosition };
 import { ReviewTemplateStatusLine } from "./training/components/ReviewTemplateStatusLine";
 import { PerformanceReviewStyles } from "./training/components/PerformanceReviewStyles";
 import { SectionHeader } from "./training/components/SectionHeader";
@@ -494,41 +496,6 @@ const LABOR_PERFORMANCE_REVIEW_BASE_SORT_COLUMNS = [
   { key: "compliance", label: "Review Status" },
   { key: "open_checkpoints", label: "Open Checkpoints" },
 ];
-function getReviewCycleEvidenceDocument(reviewCycle = {}, documentsById = {}) {
-  const evidence = getCompletionEvidence(reviewCycle);
-  const policyCell = getReviewCyclePolicyCell(reviewCycle);
-  const documentIdCandidates = [
-    evidence.documentId,
-    evidence.id,
-    policyCell.labor_employee_document_id,
-    policyCell.document_id,
-    policyCell.evidence_document_id,
-  ].map((value) => String(value || "").trim()).filter(Boolean);
-  const matchedDocument = documentIdCandidates.map((id) => documentsById[id]).find(Boolean);
-  if (matchedDocument) return matchedDocument;
-
-  const fileName = evidence.fileName || policyCell.evidence_label || policyCell.document_file_name || "";
-  const storagePath = evidence.storagePath || policyCell.storage_path || "";
-  const externalUrl = evidence.url || policyCell.external_evidence_url || "";
-  if (!fileName && !storagePath && !externalUrl) return null;
-
-  return {
-    id: documentIdCandidates[0] || `${fileName || storagePath || externalUrl}-compliance-evidence`,
-    document_type: "performance_review_evidence",
-    file_name: fileName || "Compliance evidence PDF",
-    storage_bucket: evidence.storageBucket || policyCell.storage_bucket || LABOR_EMPLOYEE_ATTACHMENT_BUCKET,
-    storage_path: storagePath,
-    external_url: externalUrl,
-    mime_type: "application/pdf",
-    file_size_bytes: Number(policyCell.file_size_bytes || 0),
-    uploaded_at: evidence.uploadedAt || policyCell.uploaded_at || "",
-    uploaded_by_name: evidence.uploadedByName || policyCell.uploaded_by_name || "",
-    metadata: {
-      source_module: "compliance_requirements",
-      source: "compliance_grid",
-    },
-  };
-}
 function AttachmentPdfPreview({ url, fileName }) {
   const objectUrlRef = useRef("");
   const [previewState, setPreviewState] = useState({ loading: false, error: "", objectUrl: "" });
@@ -1019,19 +986,12 @@ function HourAnalysisSplitControl({ row = {}, disabled = false, onChange }) {
 }
 
 
-function formatLaborDate(value) {
-  return value ? fmtDateFull(value) : "—";
-}
 
 
 
 
 
 
-function getRestartedReviewStatus(dueDate) {
-  if (dueDate && String(dueDate).slice(0, 10) < todayStr()) return "overdue";
-  return "scheduled";
-}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1397,11 +1357,6 @@ export function isDefaultReviewComplianceRequirement(row = {}) {
 
 
 
-function getLaborModelRolePalette(groupKey = "", roleColors = null) {
-  const normalizedGroup = normalizeLaborModelGroupKey(groupKey);
-  const normalizedColors = isObjectRow(roleColors) ? normalizeLaborModelRolePalette(roleColors) : null;
-  return normalizedColors?.[normalizedGroup] || LABOR_MODEL_ROLE_PALETTE[normalizedGroup] || LABOR_MODEL_ROLE_PALETTE.other;
-}
 
 function getLaborModelCoverageRoleStyle(groupKey = "", roleColors = null) {
   const palette = getLaborModelRolePalette(groupKey, roleColors);
@@ -1425,26 +1380,8 @@ function getLaborModelCoverageRoleStyle(groupKey = "", roleColors = null) {
 
 
 
-export function getLaborModelDefaultCoverageValueForRow(rowGroupKey = "") {
-  return buildLaborModelCoverageValue({ duration: "full", rowGroupKey });
-}
 
-export function setLaborModelCoverageDuration(value = "", rowGroupKey = "", duration = "full") {
-  const normalized = normalizeLaborModelCoverageCell(value);
-  if (!normalized) return buildLaborModelCoverageValue({ duration, rowGroupKey });
-  if (normalized === LABOR_MODEL_MARKETING_COVERAGE_VALUE) return normalized;
-  const roleOption = getLaborModelCoverageRoleOptionForCell(normalized, rowGroupKey);
-  return buildLaborModelCoverageValue({ duration, roleValue: roleOption?.label, rowGroupKey });
-}
 
-export function setLaborModelCoveragePosition(value = "", rowGroupKey = "", positionValue = "") {
-  const normalizedPosition = normalizeLaborModelCoverageCell(positionValue);
-  if (!normalizedPosition) return "";
-  if (normalizedPosition === LABOR_MODEL_MARKETING_COVERAGE_VALUE) return LABOR_MODEL_MARKETING_COVERAGE_VALUE;
-  const duration = getLaborModelCoverageDuration(value) || "full";
-  const roleOption = getLaborModelCoverageExplicitRoleOption(normalizedPosition) || getLaborModelCoverageRoleOption(normalizedPosition);
-  return buildLaborModelCoverageValue({ duration, roleValue: roleOption?.label, rowGroupKey });
-}
 
 function getLaborModelNextCoverageValue(value = "", rowGroupKey = "") {
   const kind = getLaborModelCoverageKind(value);
@@ -1453,17 +1390,6 @@ function getLaborModelNextCoverageValue(value = "", rowGroupKey = "") {
 }
 
 
-export function getLaborModelCoverageDisplay(value = "", rowGroupKey = "") {
-  const normalized = normalizeLaborModelCoverageCell(value);
-  const roleOption = getLaborModelCoverageRoleOptionForCell(normalized, rowGroupKey);
-  if (normalized === LABOR_MODEL_FULL_COVERAGE_VALUE) return roleOption?.label || "";
-  if (normalized === LABOR_MODEL_HALF_COVERAGE_VALUE) return roleOption?.label || "1/2";
-  if (normalized.startsWith(`${LABOR_MODEL_HALF_COVERAGE_VALUE}:`)) {
-    return roleOption?.label || "1/2";
-  }
-  if (roleOption) return roleOption.label;
-  return normalized;
-}
 
 
 
@@ -1506,73 +1432,8 @@ function normalizeHourAnalysisLaborModel(value = {}) {
   };
 }
 
-export function removeLaborModelColumnFromDay(day = {}, columnIndex = 0, dayKey = "day") {
-  const normalizedDay = normalizeHourAnalysisLaborModelDay(dayKey, day, day);
-  const targetIndex = Number(columnIndex);
-  if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= normalizedDay.columns.length) {
-    return { day: normalizedDay, removedColumn: null, error: "Choose a valid time slot." };
-  }
-  if (normalizedDay.columns.length <= 1) {
-    return { day: normalizedDay, removedColumn: null, error: "At least one time slot is required." };
-  }
-  const removedColumn = normalizedDay.columns[targetIndex];
-  const mergeIndex = targetIndex > 0 ? targetIndex - 1 : 1;
-  const targetRange = parseLaborModelTimeRange(removedColumn.label);
-  const mergeColumn = normalizedDay.columns[mergeIndex];
-  const mergeRange = parseLaborModelTimeRange(mergeColumn?.label);
-  let nextColumns = normalizedDay.columns.map((column) => ({ ...column }));
-  let mergedColumn = null;
-
-  if (targetRange.valid && mergeRange.valid && mergeColumn) {
-    const mergedStart = mergeIndex < targetIndex ? mergeRange.start : targetRange.start;
-    const mergedEnd = mergeIndex < targetIndex ? targetRange.end : mergeRange.end;
-    const mergedLabel = formatLaborModelTimeRange(mergedStart, mergedEnd);
-    mergedColumn = normalizeHourAnalysisLaborModelColumn({
-      ...mergeColumn,
-      label: mergedLabel,
-    }, mergeIndex, dayKey);
-    nextColumns[mergeIndex] = mergedColumn;
-  }
-
-  nextColumns = nextColumns.filter((_, index) => index !== targetIndex);
-  const validation = validateLaborModelColumns(nextColumns);
-  if (!validation.valid) {
-    return {
-      day: normalizedDay,
-      removedColumn: null,
-      error: validation.errors[0]?.message || "Time slots must stay contiguous.",
-    };
-  }
-
-  const nextRows = normalizedDay.rows.map((row) => {
-    const coverage = [...row.coverage];
-    if (mergedColumn) {
-      const existingValue = String(coverage[mergeIndex] || "").trim();
-      const removedValue = String(coverage[targetIndex] || "").trim();
-      coverage[mergeIndex] = existingValue || removedValue;
-    }
-    return {
-      ...row,
-      coverage: coverage.filter((_, index) => index !== targetIndex),
-    };
-  });
-
-  return {
-    day: {
-      ...normalizedDay,
-      columns: nextColumns,
-      rows: nextRows,
-    },
-    removedColumn,
-    mergedColumn,
-    error: "",
-  };
-}
 
 
-function calculateLaborModelRowHours(row = {}, columns = []) {
-  return calculateLaborModelRowHourBuckets(row, columns).operatingHours;
-}
 
 
 function buildHourAnalysisLaborModelSummary(model = DEFAULT_HOUR_ANALYSIS_LABOR_MODEL) {
@@ -2050,14 +1911,6 @@ export function buildOutOfPositionLaborSummary({ staffPlans = [], employees = []
   };
 }
 
-export function getLaborCapacityWeekStart(dateValue = todayStr()) {
-  const date = new Date(`${String(dateValue || todayStr()).slice(0, 10)}T12:00:00`);
-  if (Number.isNaN(date.getTime())) return todayStr();
-  const day = date.getDay();
-  const mondayOffset = day === 0 ? -6 : 1 - day;
-  date.setDate(date.getDate() + mondayOffset);
-  return date.toISOString().slice(0, 10);
-}
 
 
 
@@ -2919,13 +2772,6 @@ function compareCompliancePolicyRequirements(left = {}, right = {}) {
   return normalizeComplianceRequirementLabel(left).localeCompare(normalizeComplianceRequirementLabel(right), undefined, { sensitivity: "base" });
 }
 
-function getDaysSince(dateValue) {
-  if (!dateValue) return null;
-  const start = new Date(`${dateValue}T12:00:00`);
-  if (Number.isNaN(start.getTime())) return null;
-  const today = new Date(`${todayStr()}T12:00:00`);
-  return Math.floor((today.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
-}
 
 
 function getTrainingComplianceState(row) {
@@ -3055,16 +2901,6 @@ function getHistoryTimestampValue(value) {
 
 
 
-export function buildTrainingHistoryDayMetrics(rows = [], dateValue = "") {
-  const normalizedRows = toObjectRows(rows);
-  const targetDate = String(dateValue || "").trim() || getTrainingHistoryRowDate(normalizedRows[0]) || todayStr();
-  const dayRows = normalizedRows.filter((row) => getTrainingHistoryRowDate(row) === targetDate);
-  return {
-    date: targetDate,
-    activityCount: dayRows.length,
-    employeeCount: new Set(dayRows.map((row) => String(row.employeeName || "").trim()).filter(Boolean)).size,
-  };
-}
 
 
 
@@ -3287,87 +3123,6 @@ function buildComplianceCellHistoryRows({
     .sort((a, b) => getHistoryTimestampValue(b.created_at) - getHistoryTimestampValue(a.created_at));
 }
 
-export function applyLaborRosterFilters(rows, filters) {
-  const keys = Object.keys(filters || {});
-  if (keys.length === 0) return rows;
-  const today = todayStr();
-  const needsValue = (op) => !["empty", "notEmpty", "has", "missing", "overdue", "today", "thisWeek", "hasDate", "noDate"].includes(op);
-  const parseDate = (value) => {
-    const text = String(value || "");
-    if (!text) return "";
-    return text.includes("T") ? text.split("T")[0] : text;
-  };
-  const matchText = (source, op, value, { digitsOnly = false } = {}) => {
-    const left = digitsOnly ? String(source || "").replace(/\D/g, "") : String(source || "").toLowerCase();
-    const right = digitsOnly ? String(value || "").replace(/\D/g, "") : String(value || "").toLowerCase();
-    if (op === "contains") return left.includes(right);
-    if (op === "equals") return left === right;
-    if (op === "starts") return left.startsWith(right);
-    if (op === "empty") return !left;
-    if (op === "notEmpty") return !!left;
-    return true;
-  };
-
-  return rows.filter((row) => keys.every((key) => {
-    const filter = filters[key];
-    if (!filter) return true;
-    const op = filter.op;
-    const val = filter.val;
-    if (needsValue(op) && val === "") return true;
-
-    if (key === "first_name") return matchText(row.first_name, op, val);
-    if (key === "last_name") return matchText(row.last_name, op, val);
-    if (key === "email") return matchText(row.contact_email, op, val);
-    if (key === "phone") return matchText(row.contact_phone, op, val, { digitsOnly: true });
-    if (key === "position") return matchText(row.position_title, op, val);
-    if (key === "commitment") {
-      const label = getLaborEmploymentCommitmentLabel(row.employment_commitment);
-      if (op === "is") return label === val;
-      if (op === "isNot") return label !== val;
-      return true;
-    }
-    if (key === "employment_status") {
-      const explicitStatus = String(row.employment_status || "").toLowerCase();
-      const status = explicitStatus || (row.is_active === false ? "inactive" : "active");
-      if (val === "all") return true;
-      if (op === "is") return status === val;
-      if (op === "isNot") return status !== val;
-      return true;
-    }
-    if (key === "training") {
-      const status = String(row.training_compliance?.label || "");
-      if (op === "is") return status === val;
-      if (op === "isNot") return status !== val;
-      return true;
-    }
-    if (key === "performance_reviews") {
-      const status = String(row.performance_review_compliance?.label || "");
-      if (op === "is") return status === val;
-      if (op === "isNot") return status !== val;
-      return true;
-    }
-
-    const dateValue = (() => {
-      if (key === "start_date") return parseDate(row.start_date);
-      if (String(key || "").startsWith(REVIEW_CYCLE_SORT_KEY_PREFIX)) return parseDate(getReviewCycleDueDateForSort(row, key));
-      return "";
-    })();
-
-    if (key === "start_date" || String(key || "").startsWith(REVIEW_CYCLE_SORT_KEY_PREFIX)) {
-      if (op === "hasDate") return !!dateValue;
-      if (op === "noDate") return !dateValue;
-      if (!dateValue) return false;
-      if (op === "after") return dateValue > val;
-      if (op === "before") return dateValue < val;
-      if (op === "inLastDays") {
-        const diff = Math.floor((new Date(`${today}T12:00:00`) - new Date(`${dateValue}T12:00:00`)) / 86400000);
-        return diff <= parseInt(val, 10);
-      }
-    }
-
-    return true;
-  }));
-}
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
