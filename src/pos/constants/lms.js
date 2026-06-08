@@ -1,0 +1,62 @@
+const DEFAULT_LMS_CURRICULUM = [
+  { id:"welcome", title:"Welcome", required:true, courses:[
+    {id:"incite-overview",title:"INCITE Overview",duration:"12 min"},
+    {id:"welcome-k9",title:"Welcome to K9 Operations Lite · KOL",duration:"18 min"},
+    {id:"roles-resp",title:"Roles and Responsibilities",duration:"15 min"},
+    {id:"servicing-guest",title:"Servicing Our 4-Legged Guest",duration:"20 min"},
+    {id:"resort-basics",title:"Resort Basics",duration:"14 min"},
+  ]},
+  { id:"management", title:"Management", required:true, courses:[
+    {id:"adding-employees",title:"Adding Employees",duration:"10 min"},
+    {id:"staff-roles",title:"Staff Roles and Responsibilities",duration:"16 min"},
+    {id:"recruiting",title:"Recruiting, Interviewing and Hiring your Best Team",duration:"25 min"},
+    {id:"maintaining-schedule",title:"Maintaining a Schedule",duration:"12 min"},
+    {id:"training-dev",title:"Training and Development",duration:"18 min"},
+    {id:"dev-doc-disc",title:"Development, Documentation & Discipline",duration:"20 min"},
+    {id:"hr-manual",title:"Section 4 Human Resources Manual",duration:"30 min"},
+    {id:"leaders-guide",title:"Leaders Guide Solutions-Based Sales Experience",duration:"22 min"},
+  ]},
+  { id:"front-end-ops", title:"Front End Operations", required:true, courses:[
+    {id:"guest-protocols",title:"Guest Protocols",duration:"15 min"},
+    {id:"guest-interactions",title:"Guest Interactions",duration:"12 min"},
+    {id:"playtime-daycare",title:"Playtime and Daycare Protocols",duration:"18 min"},
+    {id:"playtime-cert",title:"Playtime Certification Acknowledgement",duration:"5 min",isQuiz:true},
+    {id:"feeding-meds",title:"Feeding, Giving Medication and Wellness Protocols",duration:"20 min"},
+    {id:"gingr-cert",title:"Gingr Certification Acknowledgement",duration:"5 min",isQuiz:true},
+    {id:"tour-cert",title:"Tour Certification Acknowledgment",duration:"5 min",isQuiz:true},
+    {id:"five-star-sales",title:"5-Star Sales Experience",duration:"22 min"},
+  ]},
+  { id:"back-house-ops", title:"Back of House Operations", required:true, courses:[
+    {id:"bathing-protocols",title:"Bathing Protocols",duration:"18 min"},
+    {id:"bathing-cert",title:"Bathing Certification Acknowledgement",duration:"5 min",isQuiz:true},
+    {id:"daycare-protocols",title:"Daycare Protocols",duration:"16 min"},
+    {id:"daycare-evals",title:"Daycare Evaluations",duration:"14 min"},
+    {id:"sanitation-protocols",title:"Sanitation Protocols",duration:"15 min"},
+    {id:"daycare-eval-cert",title:"Daycare Evaluation Certification Acknowledgement",duration:"5 min",isQuiz:true},
+  ]},
+  { id:"continuing-ed", title:"Continuing Education", required:false, courses:[
+    {id:"calming-signals",title:"Calming Signals",duration:"12 min"},
+    {id:"tour-ce",title:"Tour",duration:"10 min"},
+    {id:"dryer-ops",title:"Dryer Operations",duration:"8 min"},
+    {id:"dog-communication",title:"Dog Communication",duration:"15 min"},
+    {id:"managing-pack",title:"Managing a Pack",duration:"14 min"},
+    {id:"waterless-baths",title:"Waterless Baths",duration:"8 min"},
+    {id:"bathing-ce",title:"Bathing",duration:"12 min"},
+    {id:"not-bitten",title:"How Not to Get Bitten",duration:"10 min"},
+    {id:"foamer",title:"Foamer Instructions",duration:"6 min"},
+    {id:"mopping",title:"Proper Mopping Technique",duration:"8 min"},
+    {id:"disinfect-cage-free",title:"Disinfecting Cage Free Accommodations",duration:"10 min"},
+    {id:"disinfect-compartments",title:"Disinfecting Compartments",duration:"8 min"},
+    {id:"spot-cleaning",title:"Spot Cleaning",duration:"7 min"},
+  ]},
+  { id:"ops-manual", title:"Operations Manual", required:false, courses:[
+    {id:"ops-manual-doc",title:"Operations Manual",duration:"45 min"},
+    {id:"appendix",title:"Appendix",duration:"20 min"},
+    {id:"sops",title:"SOPs",duration:"30 min"},
+  ]},
+  { id:"conference-2025", title:"K9 Operations Annual Conference 2025", required:false, courses:[
+    {id:"conference-recordings",title:"Conference Recordings",duration:"60 min"},
+  ]},
+];
+
+export { DEFAULT_LMS_CURRICULUM };

@@ -4,64 +4,23 @@ import { I } from "../../shared/icons";
 import { LaborSearchBar, LaborIntro } from "../../shared/ui";
 import { LABOR_INTRO_DEFAULTS } from "../laborIntros";
 import { isWaivedLaborComplianceState, getLaborComplianceCellState } from "../performanceReviewData";
+import { FILTER_OP_LABELS, REQUIREMENT_STATUS_OPTIONS } from "./performanceReviewGrid/constants";
+import { defaultFormatter, identity, formatCellDate } from "./performanceReviewGrid/formatters";
+import { joinClassNames, normalizeText } from "./performanceReviewGrid/textHelpers";
+import { getCycleKey, getCellKey, getCycleDueDate, toCycleRows, getCycleByFilterKey } from "./performanceReviewGrid/cycleHelpers";
+import {
+  filterNeedsValue,
+  getOptionValue,
+  getOptionLabel,
+  getFilterValueLabel,
+  getFilterFieldForKey,
+  matchTextFilter,
+  matchDateFilter,
+  matchSelectFilter,
+  matchEmploymentStatusFilter,
+} from "./performanceReviewGrid/filterHelpers";
 
-const defaultFormatter = (value) => value || "-";
-const identity = (value) => value;
 const DEFAULT_COMPLIANCE_FILTERS = { employment_status: { op: "is", val: "active" } };
-const FILTER_OP_LABELS = {
-  contains: "contains",
-  equals: "equals",
-  starts: "starts with",
-  empty: "is empty",
-  notEmpty: "has value",
-  is: "is",
-  isNot: "is not",
-  after: "after",
-  before: "before",
-  inLastDays: "in last days",
-};
-const REQUIREMENT_STATUS_OPTIONS = [
-  { value: "compliant", label: "Compliant" },
-  { value: "non-compliant", label: "Non-compliant" },
-  { value: "completed", label: "Complete" },
-  { value: "waived", label: "Waived" },
-  { value: "overdue", label: "Overdue" },
-  { value: "not-started", label: "Not Started" },
-];
-
-function joinClassNames(...values) {
-  return values.filter(Boolean).join(" ");
-}
-
-function normalizeText(value = "") {
-  return String(value || "").trim().toLowerCase();
-}
-
-function normalizeDateText(value = "") {
-  const text = String(value || "").trim();
-  if (!text) return "";
-  return text.includes("T") ? text.split("T")[0] : text;
-}
-
-function filterNeedsValue(op = "") {
-  return !["empty", "notEmpty"].includes(op);
-}
-
-function getOptionValue(option) {
-  return typeof option === "object" ? option.value : option;
-}
-
-function getOptionLabel(option) {
-  return typeof option === "object" ? option.label : option;
-}
-
-function getCycleKey(cycle = {}) {
-  return String(cycle.id || cycle.slug || cycle.requirementId || cycle.policyKey || cycle.label || "review");
-}
-
-function getCellKey(employeeId, cycle = {}) {
-  return `${employeeId || "employee"}:${getCycleKey(cycle)}`;
-}
 
 export function getCompletionEvidence(cycle = {}) {
   const metadataEvidence = cycle.instance?.metadata?.completion_evidence && typeof cycle.instance.metadata.completion_evidence === "object"
@@ -79,15 +38,6 @@ export function getCompletionEvidence(cycle = {}) {
     url: metadataEvidence.external_url || evidence.url || "",
     completedOn: cycle.completedDate || metadataEvidence.completed_on || "",
   };
-}
-
-function getCycleDueDate(cycle = {}) {
-  return cycle.dueDate || cycle.instance?.due_date || cycle.policyDueDate || "";
-}
-
-function formatCellDate(value, formatDate = defaultFormatter) {
-  const text = String(value || "").trim();
-  return text ? formatDate(text.slice(0, 10)) : "-";
 }
 
 /**
@@ -222,57 +172,9 @@ function getOpenCheckpointCount(row = {}) {
   return toCycleRows(row).filter((cycle) => !isCompliantCycleState(getCycleState(cycle).key)).length;
 }
 
-function toCycleRows(row = {}) {
-  return Array.isArray(row.cycles) ? row.cycles : [];
-}
-
-function getCycleByFilterKey(row = {}, filterKey = "") {
-  const targetKey = String(filterKey || "").replace("requirement:", "");
-  return toCycleRows(row).find((cycle) => getCycleKey(cycle) === targetKey);
-}
-
-function matchTextFilter(source, op, value) {
-  const left = normalizeText(source);
-  const right = normalizeText(value);
-  if (op === "contains") return left.includes(right);
-  if (op === "equals") return left === right;
-  if (op === "starts") return left.startsWith(right);
-  if (op === "empty") return !left;
-  if (op === "notEmpty") return Boolean(left);
-  return true;
-}
-
-function matchDateFilter(source, op, value) {
-  const dateValue = normalizeDateText(source);
-  if (!dateValue) return false;
-  if (op === "after") return dateValue > value;
-  if (op === "before") return dateValue < value;
-  if (op === "inLastDays") {
-    const days = Number.parseInt(value, 10);
-    if (!Number.isFinite(days)) return true;
-    const today = new Date();
-    const diff = Math.floor((new Date(today.getFullYear(), today.getMonth(), today.getDate()) - new Date(`${dateValue}T12:00:00`)) / 86400000);
-    return diff >= 0 && diff <= days;
-  }
-  return true;
-}
-
-function matchSelectFilter(actualValue, op, value) {
-  if (op === "is") return actualValue === value;
-  if (op === "isNot") return actualValue !== value;
-  return true;
-}
-
 function matchComplianceFilter(row, op, value) {
   const actualValue = isCompliantRow(row) ? "yes" : "no";
   return matchSelectFilter(actualValue, op, value);
-}
-
-function matchEmploymentStatusFilter(row, op, value) {
-  if (value === "all") return true;
-  const explicitStatus = normalizeText(row.employment_status);
-  const status = explicitStatus || (row.is_active === false || row.active === false || row.end_date ? "inactive" : "active");
-  return matchSelectFilter(status, op, value);
 }
 
 function matchRequirementFilter(row, key, op, value) {
@@ -282,15 +184,6 @@ function matchRequirementFilter(row, key, op, value) {
     ? (isCompliantCycleState(stateKey) ? "compliant" : "non-compliant")
     : stateKey === "completed-late" ? "completed" : stateKey;
   return matchSelectFilter(actualValue, op, value);
-}
-
-function getFilterValueLabel(field = {}, value = "") {
-  const option = (field.options || []).find((candidate) => getOptionValue(candidate) === value);
-  return option ? getOptionLabel(option) : value;
-}
-
-function getFilterFieldForKey(fields = [], key = "") {
-  return fields.find((field) => field.key === key);
 }
 
 function filterRowMatches(row, fields, key, filter) {
