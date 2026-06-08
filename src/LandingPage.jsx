@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 
-// ─── Light Theme Colors ────────────────────────────────────────────────────────
+// ─── Brand tokens ───────────────────────────────────────────────────────────
 const C = {
   bg: '#FFFFFF',
   bgAlt: '#F7FEE7',
@@ -16,11 +16,12 @@ const C = {
   textMut: '#64748B',
   pri: '#14532D',
   priL: '#166534',
+  priDk: '#0B2818',
   acc: '#84CC16',
   accLt: '#D9F99D',
+  accBr: '#A3E635',
   accDk: '#4D7C0F',
   success: '#16A34A',
-  successLight: '#ECFDF5',
 };
 
 // ─── Legal Data ───────────────────────────────────────────────────────────────
@@ -53,963 +54,502 @@ const PRIVACY_SECTIONS = [
   { t: "9. Contact", b: "For privacy inquiries: zack.nisbet@k9operations.com" },
 ];
 
-// ─── SVG Icons (inline) ───────────────────────────────────────────────────────
+// ─── Icons ──────────────────────────────────────────────────────────────────
 const Icon = ({ name, size = 24, color = 'currentColor' }) => {
   const icons = {
-    lifecycle: <><circle cx="12" cy="12" r="9" fill="none" stroke={color} strokeWidth="1.5"/><path d="M12 3c5 0 9 4 9 9" fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round"/><path d="M21 12c0 5-4 9-9 9" fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeDasharray="3 2"/><circle cx="12" cy="12" r="3" fill={color} opacity="0.2"/><circle cx="12" cy="12" r="1.5" fill={color}/></>,
-    ops: <><rect x="3" y="3" width="18" height="18" rx="3" fill="none" stroke={color} strokeWidth="1.5"/><path d="M8 9.5h8M8 12.5h6M8 15.5h4" stroke={color} strokeWidth="1.5" strokeLinecap="round"/><circle cx="5.5" cy="9.5" r="0.75" fill={color}/><circle cx="5.5" cy="12.5" r="0.75" fill={color}/><circle cx="5.5" cy="15.5" r="0.75" fill={color}/></>,
-    tv: <><rect x="2" y="4" width="20" height="14" rx="2" fill="none" stroke={color} strokeWidth="1.5"/><path d="M8 21h8M12 18v3" stroke={color} strokeWidth="1.5" strokeLinecap="round"/><circle cx="8" cy="11" r="2" fill={color} opacity="0.15"/><circle cx="12" cy="11" r="2" fill={color} opacity="0.15"/><circle cx="16" cy="11" r="2" fill={color} opacity="0.15"/></>,
-    reports: <><rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke={color} strokeWidth="1.5"/><path d="M7 14v3M11 10v7M15 12v5M19 8v9" stroke={color} strokeWidth="2" strokeLinecap="round"/></>,
-    funnel: <><path d="M3 4h18l-6 7v5l-6 3V11L3 4z" fill={color} opacity="0.1" stroke={color} strokeWidth="1.5" strokeLinejoin="round"/></>,
-    shield: <><path d="M12 2l8 4v5c0 5.25-3.5 9.74-8 11-4.5-1.26-8-5.75-8-11V6l8-4z" fill={color} opacity="0.1" stroke={color} strokeWidth="1.5"/><path d="M9 12l2 2 4-4" fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></>,
-    arrow: <><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></>,
-    check: <><path d="M5 12l5 5L20 7" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></>,
-    star: <><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" fill={color} opacity="0.15" stroke={color} strokeWidth="1.5" strokeLinejoin="round"/></>,
-    sync: <><path d="M4 12a8 8 0 0114.93-4M20 12a8 8 0 01-14.93 4" fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round"/><path d="M20 4v4h-4M4 20v-4h4" fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></>,
-    menu: <><path d="M4 6h16M4 12h16M4 18h16" stroke={color} strokeWidth="1.5" strokeLinecap="round"/></>,
-    close: <><path d="M6 6l12 12M18 6L6 18" stroke={color} strokeWidth="1.5" strokeLinecap="round"/></>,
+    lifecycle: <><circle cx="12" cy="12" r="9" fill="none" stroke={color} strokeWidth="1.6"/><path d="M12 3c5 0 9 4 9 9" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round"/><circle cx="12" cy="12" r="3" fill={color} opacity="0.2"/><circle cx="12" cy="12" r="1.6" fill={color}/></>,
+    ops: <><rect x="3" y="3" width="18" height="18" rx="3" fill="none" stroke={color} strokeWidth="1.6"/><path d="M8 9.5h8M8 12.5h6M8 15.5h4" stroke={color} strokeWidth="1.6" strokeLinecap="round"/><circle cx="5.5" cy="9.5" r="0.8" fill={color}/><circle cx="5.5" cy="12.5" r="0.8" fill={color}/><circle cx="5.5" cy="15.5" r="0.8" fill={color}/></>,
+    tv: <><rect x="2" y="4" width="20" height="14" rx="2" fill="none" stroke={color} strokeWidth="1.6"/><path d="M8 21h8M12 18v3" stroke={color} strokeWidth="1.6" strokeLinecap="round"/><circle cx="8" cy="11" r="2" fill={color} opacity="0.18"/><circle cx="12" cy="11" r="2" fill={color} opacity="0.18"/><circle cx="16" cy="11" r="2" fill={color} opacity="0.18"/></>,
+    reports: <><rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke={color} strokeWidth="1.6"/><path d="M7 14v3M11 10v7M15 12v5M19 8v9" stroke={color} strokeWidth="2.2" strokeLinecap="round"/></>,
+    funnel: <><path d="M3 4h18l-6 7v5l-6 3V11L3 4z" fill={color} opacity="0.12" stroke={color} strokeWidth="1.6" strokeLinejoin="round"/></>,
+    shield: <><path d="M12 2l8 4v5c0 5.25-3.5 9.74-8 11-4.5-1.26-8-5.75-8-11V6l8-4z" fill={color} opacity="0.12" stroke={color} strokeWidth="1.6"/><path d="M9 12l2 2 4-4" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></>,
+    arrow: <><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></>,
+    check: <><path d="M5 12l5 5L20 7" fill="none" stroke={color} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></>,
+    sync: <><path d="M4 12a8 8 0 0114.93-4M20 12a8 8 0 01-14.93 4" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round"/><path d="M20 4v4h-4M4 20v-4h4" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></>,
+    box: <><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z" fill="none" stroke={color} strokeWidth="1.6" strokeLinejoin="round"/><path d="M3 8l9 5 9-5M12 13v8" stroke={color} strokeWidth="1.6" strokeLinejoin="round"/></>,
+    leaf: <><path d="M5 21c0-9 7-16 16-16 0 9-7 16-16 16z" fill={color} opacity="0.12" stroke={color} strokeWidth="1.6" strokeLinejoin="round"/><path d="M9 17c2-4 5-7 9-9" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round"/></>,
+    building: <><rect x="4" y="3" width="16" height="18" rx="2" fill="none" stroke={color} strokeWidth="1.6"/><path d="M8 7h2M14 7h2M8 11h2M14 11h2M8 15h2M14 15h2M10 21v-3h4v3" stroke={color} strokeWidth="1.6" strokeLinecap="round"/></>,
+    cal: <><rect x="3" y="5" width="18" height="16" rx="2" fill="none" stroke={color} strokeWidth="1.6"/><path d="M3 9h18M8 3v4M16 3v4" stroke={color} strokeWidth="1.6" strokeLinecap="round"/></>,
+    cash: <><rect x="2" y="6" width="20" height="12" rx="2" fill="none" stroke={color} strokeWidth="1.6"/><circle cx="12" cy="12" r="2.6" fill="none" stroke={color} strokeWidth="1.6"/></>,
+    close: <><path d="M6 6l12 12M18 6L6 18" stroke={color} strokeWidth="1.6" strokeLinecap="round"/></>,
   };
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none">{icons[name]}</svg>;
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">{icons[name]}</svg>;
 };
 
-// ─── K9 Operations Logo ──────────────────────────────────────────────────────
-const K9Logo = ({ size = 36 }) => (
+// ─── Logo ─────────────────────────────────────────────────────────────────────
+const K9Logo = ({ size = 34, tone = 'dark' }) => (
   <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-    <img src="/k9_mark.svg" alt="" aria-hidden="true" style={{ height: size, width: size }} />
     <span style={{
-      fontSize: Math.max(14, Math.round(size * 0.46)),
-      fontWeight: 800,
-      color: C.pri,
-      lineHeight: 1,
-      letterSpacing: 0,
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      width: size, height: size, borderRadius: size * 0.28,
+      background: '#F7FEE7',
+      border: tone === 'light' ? '1px solid rgba(217,249,157,0.45)' : '1px solid #E2E8F0',
+      boxShadow: tone === 'light' ? '0 2px 10px rgba(0,0,0,0.18)' : 'none',
     }}>
+      <img src="/k9_mark.svg" alt="" aria-hidden="true" style={{ height: size * 0.62, width: size * 0.62 }} />
+    </span>
+    <span style={{ fontSize: Math.max(15, Math.round(size * 0.46)), fontWeight: 800, color: tone === 'light' ? '#F7FEE7' : C.pri, lineHeight: 1, letterSpacing: '-0.01em' }}>
       K9 Operations
     </span>
   </div>
 );
 
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// DATA FLOW ANIMATION — The Centerpiece
-// Gingr (top) → K9 Operations (middle) → Old / Conversion / Retention (bottom)
-// ═══════════════════════════════════════════════════════════════════════════════
-function DataFlowAnimation() {
-  const canvasRef = useRef(null);
-  const animRef = useRef(null);
-  const [isVisible, setIsVisible] = useState(false);
-  const sectionRef = useRef(null);
-
+// ─── Scroll reveal ─────────────────────────────────────────────────────────────
+function Reveal({ children, delay = 0, as: Tag = 'div', style, className = '' }) {
+  const ref = useRef(null);
+  const [shown, setShown] = useState(false);
   useEffect(() => {
-    const obs = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) { setIsVisible(true); obs.disconnect(); }},
-      { threshold: 0.2 }
-    );
-    if (sectionRef.current) obs.observe(sectionRef.current);
+    const el = ref.current;
+    if (!el) return undefined;
+    const obs = new IntersectionObserver(([e]) => {
+      if (e.isIntersecting) { setShown(true); obs.disconnect(); }
+    }, { threshold: 0.15, rootMargin: '0px 0px -8% 0px' });
+    obs.observe(el);
     return () => obs.disconnect();
   }, []);
-
-  useEffect(() => {
-    if (!isVisible || !canvasRef.current) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    const dpr = window.devicePixelRatio || 1;
-
-    const resize = () => {
-      const rect = canvas.getBoundingClientRect();
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    // Node positions (responsive)
-    const getLayout = () => {
-      const w = canvas.getBoundingClientRect().width;
-      const h = canvas.getBoundingClientRect().height;
-      const cx = w / 2;
-
-      const gingrNode = { x: cx, y: 60, label: 'Gingr', sub: 'PMS Data Source', color: '#6366F1', radius: 44 };
-      const k9Node = { x: cx, y: h * 0.42, label: 'K9 Ops', sub: 'Intelligence Layer', color: C.pri, radius: 50 };
-
-      const spacing = Math.min(w * 0.28, 180);
-      const bottomY = h * 0.82;
-      const oldNode = { x: cx - spacing, y: bottomY, label: 'Cold', sub: 'Re-engagement', color: '#64748B', radius: 36 };
-      const convNode = { x: cx, y: bottomY, label: 'Leads', sub: 'New Leads', color: '#10B981', radius: 36 };
-      const retNode = { x: cx + spacing, y: bottomY, label: 'Lapsed', sub: 'Lapsed Clients', color: '#F59E0B', radius: 36 };
-
-      return { gingrNode, k9Node, oldNode, convNode, retNode, w, h };
-    };
-
-    // Orbs
-    const orbs = [];
-    let orbIdCounter = 0;
-
-    const spawnOrb = (from, to, color, delay = 0) => {
-      orbs.push({
-        id: orbIdCounter++,
-        fromX: from.x, fromY: from.y,
-        toX: to.x, toY: to.y,
-        progress: -delay,
-        speed: 0.008 + Math.random() * 0.004,
-        color,
-        radius: 4 + Math.random() * 3,
-        trail: [],
-      });
-    };
-
-    let lastSpawnTime = 0;
-
-    const draw = (time) => {
-      const layout = getLayout();
-      const { gingrNode, k9Node, oldNode, convNode, retNode, w, h } = layout;
-      ctx.clearRect(0, 0, w, h);
-
-      // Draw connection lines
-      const drawLine = (from, to, alpha = 0.12) => {
-        ctx.beginPath();
-        const midY = (from.y + to.y) / 2;
-        ctx.moveTo(from.x, from.y + from.radius);
-        ctx.bezierCurveTo(from.x, midY, to.x, midY, to.x, to.y - to.radius);
-        ctx.strokeStyle = `rgba(20,83,45,${alpha})`;
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 4]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      };
-
-      drawLine(gingrNode, k9Node, 0.15);
-      drawLine(k9Node, oldNode, 0.1);
-      drawLine(k9Node, convNode, 0.1);
-      drawLine(k9Node, retNode, 0.1);
-
-      // Draw nodes
-      const drawNode = (node) => {
-        // Glow
-        const grad = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, node.radius * 2);
-        grad.addColorStop(0, node.color + '18');
-        grad.addColorStop(1, node.color + '00');
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, node.radius * 2, 0, Math.PI * 2);
-        ctx.fillStyle = grad;
-        ctx.fill();
-
-        // Circle
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
-        ctx.fillStyle = '#fff';
-        ctx.fill();
-        ctx.strokeStyle = node.color + '40';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        // Inner circle
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, node.radius * 0.6, 0, Math.PI * 2);
-        ctx.fillStyle = node.color + '12';
-        ctx.fill();
-
-        // Label
-        ctx.fillStyle = node.color;
-        ctx.font = `700 ${node.radius > 40 ? 14 : 11}px 'Outfit', system-ui, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.fillText(node.label, node.x, node.y + (node.radius > 40 ? 5 : 4));
-
-        // Sub-label
-        ctx.fillStyle = C.textMut;
-        ctx.font = `500 ${node.radius > 40 ? 11 : 9}px 'Outfit', system-ui, sans-serif`;
-        ctx.fillText(node.sub, node.x, node.y + node.radius + 16);
-      };
-
-      drawNode(gingrNode);
-      drawNode(k9Node);
-      drawNode(oldNode);
-      drawNode(convNode);
-      drawNode(retNode);
-
-      // Spawn orbs periodically
-      if (time - lastSpawnTime > 1200) {
-        lastSpawnTime = time;
-        // Gingr → K9
-        spawnOrb(gingrNode, k9Node, '#6366F1', 0);
-        // K9 → bottom nodes (staggered)
-        spawnOrb(k9Node, convNode, '#10B981', 0.35);
-        spawnOrb(k9Node, retNode, '#F59E0B', 0.5);
-        spawnOrb(k9Node, oldNode, '#64748B', 0.65);
-      }
-
-      // Update and draw orbs
-      for (let i = orbs.length - 1; i >= 0; i--) {
-        const orb = orbs[i];
-        orb.progress += orb.speed;
-
-        if (orb.progress < 0) continue;
-        if (orb.progress > 1) { orbs.splice(i, 1); continue; }
-
-        const t = orb.progress;
-        const midY = (orb.fromY + orb.toY) / 2;
-        // Bezier interpolation
-        const mt = 1 - t;
-        const x = mt*mt*mt*orb.fromX + 3*mt*mt*t*orb.fromX + 3*mt*t*t*orb.toX + t*t*t*orb.toX;
-        const y = mt*mt*mt*orb.fromY + 3*mt*mt*t*midY + 3*mt*t*t*midY + t*t*t*orb.toY;
-
-        // Trail
-        orb.trail.push({ x, y, alpha: 1 });
-        if (orb.trail.length > 12) orb.trail.shift();
-
-        // Draw trail
-        orb.trail.forEach((pt, idx) => {
-          const a = (idx / orb.trail.length) * 0.4;
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, orb.radius * (idx / orb.trail.length) * 0.7, 0, Math.PI * 2);
-          ctx.fillStyle = orb.color + Math.round(a * 255).toString(16).padStart(2, '0');
-          ctx.fill();
-        });
-
-        // Draw orb with glow
-        const orbGrad = ctx.createRadialGradient(x, y, 0, x, y, orb.radius * 3);
-        orbGrad.addColorStop(0, orb.color + '60');
-        orbGrad.addColorStop(1, orb.color + '00');
-        ctx.beginPath();
-        ctx.arc(x, y, orb.radius * 3, 0, Math.PI * 2);
-        ctx.fillStyle = orbGrad;
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.arc(x, y, orb.radius, 0, Math.PI * 2);
-        ctx.fillStyle = orb.color;
-        ctx.fill();
-
-        // White core
-        ctx.beginPath();
-        ctx.arc(x, y, orb.radius * 0.4, 0, Math.PI * 2);
-        ctx.fillStyle = '#fff';
-        ctx.fill();
-      }
-
-      animRef.current = requestAnimationFrame(draw);
-    };
-
-    animRef.current = requestAnimationFrame(draw);
-
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      window.removeEventListener('resize', resize);
-    };
-  }, [isVisible]);
-
   return (
-    <div ref={sectionRef} style={{ position: 'relative', width: '100%', maxWidth: 600, margin: '0 auto' }}>
-      <canvas
-        ref={canvasRef}
-        style={{ width: '100%', height: 420, display: 'block' }}
-      />
+    <Tag ref={ref} className={`reveal ${shown ? 'in' : ''} ${className}`} style={{ transitionDelay: `${delay}ms`, ...style }}>
+      {children}
+    </Tag>
+  );
+}
+
+// ─── App-frame chrome (drop a real <img> screenshot in here later) ─────────────
+function AppFrame({ title = 'K9 Operations', children, dark = false }) {
+  return (
+    <div className={`app-frame ${dark ? 'app-frame-dark' : ''}`}>
+      <div className="app-frame-bar">
+        <span className="dot" style={{ background: '#F87171' }} />
+        <span className="dot" style={{ background: '#FBBF24' }} />
+        <span className="dot" style={{ background: '#34D399' }} />
+        <span className="app-frame-title">{title}</span>
+      </div>
+      <div className="app-frame-body">{children}</div>
     </div>
   );
 }
 
+// ─── Stylized UI mockups (CSS only; honest representations, not screenshots) ────
+function Bar({ w, c = C.acc, h = 8 }) {
+  return <span style={{ display: 'inline-block', width: w, height: h, borderRadius: 999, background: c }} />;
+}
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// FEATURE SECTIONS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function FeatureSection({ icon, title, subtitle, description, bullets, reversed, accentColor }) {
+function MockDashboard() {
+  const kpis = [
+    { l: 'Revenue (MTD)', v: '$48.2k', up: '+12%' },
+    { l: 'Occupancy', v: '86%', up: '+4%' },
+    { l: 'Labor %', v: '29%', up: '−2%' },
+    { l: 'Active clients', v: '1,142', up: '+38' },
+  ];
+  const bars = [42, 58, 50, 71, 64, 83, 77];
   return (
-    <div style={{
-      display: 'flex', flexDirection: reversed ? 'row-reverse' : 'row',
-      gap: 64, alignItems: 'center', padding: '80px 0',
-      flexWrap: 'wrap',
-    }}>
-      {/* Text side */}
-      <div style={{ flex: 1, minWidth: 320 }}>
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8,
-          padding: '6px 14px', borderRadius: 100,
-          background: accentColor + '10', marginBottom: 16,
-        }}>
-          <Icon name={icon} size={16} color={accentColor} />
-          <span style={{ fontSize: 12, fontWeight: 700, color: accentColor, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{subtitle}</span>
-        </div>
-        <h3 style={{ fontSize: 32, fontWeight: 800, color: C.text, lineHeight: 1.2, margin: '0 0 16px' }}>{title}</h3>
-        <p style={{ fontSize: 17, color: C.textSec, lineHeight: 1.7, margin: '0 0 24px' }}>{description}</p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {bullets.map((b, i) => (
-            <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-              <div style={{
-                width: 22, height: 22, borderRadius: 6, flexShrink: 0, marginTop: 1,
-                background: accentColor + '12',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                <Icon name="check" size={13} color={accentColor} />
-              </div>
-              <span style={{ fontSize: 15, color: C.textSec, lineHeight: 1.5 }}>{b}</span>
-            </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
+        {kpis.map((k) => (
+          <div key={k.l} className="mk-card">
+            <div className="mk-label">{k.l}</div>
+            <div className="mk-kpi">{k.v}</div>
+            <div className="mk-up">{k.up}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mk-card" style={{ padding: '16px 16px 10px' }}>
+        <div className="mk-label" style={{ marginBottom: 12 }}>Revenue · last 7 days</div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, height: 96 }}>
+          {bars.map((b, i) => (
+            <div key={i} style={{ flex: 1, height: `${b}%`, borderRadius: '6px 6px 2px 2px', background: i === 5 ? C.pri : C.accLt }} />
           ))}
         </div>
       </div>
-      {/* Visual side — abstract graphic */}
-      <div style={{
-        flex: 1, minWidth: 320, minHeight: 340,
-        background: `linear-gradient(135deg, ${accentColor}08 0%, ${accentColor}03 100%)`,
-        borderRadius: 24, border: `1px solid ${accentColor}15`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        position: 'relative', overflow: 'hidden',
-      }}>
-        <FeatureGraphic type={icon} color={accentColor} />
+    </div>
+  );
+}
+
+function MockCRM() {
+  const rows = [
+    { n: 'Riley Carter', s: 'Lead', c: C.acc, d: 'Booking-form tour' },
+    { n: 'Jordan Lee', s: 'Active', c: '#0EA5E9', d: 'Boarding · weekly' },
+    { n: 'Sam Rivera', s: 'Active', c: '#0EA5E9', d: 'Daycare · 20-pk' },
+    { n: 'Avery Brooks', s: 'Lapsed', c: '#F59E0B', d: 'Last visit 71d' },
+    { n: 'Quinn Walsh', s: 'Lead', c: C.acc, d: 'Ignite call' },
+  ];
+  return (
+    <div className="mk-table">
+      <div className="mk-tr mk-th">
+        <span>Client</span><span>Stage</span><span>Detail</span>
+      </div>
+      {rows.map((r) => (
+        <div key={r.n} className="mk-tr">
+          <span style={{ fontWeight: 700, color: C.text }}>{r.n}</span>
+          <span><em className="mk-pill" style={{ background: r.c + '22', color: r.c }}>{r.s}</em></span>
+          <span style={{ color: C.textMut }}>{r.d}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MockOps() {
+  const items = [
+    { l: 'Opening roll call', p: 100 },
+    { l: 'Feeding & meds — AM', p: 100 },
+    { l: 'Room cleaning', p: 72 },
+    { l: 'Bathing', p: 45 },
+    { l: 'Private play', p: 30 },
+    { l: 'Closing checklist', p: 0 },
+  ];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {items.map((it) => (
+        <div key={it.l} className="mk-row">
+          <span style={{
+            width: 18, height: 18, borderRadius: 6, flexShrink: 0,
+            background: it.p === 100 ? C.pri : '#fff', border: `1.5px solid ${it.p === 100 ? C.pri : C.border}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>{it.p === 100 && <Icon name="check" size={11} color="#fff" />}</span>
+          <span style={{ flex: 1, fontWeight: 600, color: C.text }}>{it.l}</span>
+          <span style={{ width: 90, height: 6, borderRadius: 999, background: C.borderLight, overflow: 'hidden' }}>
+            <span style={{ display: 'block', height: '100%', width: `${it.p}%`, background: it.p === 100 ? C.success : C.acc }} />
+          </span>
+          <span style={{ width: 34, textAlign: 'right', fontSize: 12, fontWeight: 700, color: it.p === 100 ? C.success : C.textMut }}>{it.p}%</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MockCheckoutTV() {
+  const dogs = ['Luna', 'Max', 'Bella', 'Rocky', 'Daisy', 'Cooper', 'Sadie', 'Duke'];
+  const colors = ['#0EA5E9', '#84CC16', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'];
+  return (
+    <div style={{ background: C.priDk, borderRadius: 12, padding: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+        <span style={{ color: '#fff', fontWeight: 800, fontSize: 13 }}>Checkout Board</span>
+        <span style={{ color: C.accLt, fontWeight: 800, fontSize: 13 }}>2:45 PM</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
+        {dogs.map((d, i) => (
+          <div key={d} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(217,249,157,0.12)', borderRadius: 10, padding: '10px 6px', textAlign: 'center' }}>
+            <span style={{ display: 'inline-flex', width: 26, height: 26, borderRadius: '50%', background: colors[i] + '33', color: colors[i], alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 12 }}>{d[0]}</span>
+            <div style={{ color: '#fff', fontSize: 11, fontWeight: 700, marginTop: 5 }}>{d}</div>
+            <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 9 }}>Rm {i + 1}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-// Abstract feature graphics (no fake screenshots)
-function FeatureGraphic({ type, color }) {
-  if (type === 'lifecycle') {
-    // Premium horizontal pipeline: Gingr → K9 Ops → Conversion → Active ↔ Retention
-    // Customer NEVER goes back to New/Conversion. Active ↔ Retention is the ONLY bidirectional flow.
-    const navy = '#14532D';
-    const gold = '#84CC16';
-    const teal = '#0EA5E9';
-    const green = '#10B981';
-
-    // Stage definitions for the flow
-    const stages = [
-      { id: 'gingr', label: 'Gingr', sub: 'Data Source', x: 30, y: 95, color: '#6366F1', icon: 'db' },
-      { id: 'k9ops', label: 'K9 Ops', sub: 'Intelligence', x: 120, y: 95, color: navy, icon: 'hub', isHub: true },
-      { id: 'conv', label: 'Leads', sub: 'New Leads', x: 210, y: 95, color: green, icon: 'funnel' },
-      { id: 'active', label: 'Active', sub: 'Engaged', x: 300, y: 55, color: teal, icon: 'bolt' },
-      { id: 'lapsed', label: 'Lapsed', sub: 'Re-engage', x: 300, y: 135, color: gold, icon: 'refresh' },
-    ];
-
-    return (
-      <svg width="380" height="200" viewBox="0 0 380 200" fill="none" style={{ maxWidth: '100%', height: 'auto' }}>
-        <defs>
-          {/* Glow filters */}
-          <filter id="lcGlow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur"/>
-            <feComposite in="SourceGraphic" in2="blur" operator="over"/>
-          </filter>
-          <filter id="lcSoftGlow" x="-30%" y="-30%" width="160%" height="160%">
-            <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="blur"/>
-            <feFlood floodColor={navy} floodOpacity="0.15" result="color"/>
-            <feComposite in="color" in2="blur" operator="in" result="shadow"/>
-            <feComposite in="SourceGraphic" in2="shadow" operator="over"/>
-          </filter>
-          {/* Gradient for connection lines */}
-          <linearGradient id="lcLineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor={navy} stopOpacity="0.15"/>
-            <stop offset="50%" stopColor={navy} stopOpacity="0.3"/>
-            <stop offset="100%" stopColor={navy} stopOpacity="0.15"/>
-          </linearGradient>
-          {/* Hub radial gradient */}
-          <radialGradient id="lcHubGrad" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor={navy} stopOpacity="0.08"/>
-            <stop offset="100%" stopColor={navy} stopOpacity="0.02"/>
-          </radialGradient>
-          {/* Arrow markers */}
-          <marker id="lcArrow" viewBox="0 0 8 6" refX="7" refY="3" markerWidth="8" markerHeight="6" orient="auto">
-            <path d="M0 0 L8 3 L0 6Z" fill={navy} opacity="0.35"/>
-          </marker>
-          <marker id="lcArrowGold" viewBox="0 0 8 6" refX="7" refY="3" markerWidth="8" markerHeight="6" orient="auto">
-            <path d="M0 0 L8 3 L0 6Z" fill={gold} opacity="0.45"/>
-          </marker>
-          <marker id="lcArrowTeal" viewBox="0 0 8 6" refX="7" refY="3" markerWidth="8" markerHeight="6" orient="auto">
-            <path d="M0 0 L8 3 L0 6Z" fill={teal} opacity="0.45"/>
-          </marker>
-        </defs>
-
-        {/* Background decoration — subtle grid dots */}
-        {Array.from({ length: 12 }).map((_, i) =>
-          Array.from({ length: 6 }).map((_, j) => (
-            <circle key={`dot-${i}-${j}`} cx={20 + i * 32} cy={15 + j * 32} r="0.8" fill={navy} opacity="0.06"/>
-          ))
-        )}
-
-        {/* ── Connection Lines ── */}
-        {/* Gingr → K9 Ops */}
-        <line x1="62" y1="95" x2="90" y2="95" stroke={navy} strokeWidth="1.5" strokeOpacity="0.2" strokeDasharray="4 3"/>
-        <circle r="3" fill="#6366F1" opacity="0.6">
-          <animateMotion dur="2s" repeatCount="indefinite" path="M62,95 L90,95"/>
-          <animate attributeName="opacity" values="0;0.7;0" dur="2s" repeatCount="indefinite"/>
-        </circle>
-
-        {/* K9 Ops → Conversion */}
-        <line x1="152" y1="95" x2="182" y2="95" stroke={navy} strokeWidth="1.8" strokeOpacity="0.25" markerEnd="url(#lcArrow)"/>
-        <circle r="3" fill={navy} opacity="0.5">
-          <animateMotion dur="1.8s" repeatCount="indefinite" path="M152,95 L182,95"/>
-          <animate attributeName="opacity" values="0;0.6;0" dur="1.8s" repeatCount="indefinite"/>
-        </circle>
-
-        {/* Conversion → Active (curves up) */}
-        <path d="M238 82 C260 60, 270 55, 280 55" fill="none" stroke={green} strokeWidth="1.5" strokeOpacity="0.25" markerEnd="url(#lcArrowTeal)"/>
-        <circle r="2.5" fill={green} opacity="0.5">
-          <animateMotion dur="2.2s" repeatCount="indefinite" path="M238,82 C260,60 270,55 280,55"/>
-          <animate attributeName="opacity" values="0;0.6;0" dur="2.2s" repeatCount="indefinite"/>
-        </circle>
-
-        {/* Conversion → Retention (curves down) */}
-        <path d="M238 108 C260 130, 270 135, 280 135" fill="none" stroke={green} strokeWidth="1.5" strokeOpacity="0.2" markerEnd="url(#lcArrowGold)"/>
-        <circle r="2.5" fill={green} opacity="0.4">
-          <animateMotion dur="2.5s" repeatCount="indefinite" path="M238,108 C260,130 270,135 280,135"/>
-          <animate attributeName="opacity" values="0;0.5;0" dur="2.5s" repeatCount="indefinite"/>
-        </circle>
-
-        {/* Active ↔ Retention (bidirectional — the ONLY bidirectional flow) */}
-        {/* Active → Retention */}
-        <line x1="310" y1="73" x2="310" y2="117" stroke={teal} strokeWidth="1.5" strokeOpacity="0.25" markerEnd="url(#lcArrowGold)"/>
-        <circle r="2.5" fill={teal} opacity="0.5">
-          <animateMotion dur="2s" repeatCount="indefinite" path="M310,73 L310,117"/>
-          <animate attributeName="opacity" values="0;0.6;0" dur="2s" repeatCount="indefinite"/>
-        </circle>
-        {/* Retention → Active */}
-        <line x1="290" y1="117" x2="290" y2="73" stroke={gold} strokeWidth="1.5" strokeOpacity="0.25" markerEnd="url(#lcArrowTeal)"/>
-        <circle r="2.5" fill={gold} opacity="0.5">
-          <animateMotion dur="2.3s" repeatCount="indefinite" path="M290,117 L290,73" begin="0.8s"/>
-          <animate attributeName="opacity" values="0;0.6;0" dur="2.3s" repeatCount="indefinite" begin="0.8s"/>
-        </circle>
-        {/* Bidirectional label */}
-        <text x="340" y="98" fontSize="6.5" fontWeight="600" fill={navy} opacity="0.35" textAnchor="middle">↕</text>
-
-        {/* ── Stage Nodes ── */}
-        {stages.map((s) => {
-          const isHub = s.isHub;
-          const r = isHub ? 30 : 24;
-          return (
-            <g key={s.id}>
-              {/* Card background */}
-              <rect
-                x={s.x - r} y={s.y - r} width={r * 2} height={r * 2}
-                rx={isHub ? 16 : 12}
-                fill="#FFFFFF"
-                stroke={s.color}
-                strokeWidth={isHub ? 2 : 1.5}
-                strokeOpacity={isHub ? 0.6 : 0.3}
-                filter={isHub ? 'url(#lcSoftGlow)' : undefined}
-              />
-              {/* Inner accent fill */}
-              <rect
-                x={s.x - r + 2} y={s.y - r + 2} width={r * 2 - 4} height={r * 2 - 4}
-                rx={isHub ? 14 : 10}
-                fill={s.color}
-                opacity={isHub ? 0.06 : 0.04}
-              />
-              {/* Icon area */}
-              {s.icon === 'db' && (
-                <g transform={`translate(${s.x - 6},${s.y - 14})`}>
-                  <ellipse cx="6" cy="3" rx="6" ry="3" fill="none" stroke={s.color} strokeWidth="1.2" opacity="0.6"/>
-                  <path d="M0 3v6c0 1.7 2.7 3 6 3s6-1.3 6-3V3" fill="none" stroke={s.color} strokeWidth="1.2" opacity="0.6"/>
-                  <path d="M0 6c0 1.7 2.7 3 6 3s6-1.3 6-3" fill="none" stroke={s.color} strokeWidth="1" opacity="0.35"/>
-                </g>
-              )}
-              {s.icon === 'hub' && (
-                <g transform={`translate(${s.x},${s.y - 12})`}>
-                  <circle cx="0" cy="0" r="3" fill={s.color} opacity="0.5"/>
-                  <circle cx="-8" cy="6" r="2" fill={s.color} opacity="0.3"/>
-                  <circle cx="8" cy="6" r="2" fill={s.color} opacity="0.3"/>
-                  <line x1="0" y1="0" x2="-8" y2="6" stroke={s.color} strokeWidth="0.8" opacity="0.3"/>
-                  <line x1="0" y1="0" x2="8" y2="6" stroke={s.color} strokeWidth="0.8" opacity="0.3"/>
-                  <circle cx="0" cy="0" r="6" fill="none" stroke={s.color} strokeWidth="0.6" opacity="0.15">
-                    <animate attributeName="r" values="6;10;6" dur="3s" repeatCount="indefinite"/>
-                    <animate attributeName="opacity" values="0.15;0;0.15" dur="3s" repeatCount="indefinite"/>
-                  </circle>
-                </g>
-              )}
-              {s.icon === 'funnel' && (
-                <g transform={`translate(${s.x - 5},${s.y - 14})`}>
-                  <path d="M0 0h10l-3 6v4l-4 0v-4z" fill="none" stroke={s.color} strokeWidth="1.2" opacity="0.5"/>
-                </g>
-              )}
-              {s.icon === 'bolt' && (
-                <g transform={`translate(${s.x - 4},${s.y - 14})`}>
-                  <path d="M5 0L1 6h3l-1 6 5-7H5z" fill={s.color} opacity="0.4"/>
-                </g>
-              )}
-              {s.icon === 'refresh' && (
-                <g transform={`translate(${s.x},${s.y - 12})`}>
-                  <path d="M4-1A5 5 0 1 1-3 3" fill="none" stroke={s.color} strokeWidth="1.2" opacity="0.5" strokeLinecap="round"/>
-                  <path d="M-3 0v3h3" fill="none" stroke={s.color} strokeWidth="1.2" opacity="0.5" strokeLinecap="round"/>
-                </g>
-              )}
-              {/* Label */}
-              <text x={s.x} y={s.y + (isHub ? 8 : 6)} textAnchor="middle" fontSize={isHub ? '8.5' : '7.5'} fontWeight="700" fill={s.color} letterSpacing="0.02em">{s.label}</text>
-              {/* Subtitle */}
-              <text x={s.x} y={s.y + (isHub ? 18 : 15)} textAnchor="middle" fontSize="6" fontWeight="500" fill={s.color} opacity="0.5">{s.sub}</text>
-
-              {/* Hub pulse ring */}
-              {isHub && (
-                <>
-                  <rect x={s.x - r} y={s.y - r} width={r * 2} height={r * 2} rx="16" fill="none" stroke={s.color} strokeWidth="1" opacity="0.2">
-                    <animate attributeName="rx" values="16;20;16" dur="3s" repeatCount="indefinite"/>
-                    <animate attributeName="opacity" values="0.2;0;0.2" dur="3s" repeatCount="indefinite"/>
-                  </rect>
-                </>
-              )}
-            </g>
-          );
-        })}
-
-        {/* ── Flow direction indicators ── */}
-        <text x="76" y="88" fontSize="6" fontWeight="600" fill="#6366F1" opacity="0.3">DATA</text>
-        <text x="167" y="88" fontSize="6" fontWeight="600" fill={navy} opacity="0.3">STAGE</text>
-
-        {/* "One-way" label between Conversion and Active/Retention fork */}
-        <text x="258" y="92" fontSize="5.5" fontWeight="600" fill={navy} opacity="0.25" textAnchor="middle">ONE WAY →</text>
-
-        {/* Bottom annotation */}
-        <text x="190" y="188" textAnchor="middle" fontSize="7" fontWeight="600" fill={navy} opacity="0.2" letterSpacing="0.15em">CUSTOMER LIFECYCLE FLOW</text>
-        <line x1="90" y1="192" x2="290" y2="192" stroke={navy} strokeWidth="0.5" opacity="0.08"/>
-      </svg>
-    );
-  }
-
-  if (type === 'ops') {
-    return (
-      <svg width="280" height="280" viewBox="0 0 280 280" fill="none">
-        {/* Grid of checklist cards */}
-        {[
-          { x: 20, y: 20, w: 120, h: 70, label: 'Opening', pct: 100, c: '#10B981' },
-          { x: 150, y: 20, w: 110, h: 70, label: 'Front-End', pct: 80, c: color },
-          { x: 20, y: 100, w: 110, h: 70, label: 'Room Cleaning', pct: 60, c: '#F59E0B' },
-          { x: 140, y: 100, w: 120, h: 70, label: 'Bathing', pct: 45, c: '#0EA5E9' },
-          { x: 20, y: 180, w: 120, h: 70, label: 'Private Play', pct: 33, c: '#8B5CF6' },
-          { x: 150, y: 180, w: 110, h: 70, label: 'Closing', pct: 0, c: '#64748B' },
-        ].map((card, i) => (
-          <g key={i}>
-            <rect x={card.x} y={card.y} width={card.w} height={card.h} rx="12" fill="#fff" stroke={card.c + '30'} strokeWidth="1.5"/>
-            <text x={card.x + 12} y={card.y + 24} fontSize="10" fontWeight="700" fill={C.text}>{card.label}</text>
-            {/* Progress bar */}
-            <rect x={card.x + 12} y={card.y + 36} width={card.w - 24} height="6" rx="3" fill={card.c + '15'}/>
-            <rect x={card.x + 12} y={card.y + 36} width={(card.w - 24) * card.pct / 100} height="6" rx="3" fill={card.c}>
-              <animate attributeName="width" from="0" to={(card.w - 24) * card.pct / 100} dur="1.5s" begin={`${i * 0.2}s`} fill="freeze"/>
-            </rect>
-            <text x={card.x + card.w - 12} y={card.y + 58} textAnchor="end" fontSize="9" fontWeight="600" fill={card.c}>{card.pct}%</text>
-          </g>
+function MockScheduling() {
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const demand = [60, 72, 68, 80, 92, 98, 55];
+  const staff = [4, 5, 5, 6, 7, 7, 4];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div className="mk-label">Forecasted demand vs. staffing</div>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', height: 120 }}>
+        {days.map((d, i) => (
+          <div key={d} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+            <div style={{ width: '100%', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: 3, height: 96 }}>
+              <span style={{ width: 9, height: `${demand[i]}%`, background: C.accLt, borderRadius: 3 }} />
+              <span style={{ width: 9, height: `${staff[i] * 12}%`, background: C.pri, borderRadius: 3 }} />
+            </div>
+            <span style={{ fontSize: 10, color: C.textMut, fontWeight: 600 }}>{d}</span>
+          </div>
         ))}
-        {/* Daily Progress indicator */}
-        <rect x="60" y="258" width="160" height="18" rx="9" fill={color + '10'}/>
-        <text x="140" y="271" textAnchor="middle" fontSize="9" fontWeight="700" fill={color}>Daily Progress: 53%</text>
-      </svg>
-    );
-  }
-
-  if (type === 'tv') {
-    return (
-      <svg width="300" height="260" viewBox="0 0 300 260" fill="none">
-        {/* Monitor frame */}
-        <rect x="20" y="10" width="260" height="180" rx="12" fill="#14532D" stroke="#166534" strokeWidth="2"/>
-        <rect x="120" y="195" width="60" height="12" rx="2" fill="#166534"/>
-        <rect x="90" y="207" width="120" height="6" rx="3" fill="#166534"/>
-
-        {/* Header */}
-        <text x="40" y="38" fontSize="11" fontWeight="800" fill="#fff">K9 Cherry Hill</text>
-        <text x="40" y="50" fontSize="7" fontWeight="600" fill="#84CC16" letterSpacing="1">CHECKOUT BOARD</text>
-        <text x="260" y="38" textAnchor="end" fontSize="14" fontWeight="900" fill="#fff">2:45 PM</text>
-
-        {/* Dog cards */}
-        {['Luna','Max','Bella','Rocky','Daisy','Cooper','Sadie','Duke'].map((name, i) => {
-          const col = i % 4;
-          const row = Math.floor(i / 4);
-          const x = 35 + col * 58;
-          const y = 65 + row * 62;
-          const colors = ['#0EA5E9', '#84CC16', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'];
-          return (
-            <g key={i}>
-              <rect x={x} y={y} width="50" height="52" rx="8" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
-              <circle cx={x + 25} cy={y + 18} r="10" fill={colors[i] + '30'}/>
-              <text x={x + 25} y={y + 22} textAnchor="middle" fontSize="10" fontWeight="800" fill={colors[i]}>{name[0]}</text>
-              <text x={x + 25} y={y + 38} textAnchor="middle" fontSize="7" fontWeight="700" fill="#fff">{name}</text>
-              <text x={x + 25} y={y + 47} textAnchor="middle" fontSize="5.5" fill="rgba(255,255,255,0.4)">Rm {i + 1}</text>
-            </g>
-          );
-        })}
-      </svg>
-    );
-  }
-
-  if (type === 'reports') {
-    return (
-      <svg width="280" height="260" viewBox="0 0 280 260" fill="none">
-        {/* NLP query bar */}
-        <rect x="20" y="15" width="240" height="36" rx="18" fill="#fff" stroke={color + '30'} strokeWidth="1.5"/>
-        <text x="40" y="37" fontSize="10" fill={C.textMut}>"Revenue by suite type"</text>
-        <circle cx="240" cy="33" r="12" fill={color + '15'}/>
-        <path d="M236 30l4 3-4 3" fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round"/>
-
-        {/* Chart area */}
-        <rect x="20" y="65" width="240" height="140" rx="12" fill="#fff" stroke="#E2E6ED" strokeWidth="1"/>
-        {/* Bars */}
-        {[
-          { x: 50, h: 90, label: 'Standard', c: '#0EA5E9' },
-          { x: 100, h: 110, label: 'Deluxe', c: color },
-          { x: 150, h: 70, label: 'Luxury', c: '#84CC16' },
-          { x: 200, h: 50, label: 'VIP', c: '#8B5CF6' },
-        ].map((bar, i) => (
-          <g key={i}>
-            <rect x={bar.x} y={195 - bar.h} width="30" height={bar.h} rx="4" fill={bar.c + '20'} stroke={bar.c} strokeWidth="1">
-              <animate attributeName="height" from="0" to={bar.h} dur="1s" begin={`${i * 0.15}s`} fill="freeze"/>
-              <animate attributeName="y" from="195" to={195 - bar.h} dur="1s" begin={`${i * 0.15}s`} fill="freeze"/>
-            </rect>
-            <text x={bar.x + 15} y="210" textAnchor="middle" fontSize="8" fontWeight="600" fill={C.textSec}>{bar.label}</text>
-          </g>
-        ))}
-
-        {/* Suggestion chips */}
-        {['Top 10 clients', 'MoM growth', 'RevPAR'].map((chip, i) => (
-          <g key={i}>
-            <rect x={20 + i * 85} y="225" width="78" height="24" rx="12" fill={color + '08'} stroke={color + '20'} strokeWidth="1"/>
-            <text x={59 + i * 85} y="241" textAnchor="middle" fontSize="8" fontWeight="600" fill={color}>{chip}</text>
-          </g>
-        ))}
-      </svg>
-    );
-  }
-
-  return null;
+      </div>
+      <div style={{ display: 'flex', gap: 16, fontSize: 11, color: C.textMut }}>
+        <span><span style={{ display: 'inline-block', width: 9, height: 9, background: C.accLt, borderRadius: 2, marginRight: 5 }} />Demand</span>
+        <span><span style={{ display: 'inline-block', width: 9, height: 9, background: C.pri, borderRadius: 2, marginRight: 5 }} />Staff</span>
+      </div>
+    </div>
+  );
 }
 
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// CONTENT — what the platform actually does (grounded in shipped features)
-// ═══════════════════════════════════════════════════════════════════════════════
-const PLATFORM_PILLARS = [
+// ─── Content ────────────────────────────────────────────────────────────────
+const PILLARS = [
   {
-    icon: 'lifecycle',
-    subtitle: 'Customer Lifecycle',
-    title: 'Every client, from first lead to loyal regular',
-    description: 'K9 Operations reads your Gingr history and sorts every client into where they actually are — new leads, active regulars, and lapsed clients worth winning back — then gives your team the tools to move them forward.',
-    bullets: [
-      'Automatic lead, active, and lapsed segmentation from real booking history',
-      'A built-in CRM with call, text, email, and note logging plus follow-up reminders',
-      'Grassroots and marketing outreach tracked so nothing slips',
-      'Ignite lead capture that turns inquiries into booked tours',
-    ],
-    accentColor: C.pri,
+    eyebrow: 'Daily Operations', icon: 'ops',
+    title: 'Every routine, tracked to done.',
+    body: 'Opening and closing roll calls, feeding and medications, room cleaning, bathing, private play, weekly maintenance — each becomes a live checklist with real-time progress, so nothing slips on a busy day.',
+    bullets: ['Role-based checklists for every shift & station', 'Live completion across the whole team', 'Care reports built from what staff log'],
+    Mock: MockOps,
   },
   {
-    icon: 'ops',
-    subtitle: 'Daily Operations',
-    title: 'The work that has to happen, tracked to done',
-    description: 'Opening and closing roll calls, feeding and medications, room cleaning, bathing, private play, weekly maintenance — every routine becomes a live checklist with real-time progress, so nothing gets missed on a busy day.',
-    bullets: [
-      'Role-based checklists for every shift and station',
-      'Live completion tracking across the whole team, in real time',
-      'Feeding, medication, and care reports built from what staff log',
-      'Resort upkeep and weekly maintenance on a schedule',
-    ],
-    accentColor: C.accDk,
+    eyebrow: 'Customer Lifecycle', icon: 'lifecycle',
+    title: 'Every client, lead to loyal regular.',
+    body: 'K9 Operations reads your Gingr history and sorts every client into where they actually are — new leads, active regulars, lapsed clients worth winning back — with a CRM to move them forward.',
+    bullets: ['Automatic lead / active / lapsed segmentation', 'Built-in CRM with call, text & note logging', 'Ignite lead capture from inquiry to booked tour'],
+    Mock: MockCRM, reversed: true,
   },
   {
-    icon: 'tv',
-    subtitle: 'Front of House',
-    title: 'A calm checkout, on every screen',
-    description: "A live checkout board for the lobby TV shows who's going home and when, while staff capture checkout notes and photos that make pickups personal — and keep the front desk ahead of the rush.",
-    bullets: [
-      'A lobby checkout board that updates in real time',
-      'Checkout notes and photo pairing for every pet',
-      'Cash tips and pickup details handled without the scramble',
-    ],
-    accentColor: C.priL,
+    eyebrow: 'Labor & Scheduling', icon: 'funnel',
+    title: "Staff matched to the day's demand.",
+    body: 'Forecast demand, build the schedule against it, and run the whole labor program — roster, 30/60/90 reviews, interviews, and capacity planning — in one place.',
+    bullets: ['Demand-matched staff scheduling', 'Training, reviews & interviews', 'Capacity & labor-cost planning'],
+    Mock: MockScheduling,
   },
   {
-    icon: 'reports',
-    subtitle: 'Reporting & Intelligence',
-    title: 'The numbers, in plain language',
-    description: 'Revenue, occupancy, labor, end-of-day, and package performance — pulled straight from your operations. Ask a question in plain English and get the chart, or open the analytics workspace for the full picture.',
-    bullets: [
-      'Revenue, occupancy, and labor dashboards from live operations',
-      'End-of-day reporting and reconciliation',
-      'Plain-language queries — ask for a metric, get the chart',
-      'Daily and weekly email reports delivered to your inbox',
-    ],
-    accentColor: C.pri,
+    eyebrow: 'Reporting & Intelligence', icon: 'reports',
+    title: 'The whole operation, in numbers.',
+    body: 'Revenue, occupancy, labor, end-of-day, and package performance — pulled straight from operations. Ask a question in plain English, or open the analytics workspace for the full picture.',
+    bullets: ['Live revenue, occupancy & labor dashboards', 'End-of-day reporting & reconciliation', 'Plain-language queries → instant charts'],
+    Mock: MockDashboard, reversed: true,
+  },
+  {
+    eyebrow: 'Front of House', icon: 'tv',
+    title: 'A calm checkout, on every screen.',
+    body: "A live lobby checkout board shows who's going home and when, while staff capture checkout notes and photos that make pickups personal — and keep the front desk ahead of the rush.",
+    bullets: ['Lobby checkout TV, updating in real time', 'Checkout notes & photo pairing', 'Cash tips & pickup details, handled'],
+    Mock: MockCheckoutTV,
   },
 ];
 
 const CAPABILITIES = [
-  { icon: 'funnel', title: 'Scheduling & demand', text: 'Staff schedules matched to forecasted demand and capacity.' },
-  { icon: 'star', title: 'Labor & training', text: 'Roster, 30/60/90 reviews, interviews, and capacity planning.' },
-  { icon: 'reports', title: 'Inventory', text: 'Catalog, counts, and depletion tracking that stays current.' },
-  { icon: 'lifecycle', title: 'Enrichment programs', text: 'Plan and track enrichment for every pet in your care.' },
-  { icon: 'shield', title: 'Incidents & compliance', text: 'Incident logging, agreements, and a full audit trail.' },
-  { icon: 'ops', title: 'Enterprise & multi-location', text: 'Roll up every location with a shared directory and org chart.' },
-  { icon: 'sync', title: 'Gingr & Ignite sync', text: 'Continuous sync keeps every record current — no double entry.' },
-  { icon: 'tv', title: 'Online booking pages', text: 'Branded booking pages your customers use to reserve.' },
+  { icon: 'box', t: 'Inventory', d: 'Catalog, counts & depletion tracking.' },
+  { icon: 'leaf', t: 'Enrichment programs', d: 'Plan & track enrichment per pet.' },
+  { icon: 'shield', t: 'Incidents & compliance', d: 'Logging, agreements & audit trail.' },
+  { icon: 'cal', t: 'Resort upkeep', d: 'Maintenance, vendors & licenses.' },
+  { icon: 'building', t: 'Enterprise', d: 'Multi-location rollups & org chart.' },
+  { icon: 'sync', t: 'Gingr & Ignite sync', d: 'Continuous, no double entry.' },
+  { icon: 'lifecycle', t: 'Online booking', d: 'Branded pages customers reserve on.' },
+  { icon: 'cash', t: 'Cash tips', d: 'Tracked and reconciled cleanly.' },
+];
+
+const EDITIONS = [
+  { name: 'K9 Operations', tag: 'Base', d: 'The operations core — checklists, CRM, labor, inventory, front of house — for your whole team.', points: ['Role-based navigation', 'Daily ops & CRM', 'Booking & checkout'] },
+  { name: '+ Analytics', tag: 'Owner', featured: true, d: 'The base app with the reporting layer turned up: dashboards, customer lifecycle, and ops overview.', points: ['Revenue & occupancy', 'Customer lifecycle', 'Labor analytics'] },
+  { name: 'POS', tag: 'Front desk', d: 'A full point-of-sale surface for reservations, payments, and the front-desk workflow.', points: ['Reservations & payments', 'Lodging calendar', 'AI command + LMS'] },
 ];
 
 const STEPS = [
-  { n: '01', title: 'Connect your Gingr data', text: 'K9 Operations securely syncs your reservations, clients, and pets from Gingr — no migration and no double entry.' },
-  { n: '02', title: 'Your team runs the day', text: 'Checklists, CRM, scheduling, and the checkout board give every role exactly what they need, on any device.' },
-  { n: '03', title: "You see what's working", text: "Live dashboards and plain-language reporting turn the day's operations into decisions." },
+  { n: '01', t: 'Connect your Gingr data', d: 'We sync reservations, clients, and pets from Gingr — no migration, no double entry.' },
+  { n: '02', t: 'Your team runs the day', d: 'Checklists, CRM, scheduling, and the checkout board give every role exactly what they need.' },
+  { n: '03', t: 'You see what’s working', d: 'Live dashboards and plain-language reporting turn the day into decisions.' },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MAIN LANDING PAGE
+// MARKETING SITE
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function LandingPage() {
-  const [legalModal, setLegalModal] = useState(null); // 'tos' | 'privacy'
+  const [legalModal, setLegalModal] = useState(null);
   const [isSigningIn, setIsSigningIn] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 24);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
 
   const handleSignIn = (event) => {
     event.preventDefault();
     if (isSigningIn) return;
     setIsSigningIn(true);
-    window.setTimeout(() => {
-      window.location.href = '/login';
-    }, 1050);
-  };
-
-  const navStyle = {
-    position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
-    background: 'rgba(255,255,255,0.82)',
-    backdropFilter: 'blur(18px)',
-    borderBottom: `1px solid ${C.borderLight}`,
-    transition: 'all 0.3s ease',
+    window.setTimeout(() => { window.location.href = '/login'; }, 1050);
   };
 
   return (
-    <div id="top" style={{ background: C.bg, color: C.text, fontFamily: "'Outfit', -apple-system, system-ui, sans-serif", minHeight: '100vh', overflowX: 'hidden' }}>
+    <div id="top" style={{ background: C.bg, color: C.text, fontFamily: "'Outfit', -apple-system, system-ui, sans-serif", overflowX: 'hidden' }}>
 
-      {/* ─── NAVIGATION ─── */}
-      <nav style={navStyle}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 64 }}>
-          <a href="#top" style={{ textDecoration: 'none' }}><K9Logo size={34} /></a>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      {/* ─── NAV ─── */}
+      <nav className={`nav ${scrolled ? 'nav-scrolled' : ''}`}>
+        <div className="nav-inner">
+          <a href="#top" style={{ textDecoration: 'none' }}><K9Logo size={32} tone={scrolled ? 'dark' : 'light'} /></a>
+          <div className="nav-links">
             <a href="#platform" className="nav-link">Platform</a>
+            <a href="#editions" className="nav-link">Editions</a>
             <a href="#how" className="nav-link">How it works</a>
-            <a href="/login" onClick={handleSignIn} className="nav-signin">Sign In</a>
+            <a href="/login" onClick={handleSignIn} className="nav-signin">Sign In <Icon name="arrow" size={15} /></a>
           </div>
         </div>
       </nav>
 
       {/* ─── HERO ─── */}
-      <section style={{
-        minHeight: 'calc(100vh - 176px)',
-        paddingTop: 148, paddingBottom: 88,
-        textAlign: 'center',
-        background: `linear-gradient(180deg, #FFFFFF 0%, #F7FEE7 100%)`,
-        position: 'relative',
-        display: 'flex',
-        alignItems: 'center',
-      }}>
-        {/* Subtle background dots */}
-        <div style={{
-          position: 'absolute', inset: 0, opacity: 0.4,
-          backgroundImage: 'radial-gradient(circle, #14532D 0.5px, transparent 0.5px)',
-          backgroundSize: '32px 32px',
-          maskImage: 'radial-gradient(ellipse at center, black 20%, transparent 70%)',
-          WebkitMaskImage: 'radial-gradient(ellipse at center, black 20%, transparent 70%)',
-        }} />
-
-        <div style={{ position: 'relative', maxWidth: 800, margin: '0 auto', padding: '0 24px' }}>
-
-          {/* ─── Hero Brand Mark + Tagline ─── */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, marginBottom: 34 }}>
-            <img
-              src="/k9_mark.svg"
-              alt="K9 Operations"
-              className="hero-mark"
-              style={{
-                width: 'auto',
-                filter: 'drop-shadow(0 4px 24px rgba(20,83,45,0.12))',
-              }}
-            />
-            <div className="hero-tagline" style={{
-              fontWeight: 700, color: C.pri,
-              letterSpacing: 0, textTransform: 'uppercase',
-              opacity: 0.65, lineHeight: 1.3,
-            }}>
-              The operating system for pet care facilities
-            </div>
-          </div>
-
-          <h1 className="hero-heading" style={{
-            fontWeight: 900, lineHeight: 1.08,
-            color: C.pri, margin: '0 0 24px', letterSpacing: 0,
-          }}>
-            Gingr runs the bookings.<br />
-            K9 Operations runs the <span style={{ color: C.acc }}>day</span>.
-          </h1>
-
-          <p className="hero-sub" style={{
-            fontSize: 19, lineHeight: 1.6, color: C.textSec,
-            maxWidth: 660, margin: '0 auto 36px',
-          }}>
-            A complete operations platform for boarding &amp; daycare facilities, built on
-            top of your Gingr data — daily checklists, customer lifecycle, staff scheduling,
-            and the reporting that ties it together, in one calm workspace your whole team
-            actually uses.
-          </p>
-
-          <div className="hero-cta" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-            <a
-              href="/login"
-              onClick={handleSignIn}
-              className={`signin-button${isSigningIn ? ' is-signing-in' : ''}`}
-              aria-label="Sign in to K9 Operations"
-            >
-              <span>Sign In</span>
-              <span className="signin-button-glow" aria-hidden="true" />
-            </a>
-            <a href="#platform" className="ghost-button">Explore the platform</a>
+      <header className="hero">
+        <div className="hero-glow" />
+        <div className="hero-grid-bg" />
+        <div className="hero-inner">
+          <div className="eyebrow-pill"><span className="ep-dot" />The operating system for pet-care facilities</div>
+          <h1 className="hero-h1">Gingr runs the bookings.<br />K9 Operations runs the <span className="grad">day</span>.</h1>
+          <p className="hero-sub">A complete operations platform for boarding &amp; daycare resorts — daily checklists, customer lifecycle, labor &amp; scheduling, and the reporting that ties it together, built on top of your Gingr data.</p>
+          <div className="hero-cta">
+            <a href="/login" onClick={handleSignIn} className={`btn-accent${isSigningIn ? ' is-signing-in' : ''}`}><span>Sign In</span><span className="btn-glow" aria-hidden="true" /></a>
+            <a href="#platform" className="btn-ghost-dark">Explore the platform</a>
           </div>
         </div>
-      </section>
+        <div className="hero-shot">
+          <AppFrame title="K9 Operations · Dashboard"><MockDashboard /></AppFrame>
+        </div>
+      </header>
 
-      {/* ─── CONCEPT BAND: built on your data ─── */}
-      <section style={{ padding: '88px 24px', borderTop: `1px solid ${C.borderLight}` }}>
-        <div style={{ maxWidth: 1000, margin: '0 auto', textAlign: 'center' }}>
-          <div className="eyebrow">Built on your data</div>
-          <h2 className="section-title">Gingr is the source. K9&nbsp;Operations is the system.</h2>
-          <p className="section-intro">
-            Your bookings, clients, and pets already live in Gingr. K9 Operations syncs that
-            data continuously and turns it into something your team can act on — sorting
-            clients by where they are in their lifecycle, surfacing the day's work, and
-            keeping the front desk and the back office on the same page.
-          </p>
-          <div style={{ marginTop: 28 }}>
-            <DataFlowAnimation />
-          </div>
+      {/* ─── CONCEPT BAND ─── */}
+      <section className="band">
+        <div className="container" style={{ textAlign: 'center' }}>
+          <Reveal><div className="eyebrow">Built on your data</div></Reveal>
+          <Reveal delay={60}><h2 className="section-title">Gingr is the source. K9&nbsp;Operations is the system.</h2></Reveal>
+          <Reveal delay={120}><p className="section-intro">Your bookings, clients, and pets already live in Gingr. We sync that data continuously and turn it into something your team can act on — surfacing the day's work and keeping front and back of house on the same page.</p></Reveal>
+          <Reveal delay={160}>
+            <div className="flow">
+              <div className="flow-node"><Icon name="box" size={20} color={C.pri} /><span>Gingr</span><em>Data source</em></div>
+              <div className="flow-line"><span /></div>
+              <div className="flow-node flow-hub"><Icon name="sync" size={22} color="#fff" /><span>K9 Operations</span><em>Intelligence + ops</em></div>
+              <div className="flow-line"><span /></div>
+              <div className="flow-out">
+                <div className="flow-chip">Daily ops</div>
+                <div className="flow-chip">Lifecycle</div>
+                <div className="flow-chip">Reporting</div>
+              </div>
+            </div>
+          </Reveal>
         </div>
       </section>
 
       {/* ─── PLATFORM PILLARS ─── */}
-      <section id="platform" className="anchor" style={{ padding: '88px 24px 40px', background: C.bgAlt }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto', textAlign: 'center' }}>
-          <div className="eyebrow">The platform</div>
-          <h2 className="section-title">One workspace for the whole operation</h2>
-          <p className="section-intro">
-            From the first inquiry to the end-of-day report, every part of running a boarding
-            &amp; daycare facility lives in one calm, consistent interface.
-          </p>
+      <section id="platform" className="anchor" style={{ padding: '40px 0 8px' }}>
+        <div className="container" style={{ textAlign: 'center', marginBottom: 8 }}>
+          <Reveal><div className="eyebrow">The platform</div></Reveal>
+          <Reveal delay={60}><h2 className="section-title">One workspace for the whole operation</h2></Reveal>
+          <Reveal delay={120}><p className="section-intro">From the first inquiry to the end-of-day report, every part of running a resort lives in one calm, consistent interface.</p></Reveal>
         </div>
-        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-          {PLATFORM_PILLARS.map((p, i) => (
-            <FeatureSection
-              key={p.subtitle}
-              icon={p.icon}
-              subtitle={p.subtitle}
-              title={p.title}
-              description={p.description}
-              bullets={p.bullets}
-              accentColor={p.accentColor}
-              reversed={i % 2 === 1}
-            />
-          ))}
-        </div>
+        {PILLARS.map((p, i) => (
+          <div key={p.eyebrow} className={`feature-row ${p.reversed ? 'reversed' : ''}`}>
+            <div className="container feature-grid">
+              <Reveal className="feature-text">
+                <div className="eyebrow"><span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: 8 }}><Icon name={p.icon} size={16} color={C.accDk} /></span>{p.eyebrow}</div>
+                <h3 className="feature-title">{p.title}</h3>
+                <p className="feature-body">{p.body}</p>
+                <div className="feature-bullets">
+                  {p.bullets.map((b) => (
+                    <div key={b} className="fb"><span className="fb-check"><Icon name="check" size={12} color={C.pri} /></span>{b}</div>
+                  ))}
+                </div>
+              </Reveal>
+              <Reveal className="feature-visual" delay={120}>
+                <AppFrame title={`K9 Operations · ${p.eyebrow}`}><p.Mock /></AppFrame>
+              </Reveal>
+            </div>
+          </div>
+        ))}
       </section>
 
       {/* ─── CAPABILITY GRID ─── */}
-      <section style={{ padding: '88px 24px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+      <section className="band band-tint">
+        <div className="container">
           <div style={{ textAlign: 'center', marginBottom: 40 }}>
-            <div className="eyebrow">And everything else</div>
-            <h2 className="section-title">Built for the whole facility</h2>
-            <p className="section-intro">
-              The day-to-day modules a real pet-care operation needs — already included.
-            </p>
+            <Reveal><div className="eyebrow">And everything else</div></Reveal>
+            <Reveal delay={60}><h2 className="section-title">Built for the whole facility</h2></Reveal>
+            <Reveal delay={120}><p className="section-intro">The day-to-day modules a real pet-care operation needs — already included.</p></Reveal>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(248px, 1fr))', gap: 16 }}>
-            {CAPABILITIES.map((c) => (
-              <div key={c.title} className="cap-card">
+          <div className="cap-grid">
+            {CAPABILITIES.map((c, i) => (
+              <Reveal key={c.t} delay={(i % 4) * 60} className="cap-card">
                 <div className="cap-icon"><Icon name={c.icon} size={20} color={C.pri} /></div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6 }}>{c.title}</div>
-                <div style={{ fontSize: 14, color: C.textSec, lineHeight: 1.55 }}>{c.text}</div>
-              </div>
+                <div className="cap-t">{c.t}</div>
+                <div className="cap-d">{c.d}</div>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ─── EDITIONS ─── */}
+      <section id="editions" className="anchor band">
+        <div className="container">
+          <div style={{ textAlign: 'center', marginBottom: 40 }}>
+            <Reveal><div className="eyebrow">One platform, three editions</div></Reveal>
+            <Reveal delay={60}><h2 className="section-title">The right surface for every role</h2></Reveal>
+            <Reveal delay={120}><p className="section-intro">All from one codebase — pick the lens that fits the person using it.</p></Reveal>
+          </div>
+          <div className="ed-grid">
+            {EDITIONS.map((e, i) => (
+              <Reveal key={e.name} delay={i * 80} className={`ed-card ${e.featured ? 'ed-featured' : ''}`}>
+                <div className="ed-tag">{e.tag}</div>
+                <div className="ed-name">{e.name}</div>
+                <p className="ed-d">{e.d}</p>
+                <div className="ed-points">
+                  {e.points.map((pt) => (
+                    <div key={pt} className="ed-pt"><Icon name="check" size={13} color={e.featured ? C.accBr : C.pri} />{pt}</div>
+                  ))}
+                </div>
+              </Reveal>
             ))}
           </div>
         </div>
       </section>
 
       {/* ─── HOW IT WORKS ─── */}
-      <section id="how" className="anchor" style={{ padding: '88px 24px', background: C.bgAlt }}>
-        <div style={{ maxWidth: 1000, margin: '0 auto' }}>
+      <section id="how" className="anchor band band-tint">
+        <div className="container">
           <div style={{ textAlign: 'center', marginBottom: 44 }}>
-            <div className="eyebrow">How it works</div>
-            <h2 className="section-title">Three steps to a running floor</h2>
-            <p className="section-intro">
-              No rip-and-replace. K9 Operations layers onto the Gingr you already run.
-            </p>
+            <Reveal><div className="eyebrow">How it works</div></Reveal>
+            <Reveal delay={60}><h2 className="section-title">Layers onto the Gingr you already run</h2></Reveal>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 24 }}>
-            {STEPS.map((s) => (
-              <div key={s.n} className="step-card">
-                <div style={{ fontSize: 13, fontWeight: 800, color: C.acc, letterSpacing: '0.12em' }}>{s.n}</div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: C.text, margin: '10px 0 10px' }}>{s.title}</div>
-                <div style={{ fontSize: 15, color: C.textSec, lineHeight: 1.6 }}>{s.text}</div>
-              </div>
+          <div className="step-grid">
+            {STEPS.map((s, i) => (
+              <Reveal key={s.n} delay={i * 80} className="step-card">
+                <div className="step-n">{s.n}</div>
+                <div className="step-t">{s.t}</div>
+                <div className="step-d">{s.d}</div>
+              </Reveal>
             ))}
           </div>
         </div>
       </section>
 
       {/* ─── CLOSING CTA ─── */}
-      <section style={{ padding: '40px 24px 88px' }}>
-        <div style={{
-          maxWidth: 920, margin: '0 auto',
-          background: `linear-gradient(135deg, ${C.pri} 0%, ${C.priL} 100%)`,
-          borderRadius: 28, padding: '56px 40px', textAlign: 'center',
-          boxShadow: '0 24px 60px rgba(20,83,45,0.22)',
-        }}>
-          <h2 style={{ fontSize: 34, fontWeight: 900, color: '#fff', margin: '0 0 14px', lineHeight: 1.15 }}>
-            See it the way your team will.
-          </h2>
-          <p style={{ fontSize: 17, color: 'rgba(255,255,255,0.82)', lineHeight: 1.6, maxWidth: 560, margin: '0 auto 32px' }}>
-            Sign in to your workspace, or reach out and we'll walk you through K9 Operations on your own data.
-          </p>
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-            <a href="/login" onClick={handleSignIn} className="cta-primary">Sign In</a>
-            <a href="mailto:zack.nisbet@k9operations.com" className="cta-secondary">Contact us</a>
+      <section className="cta-band">
+        <div className="cta-glow" />
+        <Reveal className="cta-inner">
+          <h2 className="cta-h2">See it the way your team will.</h2>
+          <p className="cta-p">Sign in to your workspace, or reach out and we'll walk you through K9 Operations on your own data.</p>
+          <div className="hero-cta" style={{ justifyContent: 'center' }}>
+            <a href="/login" onClick={handleSignIn} className="btn-accent"><span>Sign In</span><span className="btn-glow" aria-hidden="true" /></a>
+            <a href="mailto:zack.nisbet@k9operations.com" className="btn-ghost-dark">Contact us</a>
           </div>
-        </div>
+        </Reveal>
       </section>
 
       {/* ─── FOOTER ─── */}
-      <footer style={{ padding: '34px 24px 28px', background: C.bg, borderTop: `1px solid ${C.border}` }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 28, marginBottom: 24 }}>
+      <footer className="footer">
+        <div className="container footer-inner">
+          <div>
+            <K9Logo size={28} tone="dark" />
+            <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.6, marginTop: 12 }}>The operating system for<br />pet-care facilities.</div>
+          </div>
+          <div className="footer-cols">
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                <K9Logo size={28} />
-              </div>
-              <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
-                The operating system for<br />pet care facilities.
-              </div>
+              <div className="footer-h">Product</div>
+              <a href="#platform" className="footer-link">Platform</a>
+              <a href="#editions" className="footer-link">Editions</a>
+              <a href="#how" className="footer-link">How it works</a>
             </div>
-            <div style={{ display: 'flex', gap: 48, flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut, letterSpacing: 0, textTransform: 'uppercase', marginBottom: 12 }}>Legal</div>
-                <div style={{ marginBottom: 8 }}>
-                  <button onClick={() => setLegalModal('tos')} style={{
-                    background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: C.textSec, padding: 0,
-                  }}>Terms of Service</button>
-                </div>
-                <div style={{ marginBottom: 8 }}>
-                  <button onClick={() => setLegalModal('privacy')} style={{
-                    background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: C.textSec, padding: 0,
-                  }}>Privacy Policy</button>
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut, letterSpacing: 0, textTransform: 'uppercase', marginBottom: 12 }}>Contact</div>
-                <div style={{ fontSize: 14, color: C.textSec }}>zack.nisbet@k9operations.com</div>
-              </div>
+            <div>
+              <div className="footer-h">Legal</div>
+              <button className="footer-link" onClick={() => setLegalModal('tos')}>Terms of Service</button>
+              <button className="footer-link" onClick={() => setLegalModal('privacy')}>Privacy Policy</button>
+            </div>
+            <div>
+              <div className="footer-h">Contact</div>
+              <a href="mailto:zack.nisbet@k9operations.com" className="footer-link">zack.nisbet@k9operations.com</a>
             </div>
           </div>
-          <div style={{ borderTop: `1px solid ${C.borderLight}`, paddingTop: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-            <div style={{ fontSize: 12, color: C.textMut }}>© 2026 K9 Operations LLC. All rights reserved.</div>
-            <div style={{ fontSize: 12, color: C.textMut }}>Built in New Jersey</div>
-          </div>
+        </div>
+        <div className="container footer-bottom">
+          <span>© 2026 K9 Operations LLC. All rights reserved.</span>
+          <span>Built in New Jersey</span>
         </div>
       </footer>
 
+      {/* ─── SIGN-IN TRANSITION (preserved) ─── */}
       {isSigningIn && (
         <div className="signin-transition" role="status" aria-live="polite">
           <div className="signin-grid" />
           <div className="signin-ring ring-one" />
           <div className="signin-ring ring-two" />
           <div className="signin-ring ring-three" />
-          {[...Array(18)].map((_, i) => (
-            <span key={i} className="signin-streak" style={{ '--i': i }} />
-          ))}
+          {[...Array(18)].map((_, i) => (<span key={i} className="signin-streak" style={{ '--i': i }} />))}
           <div className="signin-transition-mark">
             <img src="/k9_mark.svg" alt="" aria-hidden="true" />
             <span>Opening secure workspace</span>
@@ -1017,30 +557,15 @@ export default function LandingPage() {
         </div>
       )}
 
-      {/* ─── LEGAL MODAL ─── */}
+      {/* ─── LEGAL MODAL (preserved) ─── */}
       {legalModal && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.5)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
-        }} onClick={() => setLegalModal(null)}>
-          <div style={{
-            background: '#fff', borderRadius: 20, maxWidth: 640, width: '100%',
-            maxHeight: '80vh', overflow: 'auto', padding: 36,
-          }} onClick={e => e.stopPropagation()}>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }} onClick={() => setLegalModal(null)}>
+          <div style={{ background: '#fff', borderRadius: 20, maxWidth: 640, width: '100%', maxHeight: '80vh', overflow: 'auto', padding: 36 }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-              <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>
-                {legalModal === 'tos' ? 'Terms of Service' : 'Privacy Policy'}
-              </h2>
-              <button onClick={() => setLegalModal(null)} style={{
-                background: C.surfaceAlt, border: 'none', cursor: 'pointer', width: 32, height: 32, borderRadius: 8,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                <Icon name="close" size={16} color={C.text} />
-              </button>
+              <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>{legalModal === 'tos' ? 'Terms of Service' : 'Privacy Policy'}</h2>
+              <button onClick={() => setLegalModal(null)} style={{ background: C.surfaceAlt, border: 'none', cursor: 'pointer', width: 32, height: 32, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icon name="close" size={16} color={C.text} /></button>
             </div>
-            <div style={{ fontSize: 12, color: C.textMut, marginBottom: 24 }}>
-              Effective: January 1, 2026 · K9 Operations LLC · Burlington County, NJ
-            </div>
+            <div style={{ fontSize: 12, color: C.textMut, marginBottom: 24 }}>Effective: January 1, 2026 · K9 Operations LLC · Burlington County, NJ</div>
             {(legalModal === 'tos' ? TOS_SECTIONS : PRIVACY_SECTIONS).map((s, i) => (
               <div key={i} style={{ marginBottom: 20 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 6 }}>{s.t}</div>
@@ -1051,249 +576,170 @@ export default function LandingPage() {
         </div>
       )}
 
-
-      {/* ─── GLOBAL STYLES ─── */}
+      {/* ─── STYLES ─── */}
       <style>{`
-        .signin-button {
-          position: relative;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          min-width: 172px;
-          height: 54px;
-          padding: 0 34px;
-          border-radius: 14px;
-          overflow: hidden;
-          background: #14532D;
-          color: #fff;
-          font-size: 15px;
-          font-weight: 800;
-          text-decoration: none;
-          box-shadow: 0 14px 32px rgba(20,83,45,0.26);
-          transition: transform 0.22s ease, box-shadow 0.22s ease, background 0.22s ease;
-        }
-        .signin-button:hover {
-          transform: translateY(-2px);
-          background: #166534;
-          box-shadow: 0 18px 42px rgba(20,83,45,0.32);
-        }
-        .signin-button span:first-child {
-          position: relative;
-          z-index: 2;
-        }
-        .signin-button-glow {
-          position: absolute;
-          inset: -60%;
-          background:
-            radial-gradient(circle at 20% 30%, rgba(217,249,157,0.9), transparent 20%),
-            radial-gradient(circle at 78% 65%, rgba(132,204,22,0.55), transparent 24%),
-            linear-gradient(115deg, transparent 30%, rgba(255,255,255,0.38) 48%, transparent 66%);
-          opacity: 0.48;
-          transform: translateX(-36%);
-          animation: signinButtonSweep 4s linear infinite;
-        }
-        .signin-button.is-signing-in {
-          transform: scale(0.98);
-          box-shadow: 0 0 0 10px rgba(132,204,22,0.14), 0 18px 42px rgba(20,83,45,0.34);
-        }
-        .signin-transition {
-          position: fixed;
-          inset: 0;
-          z-index: 500;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          overflow: hidden;
-          background:
-            radial-gradient(circle at center, rgba(217,249,157,0.28), transparent 30%),
-            linear-gradient(135deg, #052E16 0%, #14532D 55%, #0B1F12 100%);
-          animation: signinFadeIn 0.18s ease-out both;
-        }
-        .signin-grid {
-          position: absolute;
-          inset: -20%;
-          background-image:
-            linear-gradient(rgba(217,249,157,0.08) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(217,249,157,0.08) 1px, transparent 1px);
-          background-size: 46px 46px;
-          transform: perspective(520px) rotateX(60deg) translateY(18%);
-          animation: signinGridMove 1.05s linear infinite;
-        }
-        .signin-ring {
-          position: absolute;
-          width: 180px;
-          height: 180px;
-          border-radius: 50%;
-          border: 1px solid rgba(217,249,157,0.48);
-          box-shadow: 0 0 40px rgba(132,204,22,0.22), inset 0 0 30px rgba(217,249,157,0.12);
-          animation: signinRing 1.05s cubic-bezier(.17,.84,.44,1) both;
-        }
-        .ring-two {
-          animation-delay: 0.12s;
-        }
-        .ring-three {
-          animation-delay: 0.24s;
-        }
-        .signin-streak {
-          position: absolute;
-          left: 50%;
-          top: 50%;
-          width: 2px;
-          height: 42vh;
-          transform-origin: 50% 0;
-          transform: rotate(calc(var(--i) * 20deg)) translateY(-50vh);
-          background: linear-gradient(180deg, transparent, rgba(217,249,157,0.84), transparent);
-          animation: signinStreak 0.72s ease-out both;
-          animation-delay: calc(var(--i) * 0.015s);
-        }
-        .signin-transition-mark {
-          position: relative;
-          z-index: 2;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 18px;
-          color: #F7FEE7;
-          font-size: 13px;
-          font-weight: 800;
-          letter-spacing: 0;
-          text-transform: uppercase;
-          animation: signinMark 0.86s ease-out both;
-        }
-        .signin-transition-mark img {
-          height: 104px;
-          width: auto;
-          filter: drop-shadow(0 0 28px rgba(217,249,157,0.48));
-        }
-        @keyframes signinButtonSweep {
-          0% { transform: translateX(-42%) rotate(0deg); }
-          100% { transform: translateX(42%) rotate(360deg); }
-        }
-        @keyframes signinFadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-        @keyframes signinGridMove {
-          from { background-position: 0 0; }
-          to { background-position: 46px 46px; }
-        }
-        @keyframes signinRing {
-          from { opacity: 0.9; transform: scale(0.15); }
-          to { opacity: 0; transform: scale(4.8); }
-        }
-        @keyframes signinStreak {
-          from { opacity: 0; transform: rotate(calc(var(--i) * 20deg)) translateY(-54vh) scaleY(0.4); }
-          35% { opacity: 1; }
-          to { opacity: 0; transform: rotate(calc(var(--i) * 20deg)) translateY(8vh) scaleY(1); }
-        }
-        @keyframes signinMark {
-          from { opacity: 0; transform: scale(0.92); }
-          to { opacity: 1; transform: scale(1); }
-        }
-        .hero-mark {
-          height: 140px;
-        }
-        .hero-tagline {
-          font-size: 18px;
-        }
-        .hero-heading {
-          font-size: 64px;
-        }
-        @media (max-width: 768px) {
-          .hero-mark {
-            height: 96px;
-          }
-          .hero-tagline {
-            font-size: 14px;
-          }
-          .hero-heading {
-            font-size: 42px;
-          }
-          .signin-transition-mark span {
-            font-size: 11px;
-            letter-spacing: 0;
-          }
-        }
-        @media (max-width: 420px) {
-          .hero-heading {
-            font-size: 36px;
-          }
-        }
         html { scroll-behavior: smooth; }
-        .anchor { scroll-margin-top: 84px; }
-        .nav-link {
-          font-size: 14px; font-weight: 600; color: #475569;
-          text-decoration: none; padding: 8px 12px; border-radius: 8px;
-          transition: color 0.18s ease, background 0.18s ease;
+        .anchor { scroll-margin-top: 80px; }
+        .container { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+        .reveal { opacity: 0; transform: translateY(26px); transition: opacity 0.7s cubic-bezier(.16,.84,.44,1), transform 0.7s cubic-bezier(.16,.84,.44,1); }
+        .reveal.in { opacity: 1; transform: none; }
+
+        /* NAV */
+        .nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; transition: background 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease; border-bottom: 1px solid transparent; }
+        .nav-inner { max-width: 1160px; margin: 0 auto; padding: 0 24px; height: 64px; display: flex; align-items: center; justify-content: space-between; }
+        .nav-scrolled { background: rgba(255,255,255,0.85); backdrop-filter: blur(18px); border-bottom: 1px solid ${C.borderLight}; box-shadow: 0 1px 20px rgba(15,23,42,0.04); }
+        .nav-links { display: flex; align-items: center; gap: 6px; }
+        .nav-link { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.82); text-decoration: none; padding: 8px 12px; border-radius: 8px; transition: color 0.18s ease, background 0.18s ease; }
+        .nav-link:hover { color: #fff; background: rgba(255,255,255,0.1); }
+        .nav-scrolled .nav-link { color: ${C.textSec}; }
+        .nav-scrolled .nav-link:hover { color: ${C.pri}; background: ${C.borderLight}; }
+        .nav-signin { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 800; color: ${C.pri}; background: ${C.acc}; text-decoration: none; padding: 9px 16px; border-radius: 10px; transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease; box-shadow: 0 8px 20px rgba(132,204,22,0.30); }
+        .nav-signin:hover { background: ${C.accBr}; transform: translateY(-1px); }
+
+        /* HERO */
+        .hero { position: relative; padding: 150px 24px 70px; text-align: center; overflow: hidden; background: radial-gradient(120% 90% at 50% -10%, #14532D 0%, #0B2818 55%, #061A0F 100%); }
+        .hero-glow { position: absolute; top: -10%; left: 50%; transform: translateX(-50%); width: 900px; height: 600px; background: radial-gradient(circle, rgba(132,204,22,0.22), transparent 60%); filter: blur(20px); pointer-events: none; }
+        .hero-grid-bg { position: absolute; inset: 0; background-image: linear-gradient(rgba(217,249,157,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(217,249,157,0.06) 1px, transparent 1px); background-size: 44px 44px; mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, black, transparent 75%); -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, black, transparent 75%); pointer-events: none; }
+        .hero-inner { position: relative; max-width: 860px; margin: 0 auto; }
+        .eyebrow-pill { display: inline-flex; align-items: center; gap: 8px; padding: 7px 16px; border-radius: 999px; background: rgba(217,249,157,0.10); border: 1px solid rgba(217,249,157,0.22); color: ${C.accLt}; font-size: 12.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 28px; }
+        .ep-dot { width: 7px; height: 7px; border-radius: 50%; background: ${C.acc}; box-shadow: 0 0 10px ${C.acc}; }
+        .hero-h1 { font-size: 66px; font-weight: 900; line-height: 1.05; letter-spacing: -0.025em; color: #fff; margin: 0 0 24px; }
+        .grad { background: linear-gradient(120deg, ${C.acc}, ${C.accLt}); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+        .hero-sub { font-size: 19px; line-height: 1.6; color: rgba(255,255,255,0.72); max-width: 680px; margin: 0 auto 36px; }
+        .hero-cta { display: flex; gap: 14px; justify-content: center; align-items: center; flex-wrap: wrap; }
+        .hero-shot { position: relative; max-width: 980px; margin: 64px auto 0; padding: 0 24px; }
+
+        /* BUTTONS */
+        .btn-accent { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 150px; height: 52px; padding: 0 30px; border-radius: 13px; overflow: hidden; background: ${C.acc}; color: ${C.pri}; font-size: 15px; font-weight: 800; text-decoration: none; box-shadow: 0 14px 34px rgba(132,204,22,0.32); transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease; }
+        .btn-accent:hover { transform: translateY(-2px); background: ${C.accBr}; box-shadow: 0 18px 44px rgba(132,204,22,0.42); }
+        .btn-accent span:first-child { position: relative; z-index: 2; }
+        .btn-glow { position: absolute; inset: -60%; background: radial-gradient(circle at 20% 30%, rgba(255,255,255,0.7), transparent 22%), linear-gradient(115deg, transparent 35%, rgba(255,255,255,0.45) 50%, transparent 64%); opacity: 0.5; transform: translateX(-36%); animation: sweep 4s linear infinite; }
+        .btn-accent.is-signing-in { transform: scale(0.98); box-shadow: 0 0 0 10px rgba(132,204,22,0.16), 0 18px 44px rgba(132,204,22,0.42); }
+        .btn-ghost-dark { display: inline-flex; align-items: center; height: 52px; padding: 0 26px; border-radius: 13px; border: 1.5px solid rgba(255,255,255,0.22); background: rgba(255,255,255,0.04); color: #fff; font-size: 15px; font-weight: 700; text-decoration: none; transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease; }
+        .btn-ghost-dark:hover { border-color: ${C.acc}; background: rgba(132,204,22,0.10); transform: translateY(-2px); }
+        @keyframes sweep { 0% { transform: translateX(-42%) rotate(0); } 100% { transform: translateX(42%) rotate(360deg); } }
+
+        /* APP FRAME + MOCKUPS */
+        .app-frame { background: #fff; border: 1px solid ${C.border}; border-radius: 16px; box-shadow: 0 40px 80px -28px rgba(5,46,22,0.45), 0 8px 24px rgba(15,23,42,0.08); overflow: hidden; }
+        .hero-shot .app-frame { box-shadow: 0 60px 120px -30px rgba(0,0,0,0.6), 0 0 0 1px rgba(217,249,157,0.10); }
+        .app-frame-bar { display: flex; align-items: center; gap: 7px; padding: 11px 14px; background: ${C.surfaceAlt}; border-bottom: 1px solid ${C.borderLight}; }
+        .app-frame-bar .dot { width: 10px; height: 10px; border-radius: 50%; }
+        .app-frame-title { margin-left: 10px; font-size: 12px; font-weight: 600; color: ${C.textMut}; }
+        .app-frame-body { padding: 18px; }
+        .mk-card { background: ${C.surfaceAlt}; border: 1px solid ${C.borderLight}; border-radius: 12px; padding: 12px 14px; }
+        .mk-label { font-size: 11px; font-weight: 700; color: ${C.textMut}; text-transform: uppercase; letter-spacing: 0.04em; }
+        .mk-kpi { font-size: 22px; font-weight: 800; color: ${C.text}; margin-top: 4px; letter-spacing: -0.02em; }
+        .mk-up { font-size: 12px; font-weight: 700; color: ${C.success}; margin-top: 2px; }
+        .mk-table { display: flex; flex-direction: column; }
+        .mk-tr { display: grid; grid-template-columns: 1.3fr 0.8fr 1.3fr; gap: 8px; padding: 10px 4px; border-bottom: 1px solid ${C.borderLight}; font-size: 13px; align-items: center; }
+        .mk-th { font-size: 10px; font-weight: 700; color: ${C.textMut}; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1.5px solid ${C.border}; }
+        .mk-pill { font-style: normal; font-size: 11px; font-weight: 800; padding: 2px 9px; border-radius: 999px; }
+        .mk-row { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+
+        /* SECTIONS */
+        .band { padding: 88px 0; }
+        .band-tint { background: ${C.bgAlt}; }
+        .eyebrow { font-size: 12px; font-weight: 700; color: ${C.accDk}; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 12px; }
+        .section-title { font-size: 40px; font-weight: 800; color: ${C.text}; line-height: 1.12; margin: 0 auto 16px; max-width: 760px; letter-spacing: -0.02em; }
+        .section-intro { font-size: 18px; color: ${C.textSec}; line-height: 1.65; max-width: 620px; margin: 0 auto; }
+
+        /* FLOW DIAGRAM */
+        .flow { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; margin-top: 40px; }
+        .flow-node { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 18px 22px; background: #fff; border: 1px solid ${C.border}; border-radius: 16px; min-width: 120px; box-shadow: 0 8px 24px rgba(15,23,42,0.05); }
+        .flow-node span { font-weight: 800; color: ${C.text}; font-size: 14px; }
+        .flow-node em { font-style: normal; font-size: 11px; color: ${C.textMut}; }
+        .flow-hub { background: linear-gradient(135deg, ${C.pri}, ${C.priL}); border: none; }
+        .flow-hub span { color: #fff; } .flow-hub em { color: ${C.accLt}; }
+        .flow-line { width: 40px; height: 2px; background: repeating-linear-gradient(90deg, ${C.acc} 0 6px, transparent 6px 12px); }
+        .flow-out { display: flex; flex-direction: column; gap: 8px; }
+        .flow-chip { background: ${C.accLt}; color: ${C.accDk}; font-weight: 700; font-size: 13px; padding: 8px 16px; border-radius: 10px; text-align: center; }
+
+        /* FEATURE ROWS */
+        .feature-row { padding: 56px 0; }
+        .feature-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
+        .feature-row.reversed .feature-text { order: 2; }
+        .feature-title { font-size: 32px; font-weight: 800; color: ${C.text}; line-height: 1.18; letter-spacing: -0.02em; margin: 0 0 16px; }
+        .feature-body { font-size: 17px; color: ${C.textSec}; line-height: 1.7; margin: 0 0 22px; }
+        .feature-bullets { display: flex; flex-direction: column; gap: 12px; }
+        .fb { display: flex; align-items: flex-start; gap: 12px; font-size: 15px; color: ${C.textSec}; }
+        .fb-check { flex-shrink: 0; width: 22px; height: 22px; border-radius: 7px; background: ${C.accLt}; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+
+        /* CAPABILITY GRID */
+        .cap-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+        .cap-card { background: #fff; border: 1px solid ${C.border}; border-radius: 16px; padding: 24px 20px; transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease; }
+        .cap-card.in:hover { border-color: ${C.accLt}; box-shadow: 0 14px 34px rgba(20,83,45,0.08); transform: translateY(-3px); }
+        .cap-icon { width: 44px; height: 44px; border-radius: 12px; background: ${C.bgAlt}; display: flex; align-items: center; justify-content: center; margin-bottom: 16px; }
+        .cap-t { font-size: 16px; font-weight: 700; color: ${C.text}; margin-bottom: 6px; }
+        .cap-d { font-size: 14px; color: ${C.textSec}; line-height: 1.55; }
+
+        /* EDITIONS */
+        .ed-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: stretch; }
+        .ed-card { position: relative; background: #fff; border: 1px solid ${C.border}; border-radius: 20px; padding: 30px 26px; display: flex; flex-direction: column; }
+        .ed-featured { background: linear-gradient(160deg, ${C.pri}, ${C.priDk}); border: none; box-shadow: 0 30px 60px -20px rgba(5,46,22,0.45); transform: translateY(-8px); }
+        .ed-tag { font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: ${C.accDk}; margin-bottom: 12px; }
+        .ed-featured .ed-tag { color: ${C.accBr}; }
+        .ed-name { font-size: 24px; font-weight: 800; color: ${C.text}; letter-spacing: -0.02em; margin-bottom: 10px; }
+        .ed-featured .ed-name { color: #fff; }
+        .ed-d { font-size: 14.5px; color: ${C.textSec}; line-height: 1.6; margin: 0 0 20px; flex: 1; }
+        .ed-featured .ed-d { color: rgba(255,255,255,0.78); }
+        .ed-points { display: flex; flex-direction: column; gap: 10px; }
+        .ed-pt { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 600; color: ${C.text}; }
+        .ed-featured .ed-pt { color: #fff; }
+
+        /* STEPS */
+        .step-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+        .step-card { background: #fff; border: 1px solid ${C.border}; border-radius: 18px; padding: 30px 26px; }
+        .step-n { font-size: 13px; font-weight: 800; color: ${C.acc}; letter-spacing: 0.12em; }
+        .step-t { font-size: 20px; font-weight: 800; color: ${C.text}; margin: 12px 0 10px; letter-spacing: -0.01em; }
+        .step-d { font-size: 15px; color: ${C.textSec}; line-height: 1.6; }
+
+        /* CTA */
+        .cta-band { position: relative; padding: 100px 24px; overflow: hidden; background: radial-gradient(110% 120% at 50% 0%, #14532D, #0B2818 70%); text-align: center; }
+        .cta-glow { position: absolute; bottom: -40%; left: 50%; transform: translateX(-50%); width: 800px; height: 500px; background: radial-gradient(circle, rgba(132,204,22,0.2), transparent 60%); filter: blur(10px); }
+        .cta-inner { position: relative; max-width: 640px; margin: 0 auto; }
+        .cta-h2 { font-size: 42px; font-weight: 900; color: #fff; letter-spacing: -0.025em; margin: 0 0 16px; }
+        .cta-p { font-size: 18px; color: rgba(255,255,255,0.76); line-height: 1.6; margin: 0 0 32px; }
+
+        /* FOOTER */
+        .footer { padding: 56px 0 32px; background: #fff; border-top: 1px solid ${C.border}; }
+        .footer-inner { display: flex; justify-content: space-between; gap: 40px; flex-wrap: wrap; }
+        .footer-cols { display: flex; gap: 56px; flex-wrap: wrap; }
+        .footer-h { font-size: 12px; font-weight: 700; color: ${C.textMut}; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px; }
+        .footer-link { display: block; background: none; border: none; padding: 0; text-align: left; cursor: pointer; font-size: 14px; color: ${C.textSec}; text-decoration: none; margin-bottom: 10px; font-family: inherit; transition: color 0.16s ease; }
+        .footer-link:hover { color: ${C.pri}; }
+        .footer-bottom { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 36px; padding-top: 22px; border-top: 1px solid ${C.borderLight}; font-size: 12.5px; color: ${C.textMut}; }
+
+        /* RESPONSIVE */
+        @media (max-width: 900px) {
+          .hero-h1 { font-size: 44px; } .section-title { font-size: 30px; } .cta-h2 { font-size: 32px; }
+          .feature-grid { grid-template-columns: 1fr; gap: 32px; } .feature-row.reversed .feature-text { order: 0; }
+          .cap-grid { grid-template-columns: repeat(2, 1fr); } .ed-grid { grid-template-columns: 1fr; } .ed-featured { transform: none; }
+          .step-grid { grid-template-columns: 1fr; } .nav-links .nav-link { display: none; }
+          .flow { gap: 8px; } .flow-line { width: 22px; }
         }
-        .nav-link:hover { color: #14532D; background: #F1F5F9; }
-        .nav-signin {
-          font-size: 14px; font-weight: 800; color: #fff; background: #14532D;
-          text-decoration: none; padding: 9px 18px; border-radius: 10px;
-          box-shadow: 0 8px 18px rgba(20,83,45,0.20);
-          transition: transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+        @media (max-width: 560px) {
+          .hero-h1 { font-size: 36px; } .hero-sub { font-size: 16px; } .cap-grid { grid-template-columns: 1fr; }
+          .app-frame-body { padding: 12px; } .mk-tr { grid-template-columns: 1.2fr 0.7fr 1fr; }
         }
-        .nav-signin:hover { background: #166534; transform: translateY(-1px); box-shadow: 0 12px 24px rgba(20,83,45,0.26); }
-        .ghost-button {
-          display: inline-flex; align-items: center; height: 54px; padding: 0 26px;
-          border-radius: 14px; border: 1.5px solid #E2E8F0; background: #fff;
-          color: #14532D; font-size: 15px; font-weight: 700; text-decoration: none;
-          transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
-        }
-        .ghost-button:hover { border-color: #84CC16; background: #F7FEE7; transform: translateY(-2px); }
-        .eyebrow {
-          font-size: 12px; font-weight: 700; color: #4D7C0F; letter-spacing: 0.08em;
-          text-transform: uppercase; margin-bottom: 12px;
-        }
-        .section-title {
-          font-size: 38px; font-weight: 800; color: #0F172A; line-height: 1.15;
-          margin: 0 auto 16px; max-width: 760px; letter-spacing: -0.01em;
-        }
-        .section-intro {
-          font-size: 18px; color: #475569; line-height: 1.65; max-width: 620px; margin: 0 auto;
-        }
-        .cap-card {
-          background: #fff; border: 1px solid #E2E8F0; border-radius: 14px; padding: 22px 20px;
-          transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
-        }
-        .cap-card:hover { border-color: #D9F99D; box-shadow: 0 10px 28px rgba(20,83,45,0.08); transform: translateY(-2px); }
-        .cap-icon {
-          width: 40px; height: 40px; border-radius: 10px; background: #F7FEE7;
-          display: flex; align-items: center; justify-content: center; margin-bottom: 14px;
-        }
-        .step-card {
-          background: #fff; border: 1px solid #E2E8F0; border-radius: 16px; padding: 28px 24px;
-        }
-        .cta-primary {
-          display: inline-flex; align-items: center; height: 52px; padding: 0 30px; border-radius: 13px;
-          background: #84CC16; color: #14532D; font-size: 15px; font-weight: 800; text-decoration: none;
-          box-shadow: 0 12px 28px rgba(132,204,22,0.32);
-          transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
-        }
-        .cta-primary:hover { background: #A3E635; transform: translateY(-2px); box-shadow: 0 16px 36px rgba(132,204,22,0.4); }
-        .cta-secondary {
-          display: inline-flex; align-items: center; height: 52px; padding: 0 28px; border-radius: 13px;
-          border: 1.5px solid rgba(255,255,255,0.4); color: #fff; font-size: 15px; font-weight: 700; text-decoration: none;
-          transition: background 0.18s ease, border-color 0.18s ease;
-        }
-        .cta-secondary:hover { background: rgba(255,255,255,0.1); border-color: #fff; }
-        @media (max-width: 768px) {
-          .nav-link { display: none; }
-          .hero-sub { font-size: 16px; }
-          .section-title { font-size: 28px; }
-          .section-intro { font-size: 16px; }
-        }
+
+        /* SIGN-IN TRANSITION (preserved) */
+        .signin-transition { position: fixed; inset: 0; z-index: 500; display: flex; align-items: center; justify-content: center; overflow: hidden; background: radial-gradient(circle at center, rgba(217,249,157,0.28), transparent 30%), linear-gradient(135deg, #052E16 0%, #14532D 55%, #0B1F12 100%); animation: signinFadeIn 0.18s ease-out both; }
+        .signin-grid { position: absolute; inset: -20%; background-image: linear-gradient(rgba(217,249,157,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(217,249,157,0.08) 1px, transparent 1px); background-size: 46px 46px; transform: perspective(520px) rotateX(60deg) translateY(18%); animation: signinGridMove 1.05s linear infinite; }
+        .signin-ring { position: absolute; width: 180px; height: 180px; border-radius: 50%; border: 1px solid rgba(217,249,157,0.48); box-shadow: 0 0 40px rgba(132,204,22,0.22), inset 0 0 30px rgba(217,249,157,0.12); animation: signinRing 1.05s cubic-bezier(.17,.84,.44,1) both; }
+        .ring-two { animation-delay: 0.12s; } .ring-three { animation-delay: 0.24s; }
+        .signin-streak { position: absolute; left: 50%; top: 50%; width: 2px; height: 42vh; transform-origin: 50% 0; transform: rotate(calc(var(--i) * 20deg)) translateY(-50vh); background: linear-gradient(180deg, transparent, rgba(217,249,157,0.84), transparent); animation: signinStreak 0.72s ease-out both; animation-delay: calc(var(--i) * 0.015s); }
+        .signin-transition-mark { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 18px; color: #F7FEE7; font-size: 13px; font-weight: 800; letter-spacing: 0; text-transform: uppercase; animation: signinMark 0.86s ease-out both; }
+        .signin-transition-mark img { height: 104px; width: auto; filter: drop-shadow(0 0 28px rgba(217,249,157,0.48)); }
+        @keyframes signinFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes signinGridMove { from { background-position: 0 0; } to { background-position: 46px 46px; } }
+        @keyframes signinRing { from { opacity: 0.9; transform: scale(0.15); } to { opacity: 0; transform: scale(4.8); } }
+        @keyframes signinStreak { from { opacity: 0; transform: rotate(calc(var(--i) * 20deg)) translateY(-54vh) scaleY(0.4); } 35% { opacity: 1; } to { opacity: 0; transform: rotate(calc(var(--i) * 20deg)) translateY(8vh) scaleY(1); } }
+        @keyframes signinMark { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: scale(1); } }
+
         @media (prefers-reduced-motion: reduce) {
           html { scroll-behavior: auto; }
-          .signin-button,
-          .signin-button-glow,
-          .signin-grid,
-          .signin-ring,
-          .signin-streak,
-          .signin-transition-mark {
-            animation: none !important;
-            transition: none !important;
-          }
+          .reveal { transition: none; opacity: 1; transform: none; }
+          .btn-glow, .signin-grid, .signin-ring, .signin-streak, .signin-transition-mark { animation: none !important; }
         }
       `}</style>
     </div>
