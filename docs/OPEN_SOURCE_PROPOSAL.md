@@ -39,12 +39,25 @@ Publish only the reusable core: the **design system** (`shared/ui.jsx`,
 
 ## 2. Hard prerequisites (do not publish without these)
 
-1. **Licensing decision + header sweep.** ~25+ files begin with
-   `© 2026 K9 Operations LLC. All Rights Reserved. Proprietary and Confidential.`
-   These directly conflict with an OSI license. Choose a license (recommend
-   **Apache‑2.0** for the patent grant, or **BUSL‑1.1** if you want
-   source‑available with delayed open licensing), add a root `LICENSE`, and
-   replace headers with `SPDX-License-Identifier:` lines (a scripted sweep).
+1. **Licensing — keep it "source‑available," not OSI open source.** The goal is
+   *public to read, not licensed to use* (a portfolio piece you still own). That is
+   **source‑available**, **not** "open source" — OSI open source *requires* granting
+   use/modify/redistribute rights, which is the opposite of what you want. You keep
+   full copyright automatically. Pick one:
+   - **Proprietary "All Rights Reserved, evaluation‑only" LICENSE (recommended,
+     simplest).** Make the repo public, keep the existing
+     `© 2026 K9 Operations LLC …` headers, and add a root `LICENSE` stating the
+     source is provided for viewing/evaluation only, with **no** right to use, copy,
+     modify, or distribute. With no permissive license attached, the legal default
+     is that no one may use it — i.e. exactly "public, but you can't use it."
+   - **A named source‑available license** if you prefer vetted text: **PolyForm
+     Strict** (view/share, no use — closest to "look, don't touch"), **PolyForm
+     Noncommercial**, or **BUSL‑1.1 / FSL** (restrict competing/production use, and
+     optionally auto‑convert to open source after N years).
+   Add a root `LICENSE` either way, and keep the proprietary headers (or add matching
+   `SPDX-License-Identifier:` lines). Caveat: a public GitHub repo still lets other
+   GitHub users *view and fork within GitHub* (per GitHub's Terms) — fine for a
+   portfolio. **Not legal advice — confirm the exact `LICENSE` text with a lawyer.**
 2. **Secret‑free git *history*.** Files were removed from the working tree (PR
    #96), but the content still exists in history. Run `git filter-repo` (or BFG)
    to purge `CherryHillReservations.json`, `dist-temp/`, `dist-old/`,
