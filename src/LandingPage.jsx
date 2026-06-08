@@ -115,13 +115,14 @@ function Reveal({ children, delay = 0, as: Tag = 'div', style, className = '' })
 }
 
 // ─── App-frame chrome ──────────────────────────────────────────────────────────
-// Pass `shot` (a real screenshot path, e.g. "/shots/home.png") to show the actual
-// base platform; otherwise the CSS placeholder children render. The wired shots are
-// captured from the live base platform and were reviewed to contain only aggregate,
-// non-personal data (overview KPIs, ops progress, the demand matrix, occupancy) —
-// see scripts/capture-marketing-shots.mjs. Pillars whose real pages are inherently
-// PII-heavy (CRM, checkout TV) intentionally keep the CSS mock fallback.
-function AppFrame({ title = 'K9 Operations', children, shot }) {
+// Renders, in priority order: a real `video` walkthrough, a real `shot` screenshot,
+// or the CSS placeholder children. The hero plays a clean product tour recorded in
+// Demo mode (PII obfuscated; see src/shared/demoMode.js + scripts/capture-marketing-shots.mjs),
+// with `poster` shown until it loads. Feature rows use PII-reviewed static shots that
+// contain only aggregate, non-personal data (ops progress, demand matrix, occupancy);
+// the CRM and checkout-TV pillars keep CSS mocks.
+function AppFrame({ title = 'K9 Operations', children, shot, video, poster }) {
+  const hasMedia = !!(video || shot);
   return (
     <div className="app-frame">
       <div className="app-frame-bar">
@@ -130,10 +131,12 @@ function AppFrame({ title = 'K9 Operations', children, shot }) {
         <span className="dot" style={{ background: '#34D399' }} />
         <span className="app-frame-title">{title}</span>
       </div>
-      <div className="app-frame-body" style={shot ? { padding: 0 } : undefined}>
-        {shot
-          ? <img src={shot} alt={title} loading="lazy" style={{ display: 'block', width: '100%', height: 'auto' }} />
-          : children}
+      <div className="app-frame-body" style={hasMedia ? { padding: 0 } : undefined}>
+        {video
+          ? <video src={video} poster={poster} autoPlay muted loop playsInline preload="metadata" aria-label={title} style={{ display: 'block', width: '100%', height: 'auto' }} />
+          : shot
+            ? <img src={shot} alt={title} loading="lazy" style={{ display: 'block', width: '100%', height: 'auto' }} />
+            : children}
       </div>
     </div>
   );
@@ -390,7 +393,7 @@ export default function LandingPage() {
           </div>
         </div>
         <div className="hero-shot">
-          <AppFrame title="K9 Operations · Dashboard" shot="/shots/home.png"><MockDashboard /></AppFrame>
+          <AppFrame title="K9 Operations · Live product tour" video="/demo-walkthrough.mp4" poster="/shots/home.png"><MockDashboard /></AppFrame>
         </div>
       </header>
 
