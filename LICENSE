@@ -1,0 +1,48 @@
+K9 Operations — Source-Available License (Evaluation Only)
+
+Copyright (c) 2026 K9 Operations LLC. All Rights Reserved.
+
+This software and its source code (the "Software") are made publicly viewable for
+TRANSPARENCY, REVIEW, AND EVALUATION PURPOSES ONLY. This is a "source-available"
+license. It is NOT an open-source license, and it grants NO rights to use the
+Software.
+
+1. Reservation of Rights. All right, title, and interest in and to the Software,
+   including all copyright and other intellectual property rights, are and remain
+   the exclusive property of K9 Operations LLC. No rights are granted except the
+   limited permission expressly stated in Section 2.
+
+2. Limited Permission. You are permitted ONLY to view and read the source code in
+   this repository, and to fork it within the hosting platform (e.g., GitHub) where
+   that platform's terms require such forking to enable viewing. This permission is
+   granted solely for personal evaluation and review of the author's work.
+
+3. Restrictions. Except as allowed in Section 2, you may NOT, in whole or in part:
+   (a) use, run, deploy, or execute the Software for any purpose, personal,
+       commercial, or otherwise;
+   (b) copy, reproduce, or redistribute the Software or its source code;
+   (c) modify, adapt, translate, or create derivative works of the Software;
+   (d) sell, sublicense, rent, lease, or otherwise commercially exploit the Software;
+   (e) remove or alter any copyright, proprietary, or attribution notices.
+
+4. No Open-Source Grant. Nothing in this license shall be construed as granting any
+   license under any open-source or "free software" definition. Public visibility of
+   the source code does not place it in the public domain or grant any use rights.
+
+5. Third-Party Components. The Software depends on third-party packages and assets
+   that are licensed separately by their respective owners under their own terms.
+   This license does not modify or supersede those terms. See NOTICE for details.
+
+6. No Warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+7. Limitation of Liability. IN NO EVENT SHALL K9 OPERATIONS LLC BE LIABLE FOR ANY
+   CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+   SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+8. Inquiries. For permission to use the Software beyond the scope above, contact
+   K9 Operations LLC.
+
+This text is provided as-is and is not legal advice. K9 Operations LLC should have
+the final license reviewed by qualified counsel before public release.
