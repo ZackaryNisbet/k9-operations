@@ -1,12 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { C, gid, todayStr } from "../../shared/theme";
-import { I } from "../../shared/icons";
 import { supabase } from "../../supabaseClient";
 import { useEnrichmentEvents } from "../../hooks/useEnrichmentEvents";
 import { useEnrichmentWorkflow } from "../../hooks/useEnrichmentWorkflow";
 import { useEnrichmentProgramConfig } from "../../hooks/useEnrichmentProgramConfig";
 import {
-  addMonths,
   buildBlankEnrichmentEvent,
   filterEventsForMonth,
   getEventsForDate,
@@ -39,6 +37,7 @@ import { addMonthsPreserveDay } from "./enrichments/dateUtils";
 import { buildMarketingBrief, buildMarketingCsv, downloadTextFile } from "./enrichments/marketingExport";
 import { isMissingSupabaseResource } from "./enrichments/supabaseErrors";
 import { EnrichmentHealthModal, WorkflowView } from "./enrichments/workflowView";
+import { Header } from "./enrichments/header";
 import { DailyCommandSurface } from "./enrichments/dailyCommandSurface";
 import { EventDetail } from "./enrichments/eventDetail";
 import { CalendarBoard } from "./enrichments/calendarBoard";
@@ -431,29 +430,6 @@ function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast
           onClose={() => setHealthOpen(false)}
         />
       ) : null}
-    </div>
-  );
-}
-
-function Header({ monthDate, setMonthDate, nav, canManage, onNew }) {
-  return (
-    <div className="page-header">
-      <div>
-        <button type="button" className="back-link" onClick={() => nav?.("home")}>
-          <I.Back /> <span>Home</span>
-        </button>
-        <div className="eyebrow">K9 Operations Enrichment Portal</div>
-        <h1>Enrichment</h1>
-        <p>Run today’s dog queue, check the event SOP, and keep calendar planning one click away.</p>
-      </div>
-      <div className="header-actions">
-        <div className="month-control">
-          <button type="button" onClick={() => setMonthDate(addMonths(monthDate, -1))}><I.Back /></button>
-          <span>{getMonthLabel(monthDate)}</span>
-          <button type="button" onClick={() => setMonthDate(addMonths(monthDate, 1))}><I.ChevronRight /></button>
-        </div>
-        {canManage ? <button type="button" className="primary-btn" onClick={onNew}><I.Plus /> New Event</button> : null}
-      </div>
     </div>
   );
 }
