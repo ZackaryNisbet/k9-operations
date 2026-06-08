@@ -40,6 +40,11 @@ import {
   reconcileShiftDetails,
   toCount,
 } from "./rotationStudio/rotationStudioStaffing";
+import {
+  clonePreviewGrid,
+  getCandidateId,
+  getTaskCell,
+} from "./rotationStudio/rotationStudioGrid";
 
 const TASK_PICKER_KEYS = [
   "lgdc",
@@ -55,32 +60,6 @@ const TASK_PICKER_KEYS = [
   "float",
   "off",
 ];
-
-function clonePreviewGrid(grid) {
-  return {
-    ...grid,
-    lanes: [...(grid?.lanes || [])],
-    slots: [...(grid?.slots || [])],
-    cells: Object.fromEntries(Object.entries(grid?.cells || {}).map(([laneId, laneCells]) => [
-      laneId,
-      { ...laneCells },
-    ])),
-  };
-}
-
-function getCandidateId(match) {
-  return match?.template?.id || match?.template?.sourceSheetName || "";
-}
-
-function getTaskCell(taskKey, label = "") {
-  const task = TASK_COLORS[taskKey] ? taskKey : "float";
-  return {
-    task,
-    label: label || TASK_COLORS[task]?.label || "Available",
-    detail: "Manual draft edit",
-    source: "custom",
-  };
-}
 
 function CountStepper({ label, value, onChange, disabled }) {
   const count = toCount(value);
