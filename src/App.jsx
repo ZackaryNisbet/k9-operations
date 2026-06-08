@@ -15,11 +15,7 @@ import { I } from "./pos/icons";
 import { K9Logo, K9LogoMini } from "./pos/brand";
 
 // K9 Operations Locations
-const K9_LOCATIONS = [
-  { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
-  { id: "demo", name: "Demo", slug: "demo" },
-  { id: "lite", name: "K9 Operations Lite", slug: "lite", isLite: true },
-];
+import { K9_LOCATIONS } from "./pos/constants/locations";
 
 import { POS_BASE, buildUrl, parseUrl } from "./pos/lib/routing";
 
@@ -149,152 +145,7 @@ import { getVaxStatus } from "./pos/lib/vaccines";
 // === Vaccine Reminder Engine ===
 // Scans all dogs, matches expiring vaccines to configured tiers, deduplicates against log,
 // batches multiple vaccines per client, and returns an array of reminder actions to send.
-const buildVaccineReminders = (data) => {
-  const autoCfg = data.automations || {};
-  if (!autoCfg.enabled) return [];
-  const tiers = (autoCfg.tiers || []).filter(t => t.enabled);
-  if (!tiers.length) return [];
-  const log = autoCfg.reminderLog || [];
-  const dogs = data.dogs || [];
-  const clients = data.clients || [];
-  const allVaccineIds = (data.requiredVaccines || ["rabies_exp", "dhpp_exp", "bordetella_exp"]);
-  const vaccineNames = { rabies_exp: "Rabies", dhpp_exp: "Distemper (DHPP)", bordetella_exp: "Bordetella", canine_flu_exp: "Canine Influenza" };
-  const now = getSimulatedNow(); // Time Travel aware
-  const todayStr = now.toISOString().slice(0, 10);
-
-  // Build set of already-sent (clientId + dogId + vaccineId + tierId) combos
-  const sentKeys = new Set(log.map(l => `${l.clientId}|${(l.dogIds||[]).join(",")}|${(l.vaccineIds||[]).join(",")}|${l.tierId}`));
-
-  // Per-client batching map: clientId → { client, items: [{ dog, vaccineName, vaccineId, tier, daysUntil }] }
-  const clientBatches = {};
-
-  for (const dog of dogs) {
-    if (!dog.fields || !dog.clientId) continue;
-    const client = clients.find(c => c.id === dog.clientId);
-    if (!client) continue;
-    // Respect opt-out
-    if (client.notificationPrefs && client.notificationPrefs.vaccineAlerts === false) continue;
-    if (client.notificationPrefs && client.notificationPrefs.textReminders === false) continue;
-    // Need phone number (stored in client.fields.phone)
-    const phone = client.fields?.phone;
-    if (!phone) continue;
-
-    for (const vId of allVaccineIds) {
-      const expiryStr = dog.fields[vId];
-      if (!expiryStr) continue; // Missing vaccine — not in reminder flow (that's a compliance issue, not a reminder)
-      const expiryDate = new Date(expiryStr + "T00:00:00");
-      const diffMs = expiryDate - now;
-      const daysUntil = Math.round(diffMs / 86400000);
-
-      // Find matching tier (first match by day range)
-      // Sort tiers by priority: critical > high > medium > low, so most urgent fires first
-      const priOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-      const sortedTiers = [...tiers].sort((a, b) => (priOrder[a.priority] || 3) - (priOrder[b.priority] || 3));
-
-      for (const tier of sortedTiers) {
-        const minDay = Math.min(tier.dayStart, tier.dayEnd);
-        const maxDay = Math.max(tier.dayStart, tier.dayEnd);
-        if (daysUntil >= minDay && daysUntil <= maxDay) {
-          // Check dedup
-          const dedupKey = `${client.id}|${dog.id}|${vId}|${tier.id}`;
-          if (sentKeys.has(dedupKey)) break; // Already sent for this tier, skip to next vaccine
-
-          // Add to batch
-          if (!clientBatches[client.id]) {
-            clientBatches[client.id] = { client, phone, items: [] };
-          }
-          clientBatches[client.id].items.push({
-            dog,
-            dogName: dog.fields.name || dog.name || "your dog",
-            vaccineName: vaccineNames[vId] || vId.replace("_exp", ""),
-            vaccineId: vId,
-            tier,
-            expiryDate: expiryStr,
-            daysUntil,
-          });
-          break; // Only match the first (most urgent) tier per vaccine
-        }
-      }
-    }
-  }
-
-  // Build reminder actions from batches
-  const reminders = [];
-  const dailyCap = autoCfg.dailyCap || 50;
-  // Count how many were already sent today
-  const sentTodayCount = log.filter(l => l.sentAt && l.sentAt.slice(0, 10) === todayStr).length;
-  let remaining = dailyCap - sentTodayCount;
-
-  // Sort batches by highest priority item (critical first)
-  const batchEntries = Object.values(clientBatches).sort((a, b) => {
-    const priOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-    const aPri = Math.min(...a.items.map(i => priOrder[i.tier.priority] || 3));
-    const bPri = Math.min(...b.items.map(i => priOrder[i.tier.priority] || 3));
-    return aPri - bPri;
-  });
-
-  for (const batch of batchEntries) {
-    if (remaining <= 0) break;
-    const { client, phone, items } = batch;
-    // Group items by tier for message construction
-    // Use highest-priority tier's template as the base
-    const highestItem = items.reduce((a, b) => {
-      const priOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-      return (priOrder[a.tier.priority] || 3) <= (priOrder[b.tier.priority] || 3) ? a : b;
-    });
-
-    // Build message — if multiple vaccines, list them all
-    let message = highestItem.tier.template;
-    const locationName = data.facilityName || data.name || "K9 Operations";
-    const dogNames = [...new Set(items.map(i => i.dogName))];
-    const vaccineNamesList = [...new Set(items.map(i => i.vaccineName))];
-    const daysStr = highestItem.daysUntil > 0 ? `in ${highestItem.daysUntil} days` : highestItem.daysUntil === 0 ? "today" : `${Math.abs(highestItem.daysUntil)} days ago`;
-
-    // If multiple vaccines/dogs, append a summary
-    if (items.length > 1) {
-      message = `Hi ${client.firstName || "there"}! This is a reminder from ${locationName} about upcoming vaccine expirations:\n`;
-      items.forEach(item => {
-        const ds = item.daysUntil > 0 ? `expires in ${item.daysUntil} days` : item.daysUntil === 0 ? "expires today" : `expired ${Math.abs(item.daysUntil)} days ago`;
-        message += `• ${item.dogName} — ${item.vaccineName} (${ds}, ${item.expiryDate})\n`;
-      });
-      message += `Please update your records so we can continue providing great care!`;
-    } else {
-      // Single vaccine — use template with merge tags
-      message = message
-        .replace(/\{ownerFirst\}/g, client.firstName || "there")
-        .replace(/\{ownerLast\}/g, client.lastName || "")
-        .replace(/\{dogName\}/g, highestItem.dogName)
-        .replace(/\{vaccineName\}/g, highestItem.vaccineName)
-        .replace(/\{expiryDate\}/g, highestItem.expiryDate)
-        .replace(/\{locationName\}/g, locationName)
-        .replace(/\{daysUntil\}/g, daysStr);
-    }
-
-    reminders.push({
-      id: uuid(),
-      clientId: client.id,
-      dogIds: [...new Set(items.map(i => i.dog.id))],
-      dogNames,
-      vaccineIds: [...new Set(items.map(i => i.vaccineId))],
-      vaccineNames: vaccineNamesList,
-      type: "vaccine_expiry",
-      channel: "sms",
-      phone,
-      message,
-      tierId: highestItem.tier.id,
-      tierName: highestItem.tier.name,
-      tierPriority: highestItem.tier.priority,
-      intervalKey: highestItem.tier.name,
-      scheduledFor: todayStr,
-      status: "pending",
-      sentAt: null,
-      items: items.map(i => ({ dogId: i.dog.id, dogName: i.dogName, vaccineId: i.vaccineId, vaccineName: i.vaccineName, expiryDate: i.expiryDate, daysUntil: i.daysUntil, tierId: i.tier.id })),
-    });
-    remaining--;
-  }
-
-  return reminders;
-};
+import { buildVaccineReminders } from "./pos/lib/vaccineReminders";
 
 import { getDogAgeCompliance, getSpayNeuterCompliance, calcAge, fixedLabel, getDogDaycareSize } from "./pos/lib/dogHelpers";
 
@@ -355,16 +206,6 @@ import { DogTagChips } from "./pos/components/DogTagChips";
 
 
 // ─── Dog Avatar ─────────────────────────────────────────────────────────────
-const DOG_AVATAR_COLORS = [
-  ["#FF6B6B","#C0392B"],["#F39C12","#D68910"],["#2ECC71","#27AE60"],["#3498DB","#2980B9"],
-  ["#9B59B6","#8E44AD"],["#1ABC9C","#16A085"],["#E74C3C","#CB4335"],["#F1C40F","#D4AC0D"],
-  ["#E67E22","#CA6F1E"],["#2980B9","#1F618D"],["#8E44AD","#6C3483"],["#27AE60","#1E8449"],
-];
-const dogAvatarColor = (name) => {
-  let h = 0;
-  for (let i = 0; i < (name||"").length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
-  return DOG_AVATAR_COLORS[Math.abs(h) % DOG_AVATAR_COLORS.length];
-};
 
 
 import { DogPicHover } from "./pos/components/DogPicHover";
@@ -6148,27 +5989,7 @@ import { BreedSearch } from "./pos/components/BreedSearch";
 // FEEDING SCHEDULE EDITOR
 // ═══════════════════════════════════════════════════════════════════════════
 // Blue Buffalo weight-based feeding charts (cups per day)
-const BB_CHART = {
-  "Blue Buffalo GI Vet-Grade (Chicken)": [
-    { range: "Up to 15 lbs", min: 0, max: 15, cups: "0.5 - 1.25", low: 0.5, high: 1.25 },
-    { range: "16-25 lbs", min: 16, max: 25, cups: "1.25 - 1.75", low: 1.25, high: 1.75 },
-    { range: "26-40 lbs", min: 26, max: 40, cups: "1.5 - 2.75", low: 1.5, high: 2.75 },
-    { range: "41-60 lbs", min: 41, max: 60, cups: "2.75 - 3.5", low: 2.75, high: 3.5 },
-    { range: "61-80 lbs", min: 61, max: 80, cups: "3.5 - 4.5", low: 3.5, high: 4.5 },
-    { range: "81-100 lbs", min: 81, max: 100, cups: "4.5 - 5.5", low: 4.5, high: 5.5 },
-    { range: "Over 100 lbs", min: 101, max: 9999, cups: "5.25 + 0.5 per 20 lbs", low: 5.25, high: 6.5 },
-  ],
-  "Blue Buffalo HF Vet-Grade (Salmon)": [
-    { range: "Up to 15 lbs", min: 0, max: 15, cups: "0.5 - 1.25", low: 0.5, high: 1.25 },
-    { range: "16-25 lbs", min: 16, max: 25, cups: "1.25 - 1.75", low: 1.25, high: 1.75 },
-    { range: "26-40 lbs", min: 26, max: 40, cups: "1.25 - 2.5", low: 1.25, high: 2.5 },
-    { range: "41-60 lbs", min: 41, max: 60, cups: "2.5 - 3.5", low: 2.5, high: 3.5 },
-    { range: "61-80 lbs", min: 61, max: 80, cups: "3.5 - 4.5", low: 3.5, high: 4.5 },
-    { range: "81-100 lbs", min: 81, max: 100, cups: "4.5 - 5.5", low: 4.5, high: 5.5 },
-    { range: "Over 100 lbs", min: 101, max: 9999, cups: "5.25 + 0.5 per 20 lbs", low: 5.25, high: 6.5 },
-  ],
-};
-const BB_KEYS = Object.keys(BB_CHART); // ["Blue Buffalo GI Vet-Grade (Chicken)", "Blue Buffalo HF Vet-Grade (Salmon)"]
+import { BB_CHART, BB_KEYS } from "./pos/constants/feeding";
 
 function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight, dogName, dogId, onWeightUpdate }) {
   const [showModal, setShowModal] = useState(false);
@@ -9560,8 +9381,7 @@ import { AuditLogPage } from "./pos/pages/AuditLogPage";
 // ═══════════════════════════════════════════════════════════════════════════
 // ATTENDANCE TRACKER PAGE
 // ═══════════════════════════════════════════════════════════════════════════
-const ATTENDANCE_TYPES = ["Tardy", "Early Release", "Call Out (2+ hrs)", "Late Call Out (<2 hrs)", "No Call / No Show"];
-const ATTENDANCE_TYPE_COLORS = { "Tardy": "#F0AD4E", "Early Release": "#E67E22", "Call Out (2+ hrs)": "#E74C3C", "Late Call Out (<2 hrs)": "#C0392B", "No Call / No Show": "#922B21" };
+import { ATTENDANCE_TYPES, ATTENDANCE_TYPE_COLORS } from "./pos/constants/attendance";
 
 function AttendanceTrackerPage({ data, save, nav, profile }) {
   const [tab, setTab] = useState("roster");
@@ -10926,66 +10746,7 @@ import { OnlineBookingsPage } from "./pos/pages/OnlineBookingsPage";
 // ═══════════════════════════════════════════════════════════════════════════
 // LMS — LEARNING MANAGEMENT SYSTEM
 // ═══════════════════════════════════════════════════════════════════════════
-const DEFAULT_LMS_CURRICULUM = [
-  { id:"welcome", title:"Welcome", required:true, courses:[
-    {id:"incite-overview",title:"INCITE Overview",duration:"12 min"},
-    {id:"welcome-k9",title:"Welcome to K9 Operations Lite · KOL",duration:"18 min"},
-    {id:"roles-resp",title:"Roles and Responsibilities",duration:"15 min"},
-    {id:"servicing-guest",title:"Servicing Our 4-Legged Guest",duration:"20 min"},
-    {id:"resort-basics",title:"Resort Basics",duration:"14 min"},
-  ]},
-  { id:"management", title:"Management", required:true, courses:[
-    {id:"adding-employees",title:"Adding Employees",duration:"10 min"},
-    {id:"staff-roles",title:"Staff Roles and Responsibilities",duration:"16 min"},
-    {id:"recruiting",title:"Recruiting, Interviewing and Hiring your Best Team",duration:"25 min"},
-    {id:"maintaining-schedule",title:"Maintaining a Schedule",duration:"12 min"},
-    {id:"training-dev",title:"Training and Development",duration:"18 min"},
-    {id:"dev-doc-disc",title:"Development, Documentation & Discipline",duration:"20 min"},
-    {id:"hr-manual",title:"Section 4 Human Resources Manual",duration:"30 min"},
-    {id:"leaders-guide",title:"Leaders Guide Solutions-Based Sales Experience",duration:"22 min"},
-  ]},
-  { id:"front-end-ops", title:"Front End Operations", required:true, courses:[
-    {id:"guest-protocols",title:"Guest Protocols",duration:"15 min"},
-    {id:"guest-interactions",title:"Guest Interactions",duration:"12 min"},
-    {id:"playtime-daycare",title:"Playtime and Daycare Protocols",duration:"18 min"},
-    {id:"playtime-cert",title:"Playtime Certification Acknowledgement",duration:"5 min",isQuiz:true},
-    {id:"feeding-meds",title:"Feeding, Giving Medication and Wellness Protocols",duration:"20 min"},
-    {id:"gingr-cert",title:"Gingr Certification Acknowledgement",duration:"5 min",isQuiz:true},
-    {id:"tour-cert",title:"Tour Certification Acknowledgment",duration:"5 min",isQuiz:true},
-    {id:"five-star-sales",title:"5-Star Sales Experience",duration:"22 min"},
-  ]},
-  { id:"back-house-ops", title:"Back of House Operations", required:true, courses:[
-    {id:"bathing-protocols",title:"Bathing Protocols",duration:"18 min"},
-    {id:"bathing-cert",title:"Bathing Certification Acknowledgement",duration:"5 min",isQuiz:true},
-    {id:"daycare-protocols",title:"Daycare Protocols",duration:"16 min"},
-    {id:"daycare-evals",title:"Daycare Evaluations",duration:"14 min"},
-    {id:"sanitation-protocols",title:"Sanitation Protocols",duration:"15 min"},
-    {id:"daycare-eval-cert",title:"Daycare Evaluation Certification Acknowledgement",duration:"5 min",isQuiz:true},
-  ]},
-  { id:"continuing-ed", title:"Continuing Education", required:false, courses:[
-    {id:"calming-signals",title:"Calming Signals",duration:"12 min"},
-    {id:"tour-ce",title:"Tour",duration:"10 min"},
-    {id:"dryer-ops",title:"Dryer Operations",duration:"8 min"},
-    {id:"dog-communication",title:"Dog Communication",duration:"15 min"},
-    {id:"managing-pack",title:"Managing a Pack",duration:"14 min"},
-    {id:"waterless-baths",title:"Waterless Baths",duration:"8 min"},
-    {id:"bathing-ce",title:"Bathing",duration:"12 min"},
-    {id:"not-bitten",title:"How Not to Get Bitten",duration:"10 min"},
-    {id:"foamer",title:"Foamer Instructions",duration:"6 min"},
-    {id:"mopping",title:"Proper Mopping Technique",duration:"8 min"},
-    {id:"disinfect-cage-free",title:"Disinfecting Cage Free Accommodations",duration:"10 min"},
-    {id:"disinfect-compartments",title:"Disinfecting Compartments",duration:"8 min"},
-    {id:"spot-cleaning",title:"Spot Cleaning",duration:"7 min"},
-  ]},
-  { id:"ops-manual", title:"Operations Manual", required:false, courses:[
-    {id:"ops-manual-doc",title:"Operations Manual",duration:"45 min"},
-    {id:"appendix",title:"Appendix",duration:"20 min"},
-    {id:"sops",title:"SOPs",duration:"30 min"},
-  ]},
-  { id:"conference-2025", title:"K9 Operations Annual Conference 2025", required:false, courses:[
-    {id:"conference-recordings",title:"Conference Recordings",duration:"60 min"},
-  ]},
-];
+import { DEFAULT_LMS_CURRICULUM } from "./pos/constants/lms";
 
 function LMSPage({ data, save, nav, profile }) {
   const [expandedModule, setExpandedModule] = useState(null);
@@ -13685,177 +13446,6 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
 
 import { DogSelectButtons } from "./pos/components/DogSelectButtons";
 
-const OPS_MANUAL_KB = [
-  // ── Section 5: Resort Basics ──────────────────────────────────────
-  { keywords:["hours","operating hours","open","close","business hours","schedule","what time"],
-    title:"Hours of Operation",
-    answer:"Daycare Check-In: 7:00 AM \u2013 9:00 AM (drop-offs only).\nBoarding Check-In/Out + Daycare: 9:00 AM \u2013 5:30 PM.\nDaycare Check-Out: 5:30 PM \u2013 7:00 PM (busiest exit window).\n7 PM Rule: Facility closes to public at 7 PM. GM or AM waits for all dogs in accommodations and completes final walkthrough (~15 min).\nWeekends: 9:00 AM \u2013 5:30 PM. Staff arrives no later than 7 AM.\nPre-opening: At least one team member must arrive before 6:30 AM.\nNo drop-off or pick-up outside normal hours by anyone below Supervisor rank without Owner approval." },
-  { keywords:["holiday","holidays","closed","closure","new year","christmas","thanksgiving","memorial","labor","easter","july 4"],
-    title:"Holiday Hours & Closures",
-    answer:"Mandatory Closures (MUST close to public): New Year's Day, Easter Sunday, Memorial Day, Independence Day, Labor Day, Thanksgiving Day, Christmas Day.\nAllowable Closures: MLK Day, President's Day, Columbus Day, Christmas Eve, New Year's Eve.\nStaff on-site 365 days/year including July 4th to care for boarded pets.\nHoliday signage: Computer-printed sign on countertop at least 5 days prior. Email blast to daycare clients for weekday closures. Standing floor sign holder at front door (never tape sign to door)." },
-  { keywords:["late","pickup","late pickup","after hours","not picked up","overtime"],
-    title:"Late Pickup & After-Hours Protocol",
-    answer:"1. Grace period: 15 minutes past scheduled pickup.\n2. Contact owner immediately about late fees.\n3. Contact chain: Primary \u2192 Emergency contact \u2192 Secondary contact.\n4. If no response by closing: Dog boards overnight, converted to boarding reservation at daycare-to-boarding rate.\n5. Ensure dog is comfortable: bedding, water, last feeding.\n6. Leave a note for morning staff with details.\n7. Bill late fees plus overnight boarding at checkout.\n8. Dogs on medication: Guest assumes risk of missing medication.\nStrongly recommended NOT to grant special after-hours requests." },
-  { keywords:["dress","uniform","appearance","clothing","dress code","name badge","shoes"],
-    title:"Dress Code Requirements",
-    answer:"Front End: K9 Operations button-down or polo + navy zip-up jacket. Men's shirts tucked in. Non-K9 branded outerwear prohibited. K9 uniform shall not be worn on personal time.\nBack End: Same shirt + navy fleece. K9 hat/beanie in outdoor areas only.\nBathers: K9 performance tee for baths only.\nPants: Black 5-pocket, cargo, or chino with belt. No denim, leggings, sweatpants, or yoga pants.\nShoes: Solid black, closed-toe, rubber soles. No visible logos.\nName Badge: Required for front-end and management. Gold = management, Silver = staff.\nNo strong perfume. All employees must wear charged radio and headset." },
-  { keywords:["greet","greeting","hello","welcome","guest service","language","professional","communication","beat the greet"],
-    title:"Professional Language & Beat the Greet",
-    answer:"Beat the Greet: Be first to start conversation. Always greet with \"Good morning/afternoon\" \u2014 never \"hey\" or \"what's up.\"\nPersonalize: \"Good morning Mrs. Jones, how are you and Coco today?\"\nWhen guest says \"thank you,\" always respond \"You're welcome\" (never \"no problem\").\nUse upscale words: \"My pleasure\" should be standard.\nEvery employee: smile, make eye contact with every guest.\nEarn Your Stars Every Day: Begin each day at zero stars. Ask yourself what you did today to provide Five-Star service." },
-  { keywords:["belongings","items","allowed","prohibited","toys","blanket","bed","bring","accept"],
-    title:"Guest Belongings Policy",
-    answer:"ACCEPTED: Food from home, bones (avoid rawhide \u2014 choking hazard), treats, any leashes, removable collars, hard and soft non-porous toys.\nNOT ALLOWED: Blankets, beds, pillows, stuffed animals, shirts, ropes, fabric/cloth toys.\nReason: Absorbent items breed bacteria from bodily fluids. Tearable items pose choking hazards. Blankets/pillows may cause air restriction overnight.\nOVERNIGHT: Bones and toys must be removed at night \u2014 they pose choking hazards while unsupervised." },
-  { keywords:["collar","collar system","blue collar","green collar","red collar","yellow collar","pink collar","orange collar","identification","id"],
-    title:"Collar Color System & Dog Identification",
-    answer:"Blue: Small dog daycare approved (5\u201330 lbs, rare exceptions 31\u201335 lbs).\nGreen: Large dog daycare approved (30+ lbs).\nYellow: Not yet evaluated for daycare. Use caution \u2014 may or may not be dog-friendly.\nRed: People-friendly but NOT dog-friendly. MUST avoid all interactions with other dogs.\nPink: Daily daycare dogs (not boarding). Label with guest and dog name.\nOrange: Passed evaluation but rambunctious \u2014 needs extra supervision.\nCollars are lightweight waterproof plastic bands. Write name with permanent marker. Remove only inside accommodation or daycare using safety scissors." },
-  { keywords:["walk","walking","transport","leash","carry","carrying","picking up","lifting"],
-    title:"Walking & Transporting Dogs",
-    answer:"1. Walk at slow to medium pace \u2014 never run.\n2. Never cross a red-collared dog with another dog.\n3. Be careful at doorways \u2014 don't let dogs barge through.\n4. Never pull/force a dog to move (pressure on neck).\n5. Only transport 1 large dog at a time (unless same family).\n6. Maximum 3 small daycare dogs at a time.\n7. ALL dogs must be leashed, even small dogs being carried.\n8. Never try to pick up a dog unless 100% comfortable with their weight.\n9. Fully support middle torso and rear with both hands when lifting.\n10. Walk dogs in center of hallways to prevent wall damage." },
-  { keywords:["turn away","refuse","reject","deny","age limit","temperament","health","H.A.T","hat"],
-    title:"When to Turn a Dog Away (H.A.T.)",
-    answer:"H = Health: Condition requiring injections we can't perform, contagious illness, or needs special care beyond our ability.\nA = Age: Under 10 months may do daycare; after 10 months, unspayed/unneutered transition to personal playtimes. No NEW guests 13 years or older (existing guests grandfathered at GM discretion if in good health).\nT = Temperament: Dogs MUST be 100% people-friendly. They do NOT have to be dog-friendly. Turn away if dog: lunges/bites employees, growls at staff, won't allow leashing, won't allow room entry." },
-  { keywords:["room","suite","accommodation","luxury","executive","compartment","room type","lodging"],
-    title:"Room Types & Accommodations",
-    answer:"All rooms are ALL-INCLUSIVE: Kuranda bed, Blue Buffalo food, and group play or personal playtimes included.\nLuxury Suite: 8'x8'+ cage-free, 4 dog max (250 lb total), privacy doors, soundproofing, in-suite TV (DogTV), Kuranda bed.\nExecutive Room: 5'x7' cage-free, 3 dog max (225 lb total), Snyder enclosure, privacy doors, Kuranda bed.\nDouble Compartment: Up to 100 lbs or 2 dogs up to 35 lbs each. Primo Pad bedding.\nSingle Compartment: Up to 35 lbs. Primo Pad bedding. Ideal for puppies and small dogs.\nMulti-Dog Discount: 2nd dog and each additional \u2014 50% off room rate when sharing." },
-  { keywords:["daycare","daycare program","group play","half day","full day","cage free"],
-    title:"Daycare Program Overview",
-    answer:"Cage-free environment separated by size: Small (<30 lbs), Large (30+ lbs), Private Play (not dog-friendly).\nAll participants must pass daycare evaluation first (charge = full day rate).\nBooklets available: 10, 20, and 45 day packages at reduced rates.\nHalf-Day Sessions: AM 7 AM\u20131 PM, PM 1 PM\u20137 PM.\nDaycare is slower on weekends vs. weekdays.\nAdvantages: socialization, exercise, change of scenery, multiple bathroom opportunities." },
-  { keywords:["day boarding","day board","not social","personal playtime","private play"],
-    title:"Day Boarding Program",
-    answer:"For dogs that are people-friendly but don't enjoy group play. Dog comes during daycare hours, checks into executive room, gets 1-on-1 playtimes with staff.\nPricing: $4 above standard daily daycare rate. 20-day pack at normal daily rate.\nNo evaluation needed if 100% people-friendly.\nOffer day boarding whenever a dog fails daycare evaluation \u2014 provide the Day Boarding flyer.\nBlackout dates may be implemented during busy periods." },
-  { keywords:["one dog","lobby","lobby rule","one dog in lobby"],
-    title:"One Dog in Lobby Rule",
-    answer:"For safety, maintain ONE dog in the lobby at a time.\nReason: Minimizes leash aggression incidents in confined space.\nTips: Bring dogs to back immediately after guest arrives. Don't let owners linger during goodbye. Have staff wait behind closed glass doors until lobby clears before bringing dog to waiting guest." },
-  { keywords:["food policy","food in daycare","drinks","eating","break room","beverage"],
-    title:"Food & Drink Policy",
-    answer:"Front Desk: No eating (lunches, snacks, gum, candy). Drinks allowed but must be capped/spill-proof.\nDaycare: ABSOLUTELY no food. Dogs are responsive to food; some are food-aggressive. All food consumed in breakroom only.\nDaycare Drinks: Only shatter-resistant, spill-proof, capped containers. No ceramic mugs, cans, or uncovered cups.\nReason: Fallen food is a massive safety issue \u2014 dogs may attack over food." },
-  { keywords:["cell phone","phone policy","cellphone","mobile","personal phone"],
-    title:"Cell Phone Policy",
-    answer:"Employees cannot have cellphones while clocked in. Phones must be secured in lockers or left in cars.\nPhones cannot be kept in pockets or front desk drawers.\nReason: Affects productivity, distracts from guest service, hinders safe dog supervision.\nEmergency calls: Notify supervisor for permission; have contact call main phone line.\nPhone use only during designated breaks with supervisor permission." },
-  { keywords:["intact","unaltered","unneutered","male","genital","irritation"],
-    title:"Intact Male Dogs Care Protocol",
-    answer:"1. Immediately use rubber mats in accommodation (protective barrier from cleaning solutions).\n2. Mark dog as \"unaltered\" in system.\n3. Pet care techs must check genital area during scheduled playtimes.\n4. After mopping with Rescue, rinse floor with plain water to flush cleaning residue before returning mats and dog.\n5. May use medicated bathing shampoo once or twice during stay if irritation noticed.\n6. Manager should monitor these rooms routinely. If irritation found, contact owner immediately and offer vet visit at resort's expense." },
-  { keywords:["door","fence","security","lock","gate","exterior","keypad","push bar"],
-    title:"Door & Fence Safety Protocol",
-    answer:"1. Never prop open any doors at any time.\n2. Opening shift: Check all fence doors are locked securely. Unlock doors to exterior play yards.\n3. Night closure: Verify all gates locked. Secure all exterior doors.\n4. Luxury Suites: Doors closed and locked when occupied. Never lock with key.\n5. Executive/Compartments: Always remain latched.\n6. Keypad doors: Replace batteries as needed. Keep codes private. Change if compromised.\n7. Fences: Never unlock fences leading outside (except fire). Only Owner/Manager may access keys.\n8. Emergency exits: Always closed and secure. Test alarmed push bars regularly." },
-  { keywords:["manager on duty","mod","on call","after hours management"],
-    title:"Manager on Duty (MOD) Protocol",
-    answer:"During business hours: Highest-ranking person in building (or GM-designated MOD).\nAfter hours: All management and owners must be reachable via phone.\nCall list ranked by position \u2014 provide to police and security monitoring service.\nIf highest-ranking person doesn't respond, next on list is contacted.\nPerson on call responds by going to building. If too far, may call another employee.\nAll after-hours calls must be communicated to management staff." },
-  { keywords:["safety","osha","accident prevention","hazard","injury report","employee injury"],
-    title:"Workplace Safety & OSHA Compliance",
-    answer:"Four elements of accident prevention: 1) Management leads by example. 2) Facility analyzed weekly for hazards. 3) Prevention methods maintained. 4) All employees trained on hazards.\nChecklist items: Clear walkways, dryer lint cleaned, exit lights working, electrical panels clear, no overloaded plugs, gates/fencing latches working, outside doors not propped, alarm working, fire extinguishers current.\nEmployee Injury Form: Required for any injury seen or reported to manager.\nMSDS binders: Keep copies with Operations Manual and Red Binder." },
-  // ── Section 6: Front End Operations ────────────────────────────────
-  { keywords:["checkin","check in","check-in","arrival","intake","drop off","dropoff","boarding check"],
-    title:"Boarding Check-In Procedure",
-    answer:"1. Verify reservation: dates, room type, services.\n2. Check vaccines: All required vaccines must be current. Turn away if expired.\n3. Belongings inventory: List all items (food, medication, toys). Take a photo.\n4. Body check: Visual assessment head-to-tail. Note any pre-existing conditions (limping, discharge, skin issues, lumps). Document with photos.\n5. Ask about behavior changes, anxiety triggers, new medications.\n6. Confirm feeding instructions and medication schedules.\n7. Get emergency contact and parent destination.\n8. Walk dog to room/play group \u2014 don't rush the transition.\n9. Update system: Mark checked in with timestamp." },
-  { keywords:["checkout","check out","check-out","departure","going home","pick up","pickup","boarding checkout"],
-    title:"Boarding Check-Out Procedure",
-    answer:"1. Pre-checkout: Final bathroom break, brush if needed.\n2. Gather belongings: Cross-reference against check-in inventory.\n3. Body check: Inspect dog head-to-tail, compare to check-in notes.\n4. Generate invoice: Review all charges (boarding, baths, medications, add-ons, late fees).\n5. Collect payment: Subtract any deposits already paid.\n6. Provide stay summary: Brief update on how the dog's stay went.\n7. Note any concerns: Behavior changes, eating issues, health observations.\n8. Update system: Mark checked out with timestamp.\n9. Ask for feedback. Encourage a review." },
-  { keywords:["daycare check","daycare drop","daycare pickup","daycare pick up"],
-    title:"Daycare Check-In & Pick-Up",
-    answer:"Drop-Off (7\u20139 AM): Greet guest by name. Verify reservation. Check collar. Quick body scan. Walk dog to appropriate daycare room.\nTarget: Less than 30 seconds for daycare drop-off.\nPick-Up (5:30\u20137 PM): Radio specific daycare with dog and family name. Example: \"John to Large Daycare, may I have Sparky Jones please.\"\nDaycare tech: Locate dog, check collar to confirm name, escort to fenced area, confirm pickup person.\nTarget: Less than 1 minute for daycare pick-up." },
-  { keywords:["evaluation","eval","daycare eval","temperament","new dog","screen","compatibility"],
-    title:"Daycare Evaluation Procedure",
-    answer:"Phase 1 \u2014 Introduction:\n1. Place dog in cage-free room for 20 min to calm down.\n2. Clear indoor daycare of all dogs (send outside).\n3. Bring eval dog to gate area, allow 2 min to acclimate.\n4. Bring into daycare room. Radio for ONE calm, non-dominant dog.\n5. Monitor interaction for negative signs (growling, teeth, stiff posture, tucked tail).\n6. If positive, add 1\u20132 more dogs at a time until all introduced.\n\nPhase 2 \u2014 Observation: PCT monitors behavior over several hours. Manager visits hourly. Note: comfort level, barking, energy, play style, cue pickup.\n\nManager formally approves or denies. If failed: offer Day Boarding as alternative." },
-  { keywords:["cancel","cancellation","refund","deposit","no show","booking cancel"],
-    title:"Cancellation & Deposit Policy",
-    answer:"Boarding: 50% deposit at booking (non-refundable). Balance due at checkout.\nDaycare: No deposit. Payment at checkout.\nEvaluation: 100% fee at booking (non-refundable).\nTour: Free, no deposit.\nGuests should be informed of cancellation policies at time of booking and reminded at drop-off." },
-  { keywords:["vaccine","vaccination","shot","immunization","rabies","dhpp","bordetella","canine flu","requirement"],
-    title:"Vaccination Requirements",
-    answer:"Required vaccines: Rabies, Distemper (DHPP), Bordetella. Canine Influenza may also be required.\nAll vaccines must be current at check-in. Turn away if expired.\nTrack expiration dates in the dog's profile.\nUpdate records when owners provide new vaccine documentation.\nRemind owners of upcoming expirations at check-in/checkout." },
-  { keywords:["body check","health check","inspection","pre-existing","condition","wellness"],
-    title:"Body Check Procedure",
-    answer:"Perform at check-in AND check-out. Compare results.\nCheck: Eyes (discharge, redness), ears (odor, debris), nose (discharge), mouth/teeth, skin/coat (hot spots, lumps, parasites), legs/paws (limping, cracked pads, torn nails), belly, tail, genital area.\nDocument all findings in the system with photos.\nNote any pre-existing conditions BEFORE the dog enters care.\nReport any new findings to manager and owner at checkout." },
-  { keywords:["feed","feeding","food","meal","eat","diet","picky","allergy","allergies","special diet"],
-    title:"Feeding & Diet Protocol",
-    answer:"1. Feed per owner instructions \u2014 verify schedule, portions, food type.\n2. Label all food containers: dog name, feeding times, portions.\n3. Monitor eating: If dog doesn't eat within 20 min, remove food.\n4. Check allergy fields before any treats or supplements.\n5. Resort-provided food: Blue Buffalo GI formula (included in rate).\n6. Multiple dogs same owner: Verify which food goes to which dog.\n7. Missed meals: Contact owner if dog refuses 2 consecutive meals.\n8. No sharing: Dogs eat in their own space to prevent resource guarding.\n9. Picky eaters: Try warming food, adding water, hand feeding. Document." },
-  { keywords:["medication","medicine","med","pill","dose","dosage","administer","prescription","pharmacology"],
-    title:"Medication Administration Protocol",
-    answer:"1. Verify medication against owner instructions and dog's profile.\n2. Check dosage, timing, and method (with food, oral, topical, eye, ear).\n3. Administer at scheduled time \u2014 log immediately.\n4. Watch for side effects 30 min after first dose.\n5. Never skip a dose without contacting owner first.\n6. Store medications in locked cabinet with dog's name label.\n7. Two-person verification for controlled substances.\n8. If dog refuses: try with treat/cheese wrap. Document refusal.\n9. Categories: Pain/anti-inflammatory, antibiotics, anti-anxiety, antihistamines, heart, thyroid, seizure, eye/ear drops, topical." },
-  { keywords:["tour","facility tour","new client","prospect","showing"],
-    title:"Tour Procedure",
-    answer:"1. Greet warmly and introduce yourself.\n2. Walk the predetermined tour path through the facility.\n3. Highlight accommodations, daycare areas, bathing stations.\n4. Explain services, pricing, and all-inclusive model.\n5. Point out safety features (collar system, double gates, sanitation).\n6. Answer all questions thoroughly.\n7. End in lobby \u2014 offer to book an evaluation or reservation.\n8. Provide tour packet with pricing and information.\n9. Log tour in the system for follow-up." },
-  { keywords:["eod","end of day","daily report","shift report","handoff","shift change"],
-    title:"End of Day (EOD) & Shift Change",
-    answer:"EOD Report covers: Dogs that may not have eaten/had accidents, dogs to watch in daycare, timeout details and if client was notified, new dogs and evaluation status, outstanding client issues, shots/booklets needing updates, daily baths and pickup times, unusual medications, payments to collect, boarding stay extensions/shortenings.\nShift Change: Quick review of EOD items. Elaborate on details not listed. Discuss health-related items for dogs currently in care." },
-  // ── Section 7: Sanitation ─────────────────────────────────────────
-  { keywords:["chemical","rescue","odor pet","dilution","disinfect","mix","solution","cleaning product"],
-    title:"Cleaning Chemicals & Dilution Standards",
-    answer:"Rescue Disinfectant: 1:64 (2oz/gal) cold water for daily disinfecting. 1:32 (4oz/gal) for confirmed disease/outbreak. 10-minute contact time required.\nOdor Pet Cherry: 1:4 (32oz/gal) warm water \u2014 odor counteractant.\nSpot cleaning: Windex Multi-Surface (glass), Microban 24-Hour (common areas, doors, handles), Rescue Wipes (smaller messes, beds).\nNever directly mix chemicals together.\nUse separate dedicated mops for each chemical (color-coded).\nMSDS binders must be kept in manager's office." },
-  { keywords:["clean","cleaning","sanitize","disinfect","room cleaning","daily clean","mop","mopping","spot clean"],
-    title:"Daily Room Cleaning Protocol",
-    answer:"Setup: Stock janitor cart (Rescue wipes, window cleaner, paper towels, bags, gloves, watering can, broom, dustpan, leads).\n1. Empty water bowl into blue bucket.\n2. Place food/water bowls in hallway.\n3. Wipe entire bed surface with Rescue Wipes; let dry.\n4. Place bed in hallway over bowls.\n5. Spot clean with Rescue (orange mop handle).\n6. Sweep hair with rubber broom; pick up with paper towel.\n7. Clean glass doors with Windex.\n8. Mop entire floor with Rescue (yellow mop handle).\n9. Return bed, bowls; fill water.\n10. Mop hallways. Place wet floor sign." },
-  { keywords:["room disinfect","deep clean","full disinfect","between stays","disinfection"],
-    title:"Room Disinfection (Full \u2014 Between Stays)",
-    answer:"Cage-Free Rooms:\n1. Remove all items. Dump bowls. Sweep hair.\n2. Wipe all interior walls, bed (all sides), door exterior with Rescue solution.\n3. Mop floor leaving wet surface.\n4. Rescue MUST sit on all surfaces for minimum 10 minutes.\n5. After 10 min, squeegee walls downward. Mop up leftover solution.\n6. Leave room unoccupied until completely dry.\n7. Clean glass with Windex.\n\nCompartments:\n1. Remove grating and bedding to bathing area.\n2. Spray all interior with Rescue foam.\n3. 10-minute contact time.\n4. Wipe dry. Hose down grating. Blow-dry grating.\n5. Reassemble." },
-  { keywords:["k9 grass","turf","outdoor","play yard","artificial grass"],
-    title:"K9 Grass Cleaning & Disinfecting",
-    answer:"Morning (daily): Undiluted Odor Pet in foamer. Spray fences bottom-to-top. Spray K9 Grass in tic-tac-toe pattern. Post \"cleaned\" sign. Ready when foam no longer visible.\nEvening (daily): Undiluted Rescue in foamer. Same spray pattern. 10-minute contact time. Rinse with fresh water after. NO DOG may contact solution without it being dry or diluted.\nWeekly: Use rubber broom to spread foamed solution. Use turf sweeper (Roll and Comb 502) to remove fur/debris buildup.\nCRITICAL: Use SEPARATE foamers for Rescue and Odor Pet." },
-  { keywords:["daycare room","daycare clean","play area clean","daycare disinfect"],
-    title:"Daycare Room Cleaning Protocol",
-    answer:"Done at end of each night after all daycare dogs leave.\nDaily:\n1. Dump water jugs for disinfecting.\n2. Remove debris/equipment.\n3. Sweep hair with rubber broom.\n4. Mop with Rescue (10-minute contact time).\n5. Mop up excess or squeegee to yard.\n6. Clean glass with Windex.\n7. Restock supplies. Replace trash bags.\n\nWeekly: Same steps PLUS wipe all interior walls, fencing, and doors with Rescue solution using sponge and 5-gallon bucket before mopping." },
-  // ── Section 8: Daycare ────────────────────────────────────────────
-  { keywords:["daycare rule","behavior","energy","supervision","daycare tech","play style","monitor"],
-    title:"Daycare Rules & Behavior Management",
-    answer:"Daycare Tech Role: Manage energy like a lifeguard \u2014 constantly scan, forecast negative play, keep environment safe.\nProhibited: No food/drinks/phones, no yelling/whistles, no chasing dogs, no laying down, no over-attention to one dog, no grabbing collars.\nRequired: Enter with confidence, stay active, scan side-to-side, issue timeouts, use body blocks, always have a lead.\nBehaviors requiring timeout: Mounting, charging, pinning, excessive barking, guarding, herding, nipping staff.\nHealth observations (notify manager): Vomit, diarrhea, cuts, limping, broken nails, swelling." },
-  { keywords:["timeout","time out","time-out","removed from group","daycare removal","three strike"],
-    title:"Timeout Procedure (Daycare)",
-    answer:"Daycare Tech:\n1. Separate dog to fenced area.\n2. Fill out 2 Timeout Cards (dog name, breed, action, start time, employee).\n3. One card to front desk, one on accommodation.\n4. Short timeout: fenced area. 5+ minutes: cage-free room.\n5. After timeout, return dog and hand card to supervisor.\n\nFront End:\n1. Receive card, note timeout number.\n2. MOD documents on dog's account and EOD.\n3. Contact owner with factual details.\n4. Three-Strike Policy: After 3 removals, dog requires Day Boarding program.\n5. Manager discretion on strike count based on circumstances." },
-  { keywords:["temperature","heat","cold","weather","outdoor","hot","heat stroke","freeze","snow"],
-    title:"Temperature & Weather Policy",
-    answer:"Above 85\u00b0F: Dogs cannot be outside longer than 5 minutes. Must be monitored entire time. Keep daycare EXTRA cool (65\u00b0F). Doors closed AT ALL TIMES. No outdoor pens for playtimes. Add extra water bowls. Turf heats up \u2014 can burn paws.\nBelow 40\u00b0F: Same 5-minute limit. Monitored entire time. Keep daycare warm (68\u00b0F). Snow/frost irritates paws.\nInterior Standards: Summer max 72\u00b0F, Winter min 65\u00b0F.\nFor elimination walks: Max 3 minutes outside. One attendant outside, one transporting. Check pens every minute.\nNever pile snow against fence (creates escape ramp)." },
-  { keywords:["gate","garage door","overhead door","barrier","safety edge"],
-    title:"Gates & Garage Doors Safety",
-    answer:"Each daycare has gates spanning doorway length (one inside, one outside).\n1. Both gates must be secured in wall-mounted brackets before operating overhead door.\n2. Daycare tech monitors dogs while lowering/raising door.\n3. Once door fully closed, gates can be removed.\nNo overhead door operates without barrier preventing dogs from passing under.\nAll motorized doors must have: Reflective photo eye system, 2-wire safety edges (reverse on touch), take-up reels, gate system on both sides." },
-  // ── Section 9: Bathing ────────────────────────────────────────────
-  { keywords:["bath","bathing","shampoo","wash","mandatory bath","waterless bath","fresh n clean"],
-    title:"Bathing Protocol & Mandatory Bath Policy",
-    answer:"2+ Night Stay: Mandatory bath on departure day. Charge applies. Inform at booking AND drop-off.\n1 Night Stay: Complimentary waterless bath.\nProcedure: Place dog in shower using lead. Quick-release knot on shower bar. Wet thoroughly with lukewarm water. Apply Les Pooch shampoo, lather, massage. Rinse until coat is clean and suds-free.\nWaterless Bath: For agitated dogs or as last resort. Spray generously (avoid eyes/ears), massage into coat.\nTowel Dry: Squeeze and press \u2014 never rub vigorously (causes mats).\nApply Les Pooches perfume on departure (check allergies first)." },
-  { keywords:["dryer","drying","cage dryer","blow dry","drying machine","85 degree"],
-    title:"Drying Machine Rules",
-    answer:"1. Preheat cage dryer 20\u201330 minutes.\n2. Set timer: 30 MINUTES MAXIMUM.\n3. Temperature: NEVER exceed 85\u00b0F.\n4. Check progress every 5 minutes.\n5. Remove when 85% dry (not completely dry).\n6. NEVER leave a dog unattended in the dryer.\n7. If dog appears panicked or dehydrated, remove immediately.\n\nBreeds NEVER allowed in drying cage: Bulldogs (American/English), French Bulldogs, Pugs, Pugglies, Boston Terriers, Pekinese, Japanese Chin.\nReason: Brachycephalic breeds have breathing difficulties \u2014 heat in enclosed space is dangerous." },
-  // ── Section 10: Red Binder / Emergencies ──────────────────────────
-  { keywords:["emergency","vet","veterinary","urgent","emergency protocol","communication"],
-    title:"Emergency Communication Protocol",
-    answer:"1. Alert Manager on Duty IMMEDIATELY (seconds count!).\n2. MOD calls Emergency Vet with condition details.\n3. GM/Owner calls pet owner with situation and vet info.\n4. MOD transports dog to vet (assistance for large dogs).\n5. Contact K9 Operations Operations Manager.\n6. Fill out Accident/Incident Report and Vet Visit Form within 24 hours.\n\nEmergencies requiring this protocol: Scuffle needing immediate care, dog escape, evacuation, power loss, HVAC loss, fire, human medical emergency, workplace violence, eye trauma, dog poisoning, heat stroke, unresponsive dog." },
-  { keywords:["fight","dog fight","altercation","scuffle","break up","separate","attack"],
-    title:"Breaking Up a Dog Fight",
-    answer:"No-Contact Method (preferred):\n1. REMAIN CALM.\n2. Call for assistance via radio.\n3. Use air horn (repeated short/long blasts).\n4. Spray water on dogs' heads.\n5. Dump bucket of water on heads.\n6. Use Pet Shield as barrier to block vision/redirect.\nDO NOT grab collars. DO NOT get between dogs. NEVER hit a dog.\n\nContact Method (last resort):\n1. Approach aggressor from behind.\n2. Grab top of hind legs.\n3. Lift back paws (wheelbarrow position).\n4. Walk backwards in circle so dog can't turn to bite.\n5. Keep separated dogs out of each other's sight." },
-  { keywords:["escape","escaped","missing","lost","ran away","loose dog"],
-    title:"Dog Escape Response Protocol",
-    answer:"1. All staff must have radios.\n2. Alert management immediately.\n3. Call \"time check\" to suspected escape area.\n4. All available employees head in direction dog ran.\n5. MOD stays at front desk, calls police for backup.\n6. MOD calls K9 corporate operations team.\n7. Corporate contacts PR team.\n8. Updates to corporate every 30 minutes.\n9. If no recovery after 30 min, owner must be contacted.\n\nIf dog found: Post social media update, pay all medical/grooming expenses, send gift basket, refund all stay payments, allow open communication with owner.\nIf missing >24 hours: Corporate takes lead on all communications, social media, PR." },
-  { keywords:["fire","smoke","alarm","extinguisher","evacuation","evacuate"],
-    title:"Fire & Evacuation Protocol",
-    answer:"Fire:\n1. Pull alarm (any employee \u2014 don't wait for MOD).\n2. Announce emergency over radio.\n3. Dogs shelter in place in accommodations.\n4. Begin evacuation: Crawl low if smoke. Test doors for heat.\n5. Call 911.\n6. Small fire: Use extinguisher if comfortable.\n7. Assemble at Designated Meeting Location (DML).\n8. Remain until further instructions. Inform operations manager.\n\nEvacuation:\n1. MOD sounds alarm. Call 911.\n2. Employees move to DML via nearest exit.\n3. Dogs left in daycare or placed in nearest vacant accommodation.\n4. Remain at DML." },
-  { keywords:["bloat","distended","stomach","vomiting","restless","emergency bloat"],
-    title:"Bloat Emergency Protocol",
-    answer:"Signs: Vomiting/trying with nothing coming up, drooling, distended stomach (hard), restlessness/pacing, depressed attitude.\nEven if you SUSPECT but aren't sure \u2014 treat as emergency.\n1. Alert MOD IMMEDIATELY (seconds count!).\n2. MOD calls pre-approved Emergency Vet for bloat.\n3. 2nd MOD transports dog to vet (use backboard if needed).\n4. Resort Owner calls pet owner.\n5. Follow full Incident Communication Protocol.\nBloat is life-threatening. Speed is critical." },
-  { keywords:["bite","dog bite","bitten","puncture","wound","laceration"],
-    title:"Bite & Wound Response",
-    answer:"Dog Bite (on human):\n1. Report to MOD. Place all dogs in secured areas.\n2. Direct person to medical attention. Call 911 if major.\n3. Victims cannot drive themselves to urgent care.\n4. Apply pressure to stop bleeding.\n5. Complete incident report.\n\nAbrasions/Scrapes (on dog):\n1. Flush with warm water/hydrogen peroxide.\n2. Apply OTC antibacterial cream 3x daily.\n3. For clean spray: Vetericyn Wound Spray.\n4. Apply Neosporin. If spreads or produces pus, seek vet.\n\nLacerations/Bite Wounds (on dog):\n1. Apply warm compress. Mild pressure for bleeding.\n2. Wrap in gauze. Usually requires vet for antibiotics." },
-  { keywords:["nail","cracked nail","torn nail","broken nail","bleeding nail"],
-    title:"Cracked/Torn Nail Response",
-    answer:"Cracked: Flush with warm water, clean with hydrogen peroxide, use styptic powder (Kwik Stop) if bleeding \u2014 pour nickel-sized amount on paper towel and press nail on it for 2 minutes.\nTorn (hole where nail was): Flush, clean, wrap in gauze. Torn nails often require vet treatment.\nIf bleeding persists after 10 minutes of Kwik Stop, contact owner for veterinary attention. Nail may need to be cut or removed by vet.\nFollow Incident Communication Protocol." },
-  { keywords:["power","power outage","power loss","electricity","generator","blackout"],
-    title:"Extended Power Loss Response",
-    answer:"1. Have water jugs on-site (water supply may be non-functional).\n2. Contact electric company for restoration estimate.\n3. Unplug unnecessary equipment.\n4. Call corporate for action plan.\n5. Prepare water gallons for all dogs.\n6. Maintain written records if computers down.\n7. Run facility as normal if conditions permit.\n8. Contact clients to arrange alternatives.\n9. Use ice/coolers for perishable dog food.\n10. Freezing temps: Turn off drain lines, provide blankets.\n11. Management team member MUST remain onsite overnight if loss continues." },
-  { keywords:["active shooter","shooter","hostage","weapon","threat","suspicious","workplace violence"],
-    title:"Active Shooter / Threat Response",
-    answer:"RUN: If escape path exists, evacuate. Leave belongings. Help others. Keep hands visible.\nHIDE: If can't evacuate, find concealment. Lock door. Silence phone. Turn off lights. Hide behind large objects.\nFIGHT: Last resort only. Act aggressively. Improvise weapons. Commit fully.\n\nSuspicious Person Signs: Nervousness, repeated entrances/exits, inappropriate clothing, keeping hands in pockets, carrying packages.\nAction: Proceed normally while casually alerting another employee. Trust your gut. Call 911.\n\nLaw Enforcement Arrival: Remain calm, follow directions, raise hands, spread fingers, avoid sudden movements." },
-  { keywords:["severe weather","tornado","hurricane","earthquake","flood","blizzard","storm"],
-    title:"Severe Weather Protocols",
-    answer:"Tornado: Seek interior rooms on lowest floor, no windows. Use arms to protect head/neck.\nEarthquake: Stay clear of windows and tall furniture. If outside, move from buildings/power lines. After shaking: evacuate/call 911.\nHurricane: Secure building, move loose items inside, board windows, stay indoors.\nFlood: Be ready to evacuate. Move to high ground. Don't walk/drive through floodwater.\nBlizzard: Stay indoors. Close off unneeded rooms. Stuff towels in door cracks.\nInclement Weather: GM communicates with staff in advance. Management may stay overnight to care for boarding dogs." },
-  // ── Section 4: HR / Company ───────────────────────────────────────
-  { keywords:["value","mission","core value","company value","five star","5 star","wow"],
-    title:"K9 Operations Core Values & Mission",
-    answer:"Mission: Provide a home away from home where dogs love to stay and play, and guests know their dogs are cared for at a 5-star level.\nCore Values:\n1. Committed to health, happiness, and comfort of our guests.\n2. Make every experience a WOW experience.\n3. Transparent \u2014 communicate honestly, directly, respectfully.\n4. Work as a team to grow together.\n5. Accountable, teachable, and excuse-free.\nGuest Promises: Daycare drop-offs < 30 sec, pickups < 1 min. Boarding drop-offs < 5 min, pickups < 2:30. Facility so clean you'd kiss any paw that touched down." },
-  { keywords:["position","role","hierarchy","chain of command","organizational","reporting","staff structure"],
-    title:"Organizational Structure",
-    answer:"General Manager: Oversees day-to-day operations, HR, marketing, financials. Reports to Owner.\nAssistant Manager: Reports to GM. Focused on operations, training, guest service. Bridge between front desk and pet care.\nSupervisors: Report to MOD. Use daily checklists. One front-end, one back-end supervisor when mature.\nCSR (Customer Service Rep): Guest experience \u2014 phones, reservations, check-in/out, dog transport.\nPCT (Pet Care Technician): Deliver on cleanliness and care promises. Certified in bathing, daycare, and sanitation." },
-  { keywords:["shift change","handoff","overlap","knowledge transfer","entering daycare"],
-    title:"Shift Change Procedure",
-    answer:"Daycare: Enter as if you own the room. Walk with head up, no greeting dogs. Allow 5-minute overlap. Departing tech stays until group energy drops. Transfer knowledge: special circumstances, behavior, timeouts, weather, last outdoor access. NEVER leave daycare unattended.\n\nCleaning: Transfer what's completed, current stage, recent requests, important remaining items.\n\nFront End: Quick EOD review. Cover: dogs not eating, accidents, daycare concerns, timeouts, new dogs/evals, outstanding client issues, shots to update, baths/pickup times, unusual meds, payments to collect, stay changes." },
-];
 
 // ─── Messages Page ────────────────────────────────────────────────────────
 import { MessagesPage } from "./pos/pages/MessagesPage";
@@ -13888,9 +13478,7 @@ import { DataTable, KPICard, SVGLineChart, SVGBarChart, SVGDonutChart, SVGHeatma
 // INTERACTIVE LINE CHART — DEFINED AT MODULE SCOPE so React preserves
 // component identity across parent re-renders (enables animation persistence)
 // ══════════════════════════════════════════════════════════════════════════
-const CHART_PTS = 30;
-const _chartFmt$ = (v) => `$${typeof v === "number" ? Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}`;
-const _chartFmt$k = (v) => _chartFmt$(v);
+import { CHART_PTS, _chartFmt$, _chartFmt$k } from "./pos/lib/chartFmt";
 
 const InteractiveLineChart = ({ chartData, color = C.pri, compareColor = C.acc, showCompare, height = 240, id = "chart", animationEpoch = 0 }) => {
   const [hoverIdx, setHoverIdx] = useState(null);
@@ -15677,34 +15265,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   );
 }
 
-function renderAIFormattedText(text) {
-  if (!text) return null;
-  const sections = text.split(/\n\n+/);
-  return sections.map((section, si) => {
-    const lines = section.split(/\n/);
-    const isBulletSection = lines.length > 1 && lines.every(l => !l.trim() || /^[-*•]\s/.test(l.trim()));
-    if (isBulletSection) {
-      return React.createElement("ul", { key: si, style: { margin: "8px 0", paddingLeft: 20, listStyle: "disc" } },
-        lines.filter(l => l.trim()).map((line, li) =>
-          React.createElement("li", { key: li, style: { marginBottom: 4, fontSize: 13, lineHeight: 1.5 } },
-            renderAIInline(line.replace(/^[-*•]\s*/, ""))
-          )
-        )
-      );
-    }
-    return React.createElement("p", { key: si, style: { margin: si === 0 ? 0 : "10px 0 0", fontSize: 13, lineHeight: 1.5 } }, renderAIInline(section));
-  });
-}
-
-function renderAIInline(text) {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((part, i) => {
-    if (part.startsWith("**") && part.endsWith("**")) {
-      return React.createElement("strong", { key: i }, part.slice(2, -2));
-    }
-    return part;
-  });
-}
+import { renderAIFormattedText } from "./pos/lib/aiText";
 
 import { K9LoadingAnimation } from "./pos/components/K9LoadingAnimation";
 
