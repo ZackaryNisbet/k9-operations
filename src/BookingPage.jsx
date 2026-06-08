@@ -10,6 +10,7 @@ import { gid, getMinDate, countNights, fmtDate, fmtCurrency, getAvailableCount }
 import { Icons } from './booking/components/Icons';
 import { K9Logo } from './booking/components/K9Logo';
 import { RevealSection } from './booking/components/RevealSection';
+import { QuestionTransition } from './booking/components/QuestionTransition';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ERROR BOUNDARY — catches render errors and shows useful info
@@ -48,16 +49,6 @@ class BookingErrorBoundary extends Component {
 
 // Page transitions handled via key-based remount with bk-fade-in CSS class
 
-// ═══════════════════════════════════════════════════════════════════════════
-// QUESTION TRANSITION (fade out old → fade in new)
-// ═══════════════════════════════════════════════════════════════════════════
-function QuestionTransition({ questionKey, children }) {
-  return (
-    <div className="bk-question-enter" key={questionKey}>
-      {children}
-    </div>
-  );
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INPUT COMPONENT
