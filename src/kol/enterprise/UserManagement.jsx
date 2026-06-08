@@ -13,10 +13,10 @@ import {
 import {
   BUTTON,
   INPUT,
-  pillButton,
   primaryButton,
 } from "./userManagement/styles";
 import { roleLabel, scopeLabel } from "./userManagement/helpers";
+import { OptionPills } from "./userManagement/components";
 
 async function loadLocations(userLocationIds) {
   let query = supabase.from("locations").select("id,name,slug").order("name", { ascending: true });
@@ -27,24 +27,6 @@ async function loadLocations(userLocationIds) {
   const { data, error } = await query;
   if (error) throw error;
   return normalizeLocationRows(data || []);
-}
-
-function OptionPills({ options, value, onChange, disabled = false }) {
-  return (
-    <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
-      {options.map((option) => (
-        <button
-          key={option.id}
-          type="button"
-          onClick={() => onChange(option.id)}
-          disabled={disabled || option.disabled}
-          style={pillButton(value === option.id, disabled || option.disabled)}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
 }
 
 export default function EnterpriseUserManagement({ profile, userLocationIds, addGlobalToast = () => {} }) {
