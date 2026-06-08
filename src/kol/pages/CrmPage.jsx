@@ -60,15 +60,8 @@ import {
   leadStatusValue,
   getLeadStatusMeta,
 } from "../crmData";
-
-const SECTION_LABEL = {
-  fontSize: 10,
-  fontWeight: 800,
-  letterSpacing: "0.06em",
-  textTransform: "uppercase",
-  color: C.textMut,
-  marginBottom: 6,
-};
+import { SECTION_LABEL, HEALTH_COLORS } from "./crm/constants";
+import { fmtDateTime } from "./crm/format";
 
 
 export default function CrmPage({ profile, locationId, addGlobalToast }) {
@@ -617,10 +610,6 @@ function SubmissionDetails({ lead }) {
 // of the row expander, opened from the Updates count), like the Marketing tab.
 // Shows the touches plus the "Booking form received" baseline; the booking form
 // FIELDS are the OTHER expander mode ("Booking form details"), not here.
-function fmtDateTime(value) {
-  if (!value) return "—";
-  return new Date(value).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
-}
 
 // The follow-up "state change" — previous date crossed off, pointing to the new
 // one (mirrors the Training History status-change pills).
@@ -852,8 +841,6 @@ function LogUpdateModal({ lead, profile, locationId, today, updates, onClose, on
 
 // At-a-glance pipeline health pill: green check + "Verified Xm ago · next 4:15".
 // Click to open the full detail panel. Detail/cadence live in the tooltip too.
-const HEALTH_COLORS = { success: C.suc, warning: C.warn, danger: C.dan, neutral: C.textMut };
-
 function HealthBadge({ model, onOpen }) {
   const c = HEALTH_COLORS[model.tone] || C.textMut;
   const primary = model.ok && model.verifiedAgo ? `Verified ${model.verifiedAgo}` : model.label;
