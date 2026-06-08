@@ -119,6 +119,9 @@ import {
 import { createGrassrootsClientUuid, scrollGrassrootsEditorIntoView } from "./grassroots/editorDom";
 import { buildTargetPayload, buildEditorDraft } from "./grassroots/targetPayload";
 import { activityActorName, AttachmentButtons, ActivityList } from "./grassroots/activityList";
+import { eventLinkRowsForEditor, getSafeEventLinkHref } from "./grassroots/eventLinks";
+import { FormSection } from "./grassroots/formSection";
+import { CellEditButton } from "./grassroots/cellEditButton";
 
 function looksLikeCompleteGrassrootsAddress(value) {
   return /,\s*[^,]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?(?:,\s*[^,]+)?$/i.test(String(value || "").trim());
@@ -951,29 +954,6 @@ function EventDateEditor({ draft, onChange }) {
   );
 }
 
-function eventLinkRowsForEditor(draft = {}) {
-  const rawLinks = Array.isArray(draft.details?.links) ? draft.details.links : [];
-  if (rawLinks.length === 0) {
-    return [{ id: "event_link_blank", url: "" }];
-  }
-  return rawLinks.map((row, index) => ({
-    id: row?.id || `event_link_${index + 1}`,
-    url: row?.url || row?.href || "",
-  }));
-}
-
-function getSafeEventLinkHref(url) {
-  const raw = String(url || "").trim();
-  if (!raw) return "";
-  const candidate = /^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`;
-  try {
-    const parsed = new URL(candidate);
-    return ["http:", "https:", "mailto:", "tel:"].includes(parsed.protocol) ? parsed.href : "";
-  } catch {
-    return "";
-  }
-}
-
 function EventLinksEditor({ draft, onChange }) {
   const rows = eventLinkRowsForEditor(draft);
   const updateRows = (nextRows) => {
@@ -1191,17 +1171,6 @@ function TargetEditor({ draft, categoryConfig, saving, activities = [], attachme
         </div>
       )}
     </Card>
-  );
-}
-
-function FormSection({ title, children }) {
-  return (
-    <section className="grassroots-event-form-section">
-      <div className="grassroots-event-form-section-title">
-        {title}
-      </div>
-      {children}
-    </section>
   );
 }
 
@@ -1496,33 +1465,6 @@ const HEADER_CELL_STYLE = {
 // columns (Organizer / Event / Date / Status / Notes / Follow-Up / Updates) so the
 // "All" view can stack every category in one table. `get.*` are optional getters
 // (target, activities) -> value; when absent the built-in Events derivation is used.
-// Pencil affordance that opens the per-column micro-editor. When `needed` (a
-// required field group is empty), the pencil is PERSISTENT and amber so the gap is
-// obvious at a glance — a quiet "to-do" nudge. Otherwise it's subtle and only
-// appears on cell hover (see .gr-edit-cell CSS). The label shows as a hover tooltip.
-function CellEditButton({ onClick, label, needed = false, onShowTip, onHideTip }) {
-  const show = (e) => onShowTip && onShowTip(label, e.currentTarget.getBoundingClientRect());
-  const hide = () => onHideTip && onHideTip();
-  return (
-    <button
-      type="button"
-      className={needed ? "gr-edit-needed" : "gr-edit-reveal"}
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClick(); }}
-      onMouseEnter={show}
-      onMouseLeave={hide}
-      onFocus={show}
-      onBlur={hide}
-      aria-label={label}
-      style={{ flexShrink: 0, marginLeft: 3, padding: 0, width: needed ? 16 : 14, height: needed ? 16 : 14, border: "none", background: "transparent", cursor: "pointer", color: needed ? C.warn : C.pri, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
-    >
-      <svg width={needed ? 13 : 11} height={needed ? 13 : 11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M12 20h9" />
-        <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-      </svg>
-    </button>
-  );
-}
-
 function DenseGrassrootsTable({
   targets, activitiesByTarget, categoryConfig, columnMap, onLog, onEdit, onUpdateFollowUp, onToggleUpdates, onOpenRecord,
   expandedUpdates, eventDateSortDirection, onToggleEventDateSort, followUpSortDirection, onToggleFollowUpSort, costSortDirection, onToggleCostSort, onShowFollowUpInfo,
