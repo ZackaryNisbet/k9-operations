@@ -14,3 +14,16 @@ public/test-results.json.raw
 .vercel
 .env*.local
 supabase/ops/deploy-history.jsonl
+
+# ── Build artifacts — never commit build output ──
+dist-temp/
+dist-old/
+
+# ── Supabase CLI local state (contains project ref / pooler URL) ──
+supabase/.temp/
+
+# ── Local customer / business data (PII — must never be committed) ──
+CherryHillReservations.json
+
+# ── Audit screenshots & reports (may contain customer data) ──
+audit/
