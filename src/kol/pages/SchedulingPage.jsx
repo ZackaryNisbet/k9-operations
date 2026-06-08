@@ -74,6 +74,7 @@ import { SchedulingSubtabs, getInitialSchedulingTab } from "./scheduling/schedul
 import { renderAggregateMatrixCellValue, renderMatrixCellValue } from "./scheduling/matrixCellValue";
 import { CapacityWatchPanel } from "./scheduling/capacityWatchPanel";
 import { ForecastDetailsPanel } from "./scheduling/forecastDetailsPanel";
+import { MATRIX_TABLE_FONT, formatVisibleSchedulingCopy } from "./scheduling/schedulingDisplay";
 
 export {
   buildHistoricalRangeSummary,
@@ -88,16 +89,6 @@ export {
   getProjectionSummaryLines,
   summarizeAggregateMatrixCell,
 };
-
-const MATRIX_TABLE_FONT = "'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-
-// ─── Utility Components ───────────────────────────────────────────────────
-
-function formatVisibleSchedulingCopy(value) {
-  return String(value ?? "").replace(/\bGingr\b/g, "Gingr");
-}
-
-// ─── Staff Shift Input ────────────────────────────────────────────────────
 
 // ─── Main Page ────────────────────────────────────────────────────────────
 
