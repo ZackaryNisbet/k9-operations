@@ -90,3 +90,19 @@ export function withUpkeepTimeout(promise, message = "This Resort Upkeep request
 export function plural(value, single, many = `${single}s`) {
   return `${value} ${value === 1 ? single : many}`;
 }
+
+function fmtDueCompact(value) {
+  if (!value) return "—";
+  try {
+    return new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" });
+  } catch {
+    return String(value);
+  }
+}
+
+export function formatDueRange(item) {
+  if (item.dueStart && item.dueEnd && item.dueStart !== item.dueEnd) {
+    return `${fmtDueCompact(item.dueStart)} – ${fmtDueCompact(item.dueEnd)}`;
+  }
+  return fmtDueCompact(item.dueDate || item.dueEnd || item.dueStart);
+}
