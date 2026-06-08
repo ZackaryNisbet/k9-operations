@@ -103,6 +103,9 @@ import PerformanceReviewComplianceGrid, {
   PerformanceReviewComplianceGridStyles,
   ReviewCycleCell,
 } from "../components/PerformanceReviewComplianceGrid";
+import { addHourAnalysisRangeDelta, buildHourAnalysisRangeFromHours, buildUpdatedLaborMetadata, calculateHourAnalysisRecommendedTarget, calculateLaborShiftHours, clearRestartedReviewMetadata, formatHourAnalysisHours, formatLaborModelTimeRange, formatLaborPositionTitle, formatRosterLocationTitle, formatRosterPdfFilename, getHourAnalysisDefaultCoverageSplit, getHourAnalysisGroupLabel, getHourAnalysisToleranceHours, getLaborEmployeeRowId, getLaborModelCoverageRoleOption, getLaborPositionSortIndex, getNiceStaffingCapacityChartMax, getNormalizedNameTokens, getOffsetDaysForRequirement, getReviewCyclePolicyCell, getReviewDraftValue, getStaffingCapacityChartPct, getTrainingHistoryRowDate, getTrainingHistoryStateStatus, getTrainingRecordEmployeeId, getTrainingRequirementRenewalIntervalDays, getTrainingResultReadinessStatus, isCustomComplianceRequirement, isReadinessDemonstratedStatus, isReviewItemDraftDirty, mixLaborModelHexColor, normalizeActorLookupEmail, normalizeHourAnalysisGroupKey, normalizeHourAnalysisNotes, normalizeHourAnalysisOverrideRange, normalizeHourAnalysisRangeOrder, normalizeHourAnalysisSkeletonMap, normalizeLaborModelBreakerMinute, normalizeLegacyPctReadinessBoard, openPdfBlob, parseLaborModelTimeRange, readComplianceAuditSnapshot, readComplianceHistoryMetadata, readComplianceHistoryState, readHourAnalysisGroupInput, readStaffingCapacityPercent, resolveTrainingHistoryRecord, resolveVerifiedActorDisplayName, reviewCycleMatchesKey, toObjectRows, trainingRequirementEvidencePolicy } from "./training/helpers";
+export { calculateLaborShiftHours, getLaborEmployeeRowId, getOffsetDaysForRequirement, getTrainingHistoryRowDate, getTrainingRecordEmployeeId, isCustomComplianceRequirement, resolveVerifiedActorDisplayName, toObjectRows };
+export { formatComplianceRequirementDueRule } from "./training/helpers";
 import { CAPACITY_PLANNING_VIEW_IDS, HOUR_ANALYSIS_FRONTLINE_TARGET_RANGE_LABEL, HOUR_ANALYSIS_GROUP_LABELS, LABOR_MODEL_DEFAULT_BREAKERS_BY_DAY, LABOR_MODEL_GROUP_OPTIONS, LABOR_MODEL_ROLE_COVERAGE_ALIAS_MAP, LABOR_MODEL_SHIFT_TYPE_LABELS } from "./training/constants";
 import { actorFirstNameMatches, addDaysToDateString, buildEmptyReadinessBoard, buildPerformanceReviewSortKey, clampHourAnalysisPercent, compareLaborSortValues, compareTemplateVersionRecency, copyTextToClipboard, downloadBinaryFile, downloadTextFile, formatLaborModelTimePoint, formatReviewWorkflowLabel, formatRosterLocationName, formatRosterPdfDate, formatRosterPrintDate, formatTrainingHistoryStatusLabel, getCommitmentBadgeTone, getComplianceHistoryStatusLabel, getComplianceStateLabel, getDefaultStaffingCapacityRoleSettings, getLaborCapacityModelLoadMissing, getLaborCapacityModelVersionLoadMissing, getLocalDateKey, getOutOfPositionCompareKey, getTrainingHistoryActionLabel, hasOwnReviewDraftField, isComplianceHistoryEvent, isEmailLike, isLaborModelCoverageActive, isMissingTeamReadinessRpcError, isObjectRow, isPersistedLaborPositionRowTrusted, isReadinessVerifiedStatus, makeHourAnalysisRangeTotals, makeLaborCapacityModelTempId, makeLaborModelCellKey, makeLaborModelRoleHoursBucket, normalizeComplianceEvidencePolicy, normalizeComplianceHistoryActionLabel, normalizeComplianceHistoryCycleLabel, normalizeComplianceRequirementLabel, normalizeEmployeeName, normalizeHourAnalysisDelta, normalizeHourAnalysisNumber, normalizeHourAnalysisScenarioType, normalizeLaborCapacityModelName, normalizeLaborContactEmail, normalizeLaborContactPhone, normalizeLaborModelBreakMinutes, normalizeLaborModelCoverageAlias, normalizeLaborModelHexColor, normalizeLaborModelShiftType, normalizeLocalReviewCycleKey, normalizePositionTitle, normalizeReviewResponseValue, normalizeTemplateRequiredTextInput, noteMatchesSearch, parseLaborModelCoverage, parseLaborModelTimePoint, parseLaborShiftMinutes, readHourAnalysisRangeNumber, readLaborEmployeeContact, readTrainingRequirementDueRule, resolveActorProfileDisplayName, safeTrainingProgress, slugifyLaborModelId, slugifyTemplateName, splitEmployeeName } from "./training/helpers";
 export { copyTextToClipboard, makeLaborModelCellKey, normalizeTemplateRequiredTextInput, noteMatchesSearch, safeTrainingProgress };
@@ -531,25 +534,11 @@ const LABOR_PERFORMANCE_REVIEW_BASE_SORT_COLUMNS = [
   { key: "compliance", label: "Review Status" },
   { key: "open_checkpoints", label: "Open Checkpoints" },
 ];
-function reviewCycleMatchesKey(cycle = {}, value = "") {
-  const target = normalizeLocalReviewCycleKey(value);
-  if (!target) return false;
-  return [cycle.id, cycle.slug, cycle.baseKey, cycle.requirementId, cycle.policyKey, cycle.requirement?.slug]
-    .filter(Boolean)
-    .some((candidate) => normalizeLocalReviewCycleKey(candidate) === target);
-}
 function findReviewCycleRowBySortKey(row = {}, sortKey = "") {
   if (!String(sortKey || "").startsWith(REVIEW_CYCLE_SORT_KEY_PREFIX)) return null;
   const cycleKey = String(sortKey).slice(REVIEW_CYCLE_SORT_KEY_PREFIX.length);
   return toObjectRows(row.cycles || row.performance_review_compliance?.cycleRows)
     .find((cycle) => reviewCycleMatchesKey(cycle, cycleKey)) || null;
-}
-function getReviewCyclePolicyCell(reviewCycle = {}) {
-  return isObjectRow(reviewCycle?.policyCell)
-    ? reviewCycle.policyCell
-    : isObjectRow(reviewCycle?.requirementStatus)
-      ? reviewCycle.requirementStatus
-      : {};
 }
 function getReviewCycleRequirementId(reviewCycle = {}) {
   const policyCell = getReviewCyclePolicyCell(reviewCycle);
@@ -920,21 +909,11 @@ const DEFAULT_HOUR_ANALYSIS_LABOR_MODEL = {
 
 
 
-function getReviewDraftValue(response, draft, field) {
-  if (hasOwnReviewDraftField(draft, field)) return draft[field] ?? "";
-  return response?.[field] ?? "";
-}
 
 function isReviewItemAnswered(response, draft = {}) {
   return REVIEW_RESPONSE_FIELDS.some((field) => normalizeReviewResponseValue(getReviewDraftValue(response, draft, field)));
 }
 
-function isReviewItemDraftDirty(response, draft = {}) {
-  return REVIEW_RESPONSE_FIELDS.some((field) => (
-    hasOwnReviewDraftField(draft, field)
-    && normalizeReviewResponseValue(draft[field]) !== normalizeReviewResponseValue(response?.[field])
-  ));
-}
 
 const LABOR_ROSTER_FILTER_FIELDS = [
   { section: "Employee Info", key: "first_name", label: "First Name", type: "text", ops: ["contains", "equals", "starts", "empty", "notEmpty"] },
@@ -951,17 +930,6 @@ const LABOR_ROSTER_FILTER_FIELDS = [
 
 
 
-function formatLaborPositionTitle(value = "") {
-  const raw = String(value || "").trim().replace(/\s+/g, " ");
-  const normalized = normalizePositionTitle(raw);
-  if (!normalized) return "";
-  if (normalized === "general manager") return "General Manager";
-  if (normalized === "assistant manager") return "Assistant Manager";
-  if (normalized === "supervisor") return "Supervisor";
-  if (normalized === "customer service representative") return "Customer Service Representative";
-  if (normalized === "pet care technician") return "Pet Care Technician";
-  return raw;
-}
 
 function deriveLaborPositionInitials(title = "") {
   const words = formatLaborPositionTitle(title)
@@ -1040,9 +1008,6 @@ function makeDefaultLaborPositionRows() {
 }
 
 
-function getLaborPositionSortIndex(positionTitle, positionHierarchyIndex = {}) {
-  return positionHierarchyIndex[normalizePositionTitle(positionTitle)] ?? Number.MAX_SAFE_INTEGER;
-}
 
 function sortLaborRowsByConfig(rows = [], sort = LABOR_DEFAULT_SORT, positionHierarchyIndex = {}, getSortValue = () => "") {
   const activeSort = sort || LABOR_DEFAULT_SORT;
@@ -1060,29 +1025,11 @@ function sortLaborRowsByConfig(rows = [], sort = LABOR_DEFAULT_SORT, positionHie
   });
 }
 
-function getDefaultPositionWeight(value = "") {
-  const title = normalizePositionTitle(value);
-  if (!title) return -1;
-  if (/(director|regional)/.test(title)) return 100;
-  if (/(general manager|\bgm\b)/.test(title)) return 90;
-  if (/(assistant manager|\bagm\b)/.test(title)) return 80;
-  if (/manager/.test(title)) return 70;
-  if (/(supervisor|lead)/.test(title)) return 60;
-  if (/(customer service representative|\bcsr\b)/.test(title)) return 40;
-  if (/(pet care technician|\bpct\b|technician)/.test(title)) return 30;
-  return 0;
-}
-
-
-function formatRosterLocationTitle(value = "") {
-  return `${formatRosterLocationName(value)} - Team Roster`;
-}
 
 
 
-function formatRosterPdfFilename(locationName = "", value = new Date()) {
-  return `${formatRosterLocationName(locationName)} Roster - ${formatRosterPdfDate(value)}.pdf`;
-}
+
+
 
 
 function LaborCommitmentBadge({ value, compact = false }) {
@@ -1835,53 +1782,7 @@ function formatLaborDate(value) {
 
 
 
-function buildUpdatedLaborMetadata(existingMetadata = {}, updates = {}) {
-  const nextMetadata = { ...(existingMetadata || {}) };
-  const hasEmail = Object.prototype.hasOwnProperty.call(updates, "email");
-  const hasPhone = Object.prototype.hasOwnProperty.call(updates, "phone");
-  const hasShirtSize = Object.prototype.hasOwnProperty.call(updates, "shirtSize");
-  const hasPerformanceReviewTemplateRole = Object.prototype.hasOwnProperty.call(updates, "performanceReviewTemplateRole");
 
-  if (hasEmail) {
-    const normalizedEmail = normalizeLaborContactEmail(updates.email);
-    if (normalizedEmail) nextMetadata.contact_email = normalizedEmail;
-    else delete nextMetadata.contact_email;
-  }
-
-  if (hasPhone) {
-    const normalizedPhone = normalizeLaborContactPhone(updates.phone);
-    if (normalizedPhone) nextMetadata.contact_phone = normalizedPhone;
-    else delete nextMetadata.contact_phone;
-  }
-
-  if (hasShirtSize) {
-    const normalizedShirtSize = normalizeLaborShirtSize(updates.shirtSize);
-    if (normalizedShirtSize) nextMetadata.shirt_size = normalizedShirtSize;
-    else delete nextMetadata.shirt_size;
-  }
-
-  if (hasPerformanceReviewTemplateRole) {
-    const roleKey = normalizePerformanceReviewTemplateRoleKey(updates.performanceReviewTemplateRole);
-    if (roleKey) nextMetadata[PERFORMANCE_REVIEW_TEMPLATE_METADATA_KEY] = roleKey;
-    else delete nextMetadata[PERFORMANCE_REVIEW_TEMPLATE_METADATA_KEY];
-  }
-
-  return nextMetadata;
-}
-
-function clearRestartedReviewMetadata(existingMetadata = {}, restartDetails = {}) {
-  const nextMetadata = isObjectRow(existingMetadata) ? { ...existingMetadata } : {};
-  RESTARTED_REVIEW_METADATA_KEYS.forEach((key) => {
-    delete nextMetadata[key];
-  });
-  return {
-    ...nextMetadata,
-    performance_review_restart: {
-      ...(isObjectRow(nextMetadata.performance_review_restart) ? nextMetadata.performance_review_restart : {}),
-      ...restartDetails,
-    },
-  };
-}
 
 function getRestartedReviewStatus(dueDate) {
   if (dueDate && String(dueDate).slice(0, 10) < todayStr()) return "overdue";
@@ -2236,27 +2137,8 @@ function TrainingHistoryStatusChange({ statusChange }) {
   );
 }
 
-function getTrainingResultReadinessStatus(result = {}) {
-  const metadata = isObjectRow(result?.metadata) ? result.metadata : {};
-  const metadataStatus = metadata.pct_readiness_status
-    || result.pct_readiness_status
-    || result.readiness_status
-    || "";
-  const normalizedMetadataStatus = normalizePctReadinessStatus(metadataStatus);
-  if (normalizedMetadataStatus && normalizedMetadataStatus !== "not_started") return normalizedMetadataStatus;
-
-  const rawStatus = String(result?.status || "").trim().toLowerCase();
-  if (rawStatus === "complete" || rawStatus === "completed" || rawStatus === "passed") return "verified";
-  if (rawStatus === "waived") return "waived";
-  if (rawStatus === "in_progress") return "demonstrated";
-  return normalizePctReadinessStatus(rawStatus);
-}
 
 
-function isReadinessDemonstratedStatus(status = "") {
-  const normalized = normalizePctReadinessStatus(status);
-  return normalized === "demonstrated" || isReadinessVerifiedStatus(normalized);
-}
 
 function EmptyState({ icon, title, subtitle }) {
   const IconComp = I[icon];
@@ -2479,23 +2361,8 @@ function ReviewTemplateStatusLine({ reviewTemplateName, pdfTemplateName, mismatc
 
 
 
-export function toObjectRows(rows = []) {
-  return Array.isArray(rows) ? rows.filter(isObjectRow) : [];
-}
 
 
-function trainingRequirementEvidencePolicy(requirementRow = {}) {
-  return normalizeComplianceEvidencePolicy(
-    requirementRow.evidencePolicy
-    || requirementRow.evidence_policy
-    || requirementRow.requirement?.evidence_policy
-    || requirementRow.policyRequirement?.evidence_policy
-    || requirementRow.metadata?.evidence_policy
-    || requirementRow.requirement?.metadata?.evidence_policy
-    || requirementRow.evidenceMode
-    || requirementRow.evidence_mode
-  );
-}
 
 function trainingRequirementAllowsReferenceUrl(requirementRow = {}) {
   const policy = trainingRequirementEvidencePolicy(requirementRow);
@@ -2508,19 +2375,6 @@ function trainingRequirementRequiresFileEvidence(requirementRow = {}) {
 }
 
 
-function getTrainingRequirementRenewalIntervalDays(requirementRow = {}) {
-  const dueRule = readTrainingRequirementDueRule(requirementRow);
-  const rawValue = requirementRow.renewalIntervalDays
-    ?? requirementRow.renewal_interval_days
-    ?? requirementRow.requirement?.renewal_interval_days
-    ?? requirementRow.policyRequirement?.renewal_interval_days
-    ?? requirementRow.metadata?.renewal_interval_days
-    ?? requirementRow.requirement?.metadata?.renewal_interval_days
-    ?? dueRule.renewal_interval_days
-    ?? dueRule.renewalIntervalDays;
-  const days = Number(rawValue);
-  return Number.isFinite(days) && days > 0 ? days : null;
-}
 
 function trainingRequirementRequiresRenewalDueDate(requirementRow = {}) {
   if (requirementRow.renewalDueDateRequired === true || requirementRow.renewal_due_date_required === true) return true;
@@ -2531,17 +2385,6 @@ function trainingRequirementRequiresRenewalDueDate(requirementRow = {}) {
 }
 
 
-export function isCustomComplianceRequirement(row = {}) {
-  if (!isObjectRow(row) || row.is_active === false) return false;
-  const metadata = isObjectRow(row.metadata) ? row.metadata : {};
-  return String(row.scope_type || "") === "location"
-    && String(row.requirement_kind || "") === "review_checkpoint"
-    && (
-      String(row.display_group || "") === "custom"
-      || metadata.ui_kind === "custom_yes_no"
-      || String(row.slug || "").startsWith("custom_")
-    );
-}
 
 export function isDefaultReviewComplianceRequirement(row = {}) {
   if (!isObjectRow(row) || row.is_active === false) return false;
@@ -2555,33 +2398,7 @@ export function isDefaultReviewComplianceRequirement(row = {}) {
     );
 }
 
-export function getOffsetDaysForRequirement(row = {}) {
-  const dueRule = isObjectRow(row.due_rule) ? row.due_rule : (isObjectRow(row.dueRule) ? row.dueRule : {});
-  const candidates = [
-    row.offset_days,
-    row.offsetDays,
-    dueRule.offset_days,
-    dueRule.offsetDays,
-    row.metadata && isObjectRow(row.metadata) ? row.metadata.offset_days : null,
-    row.metadata && isObjectRow(row.metadata) ? row.metadata.offsetDays : null,
-  ];
-  for (const v of candidates) {
-    const n = Number(v);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
-  return null;
-}
 
-export function formatComplianceRequirementDueRule(row = {}) {
-  const dueRule = isObjectRow(row.due_rule) ? row.due_rule : {};
-  const offsetDays = Number(dueRule.offset_days);
-  if (dueRule.anchor === "start_date" && Number.isFinite(offsetDays) && offsetDays > 0) {
-    return `Start date + ${offsetDays} days`;
-  }
-  const renewalDays = Number(dueRule.renewal_interval_days);
-  if (Number.isFinite(renewalDays) && renewalDays > 0) return `Renews every ${renewalDays} days`;
-  return row.renewal_due_date_required ? "Renewal date required" : "One time";
-}
 
 
 function findPolicyReviewCellForCycle(cells = [], cycle = {}) {
@@ -2694,41 +2511,10 @@ export function validateTemplateVersionForPublish(template = {}) {
 
 
 
-function normalizeLegacyPctReadinessBoard(boardData = null) {
-  if (!isObjectRow(boardData)) return buildEmptyReadinessBoard(getTeamReadinessTemplateOption(PCT_READINESS_TEMPLATE_SLUG));
-  const summary = isObjectRow(boardData.summary) ? boardData.summary : {};
-  const totalActiveTrainees = Number(summary.total_active_trainees ?? summary.total_active_pct_trainees ?? 0);
-  const averageReadiness = Number(summary.average_readiness ?? summary.average_completion ?? 0);
-  return {
-    ...boardData,
-    summary: {
-      ...summary,
-      template_slug: PCT_READINESS_TEMPLATE_SLUG,
-      total_active_trainees: totalActiveTrainees,
-      total_active_pct_trainees: Number(summary.total_active_pct_trainees ?? totalActiveTrainees),
-      average_demonstrated: Number(summary.average_demonstrated ?? averageReadiness),
-      average_completion: Number(summary.average_completion ?? averageReadiness),
-      average_readiness: averageReadiness,
-    },
-  };
-}
-
-export function getLaborEmployeeRowId(row = {}) {
-  if (!isObjectRow(row)) return null;
-  return row.labor_employee_id || row.employee_id || row.id || null;
-}
-
-export function getTrainingRecordEmployeeId(record = {}) {
-  if (!isObjectRow(record)) return null;
-  return record.labor_employee_id || record.employee_id || null;
-}
 
 
-function formatHourAnalysisHours(value) {
-  const normalized = normalizeHourAnalysisNumber(value, 0);
-  if (Number.isInteger(normalized)) return String(normalized);
-  return normalized.toFixed(1).replace(/\.0$/, "");
-}
+
+
 
 function formatHourAnalysisHoursWithUnit(value) {
   const normalized = normalizeHourAnalysisNumber(value, 0);
@@ -2743,22 +2529,6 @@ function getHourAnalysisEmployeeKey(row = {}) {
     || normalizeEmployeeName(row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" "));
 }
 
-function normalizeHourAnalysisGroupKey(value, row = {}) {
-  const key = String(value || "").trim().replace(/\s+/g, "_").replace(/-/g, "_").toLowerCase();
-  if (HOUR_ANALYSIS_GROUP_LABELS[key]) return key;
-  const title = normalizePositionTitle(row.position_title || row.position || "");
-  const managementKey = title.includes("assistant") ? "assistant_manager" : "general_manager";
-  if (key === "manager" || key === "managers" || key === "management") return managementKey;
-  if (key === "supervisors") return "supervisor";
-  if (key === "csrs") return "csr";
-  if (key === "pcts") return "pct";
-  if (key === "leadership") {
-    const titleGroup = getLaborRosterPositionGroup(row.position_title || row.position || "");
-    if (titleGroup === "supervisor") return "supervisor";
-    return managementKey;
-  }
-  return "other";
-}
 
 function getHourAnalysisGroupKey(row = {}) {
   const positionTitle = row.position_title || row.position || "";
@@ -2770,9 +2540,6 @@ function getHourAnalysisGroupKey(row = {}) {
   return normalizeHourAnalysisGroupKey(getLaborRosterPositionGroup(positionTitle), { position_title: positionTitle });
 }
 
-function getHourAnalysisGroupLabel(value) {
-  return HOUR_ANALYSIS_GROUP_LABELS[value] || HOUR_ANALYSIS_GROUP_LABELS.other;
-}
 
 function getHourAnalysisGroupShortLabel(value) {
   return HOUR_ANALYSIS_GROUP_SHORT_LABELS[value] || getHourAnalysisGroupLabel(value);
@@ -2816,11 +2583,6 @@ function getConfiguredHourAnalysisGroupShortLabel(value, groupDisplay = null) {
 
 
 
-function getLaborModelCoverageRoleOption(value = "") {
-  const alias = normalizeLaborModelCoverageAlias(value);
-  if (!alias) return null;
-  return LABOR_MODEL_ROLE_COVERAGE_ALIAS_MAP.get(alias) || LABOR_MODEL_ROLE_COVERAGE_ALIAS_MAP.get(alias.replace(/\s+/g, "")) || null;
-}
 
 function getLaborModelCoverageRoleOptionForGroup(groupKey = "") {
   const normalizedGroup = normalizeLaborModelGroupKey(groupKey);
@@ -2828,19 +2590,6 @@ function getLaborModelCoverageRoleOptionForGroup(groupKey = "") {
 }
 
 
-function mixLaborModelHexColor(base = "#334155", mix = "#ffffff", mixWeight = 0.5) {
-  const normalizedBase = normalizeLaborModelHexColor(base, "#334155").slice(1);
-  const normalizedMix = normalizeLaborModelHexColor(mix, "#ffffff").slice(1);
-  const clampedWeight = Math.max(0, Math.min(1, Number(mixWeight) || 0));
-  const channels = [0, 2, 4].map((index) => {
-    const baseValue = parseInt(normalizedBase.slice(index, index + 2), 16);
-    const mixValue = parseInt(normalizedMix.slice(index, index + 2), 16);
-    return Math.round(baseValue * (1 - clampedWeight) + mixValue * clampedWeight)
-      .toString(16)
-      .padStart(2, "0");
-  });
-  return `#${channels.join("")}`;
-}
 
 function buildLaborModelRolePalette(groupKey = "", primaryColor = "") {
   const normalizedGroup = normalizeLaborModelGroupKey(groupKey);
@@ -3051,53 +2800,9 @@ function getLaborModelCoverageOperatingGroupKey(value = "", row = {}) {
 }
 
 
-function parseLaborModelTimeRange(label = "") {
-  const raw = String(label || "").trim();
-  const parts = raw.split(/\s*[-–—]\s*/).filter(Boolean);
-  if (parts.length !== 2) return { valid: false, label: raw, hours: 0, error: "Use a range like 5:30a-6a." };
-  const suffixes = parts.map((part) => {
-    const match = String(part || "").trim().toLowerCase().match(/(a|am|p|pm)$/);
-    if (!match) return "";
-    return match[1].startsWith("p") ? "p" : "a";
-  });
-  const start = parseLaborModelTimePoint(parts[0], suffixes[0] || suffixes[1]);
-  const endRaw = parseLaborModelTimePoint(parts[1], suffixes[1] || suffixes[0] || start?.suffix);
-  if (!start || !endRaw) return { valid: false, label: raw, hours: 0, error: "Use a range like 5:30a-6a." };
-  let endMinutes = endRaw.minutes;
-  if (endMinutes <= start.minutes) endMinutes += 24 * 60;
-  const durationMinutes = endMinutes - start.minutes;
-  if (durationMinutes <= 0 || durationMinutes > 12 * 60) {
-    return { valid: false, label: raw, hours: 0, error: "Time slot duration must be positive and less than 12 hours." };
-  }
-  return {
-    valid: true,
-    label: raw,
-    start: start.minutes,
-    end: endMinutes,
-    hours: normalizeHourAnalysisNumber(durationMinutes / 60, 0),
-  };
-}
 
 
-function formatLaborModelTimeRange(start = 0, end = 0) {
-  return `${formatLaborModelTimePoint(start)}-${formatLaborModelTimePoint(end)}`;
-}
 
-function normalizeLaborModelBreakerMinute(value) {
-  const rawValue = isObjectRow(value)
-    ? (value.minutes ?? value.minute ?? value.time_minutes ?? value.timeMinutes ?? value.time ?? value.label)
-    : value;
-  if (typeof rawValue === "string") {
-    const parsed = parseLaborModelTimePoint(rawValue);
-    if (parsed) return parsed.minutes;
-    const numeric = Number(rawValue);
-    if (Number.isFinite(numeric)) return ((Math.round(numeric) % 1440) + 1440) % 1440;
-    return null;
-  }
-  const numeric = Number(rawValue);
-  if (!Number.isFinite(numeric)) return null;
-  return ((Math.round(numeric) % 1440) + 1440) % 1440;
-}
 
 function normalizeLaborModelBreakerList(value, fallback = []) {
   const hasExplicitList = Array.isArray(value);
@@ -3644,15 +3349,6 @@ export function summarizeLaborCapacityModelSnapshotDiff(currentSettings = {}, sn
   return changes.slice(0, 12);
 }
 
-function normalizeHourAnalysisRangeOrder(range = {}) {
-  const rawExpected = normalizeHourAnalysisNumber(range.expected ?? range.preferred ?? range.hours, 0);
-  const rawMin = normalizeHourAnalysisNumber(range.min ?? range.minimum ?? range.min_hours, rawExpected);
-  const rawMax = normalizeHourAnalysisNumber(range.max ?? range.maximum ?? range.max_hours, Math.max(rawExpected, rawMin));
-  const min = Math.min(rawMin, rawExpected, rawMax);
-  const max = Math.max(rawMin, rawExpected, rawMax);
-  const expected = Math.max(min, Math.min(max, rawExpected));
-  return { min, expected, max };
-}
 
 function buildHourAnalysisRangeFromExpected(value, defaults = {}, commitment = "full_time") {
   const defaultRange = normalizeHourAnalysisRangeOrder(defaults);
@@ -3694,21 +3390,6 @@ function updateHourAnalysisRangeBand(range = {}, band = "expected", value = 0) {
   });
 }
 
-function readHourAnalysisGroupInput(input = {}, groupKey = "other") {
-  const source = isObjectRow(input) ? input : {};
-  if (isObjectRow(source[groupKey])) return source[groupKey];
-  if (groupKey === "general_manager" || groupKey === "assistant_manager") {
-    if (isObjectRow(source.management)) return source.management;
-    if (isObjectRow(source.manager)) return source.manager;
-    if (isObjectRow(source.managers)) return source.managers;
-    if (isObjectRow(source.leadership)) return source.leadership;
-  }
-  if (groupKey === "supervisor") {
-    if (isObjectRow(source.supervisors)) return source.supervisors;
-    if (isObjectRow(source.leadership)) return source.leadership;
-  }
-  return {};
-}
 
 function normalizeHourAnalysisExpectationMap(input = {}) {
   return Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => {
@@ -3724,22 +3405,6 @@ function normalizeHourAnalysisExpectationMap(input = {}) {
   }));
 }
 
-function normalizeHourAnalysisOverrideRange(value = {}) {
-  if (!isObjectRow(value)) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed >= 0 ? { expected: normalizeHourAnalysisNumber(parsed, 0) } : {};
-  }
-  return Object.fromEntries(HOUR_ANALYSIS_RANGE_KEYS.flatMap((key) => {
-    const rawValue = key === "min"
-      ? value.min ?? value.minimum ?? value.min_hours
-      : key === "expected"
-        ? value.expected ?? value.preferred ?? value.hours ?? value.preferred_hours ?? value.expected_hours
-        : value.max ?? value.maximum ?? value.max_hours;
-    const parsed = Number(rawValue);
-    if (!Number.isFinite(parsed) || parsed < 0) return [];
-    return [[key, normalizeHourAnalysisNumber(parsed, 0)]];
-  }));
-}
 
 function normalizeHourAnalysisOverrides(input = {}) {
   if (!isObjectRow(input)) return {};
@@ -3752,15 +3417,6 @@ function normalizeHourAnalysisOverrides(input = {}) {
   }));
 }
 
-function normalizeHourAnalysisNotes(input = {}) {
-  if (!isObjectRow(input)) return {};
-  return Object.fromEntries(Object.entries(input).flatMap(([key, value]) => {
-    const employeeKey = String(key || "").trim();
-    const note = String(value || "").trim();
-    if (!employeeKey || !note) return [];
-    return [[employeeKey, note]];
-  }));
-}
 
 function normalizeHourAnalysisCoverageSplit(value = {}) {
   const source = isObjectRow(value) ? value : {};
@@ -3871,30 +3527,8 @@ function normalizeHourAnalysisWhatIfRows(input = []) {
   });
 }
 
-function normalizeHourAnalysisSkeletonMap(input = {}) {
-  const source = isObjectRow(input) ? input : {};
-  const defaultAdminDaily = DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.general_manager + DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.assistant_manager;
-  const hasLegacyLeadership = source.leadership != null && source.management == null && source.manager == null && source.supervisor == null;
-  const legacyLeadership = normalizeHourAnalysisNumber(source.leadership, defaultAdminDaily + DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.supervisor);
-  const rawManagement = source.management ?? source.manager;
-  const splitManagement = rawManagement != null ? normalizeHourAnalysisNumber(rawManagement / 2, defaultAdminDaily / 2) : null;
-  return Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => {
-    let rawValue = source[group.key];
-    if (group.key === "general_manager") rawValue = source.general_manager ?? source.generalManager ?? splitManagement ?? (hasLegacyLeadership ? normalizeHourAnalysisNumber(legacyLeadership / 4, DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.general_manager) : rawValue);
-    if (group.key === "assistant_manager") rawValue = source.assistant_manager ?? source.assistantManager ?? splitManagement ?? (hasLegacyLeadership ? normalizeHourAnalysisNumber(legacyLeadership / 4, DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.assistant_manager) : rawValue);
-    if (group.key === "supervisor") rawValue = source.supervisor ?? source.supervisors ?? (hasLegacyLeadership ? normalizeHourAnalysisNumber(legacyLeadership / 2, DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.supervisor) : rawValue);
-    return [
-      group.key,
-      normalizeHourAnalysisNumber(rawValue, DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON[group.key] ?? 0),
-    ];
-  }));
-}
 
 
-function readStaffingCapacityPercent(source = {}, keys = [], fallback = 0) {
-  const matchedKey = keys.find((key) => source[key] != null && source[key] !== "");
-  return clampHourAnalysisPercent(matchedKey ? source[matchedKey] : fallback, 0, 90);
-}
 
 export function normalizeStaffingCapacitySettings(value = {}) {
   const source = isObjectRow(value) ? value : {};
@@ -4138,16 +3772,6 @@ function getOutOfPositionRoleLabel(roleKey = "", fallback = "Unclassified") {
 
 
 
-export function calculateLaborShiftHours(startValue, endValue, fallbackHours = null) {
-  const explicit = Number(fallbackHours);
-  const start = parseLaborShiftMinutes(startValue);
-  const end = parseLaborShiftMinutes(endValue);
-  if (start == null || end == null) {
-    return Number.isFinite(explicit) && explicit > 0 ? normalizeHourAnalysisNumber(explicit, 0) : 0;
-  }
-  const adjustedEnd = end <= start ? end + (24 * 60) : end;
-  return normalizeHourAnalysisNumber((adjustedEnd - start) / 60, 0);
-}
 
 function getStaffPlanEntries(plan = {}) {
   const entries = Array.isArray(plan.shift_entries)
@@ -4282,13 +3906,6 @@ export function getLaborCapacityWeekStart(dateValue = todayStr()) {
 }
 
 
-function addHourAnalysisRangeDelta(target, range = {}, delta = 1) {
-  const multiplier = Number(delta);
-  const normalizedDelta = Number.isFinite(multiplier) ? multiplier : 1;
-  HOUR_ANALYSIS_RANGE_KEYS.forEach((key) => {
-    target[key] = normalizeHourAnalysisDelta(target[key] + (readHourAnalysisRangeNumber(range[key]) * normalizedDelta));
-  });
-}
 
 function addHourAnalysisRange(target, range = {}) {
   addHourAnalysisRangeDelta(target, range, 1);
@@ -4309,16 +3926,6 @@ function mergeHourAnalysisRange(inheritedRange = {}, overrideRange = {}) {
   ])));
 }
 
-function getHourAnalysisDefaultCoverageSplit(row = {}, groupKey = "other") {
-  const title = normalizePositionTitle(row.position_title || row.position || "");
-  if (groupKey === "supervisor" && title.includes("csr") && title.includes("supervisor")) {
-    return { floor_group: "csr", admin_hours: 8 };
-  }
-  if (groupKey === "supervisor" && title.includes("pct") && title.includes("supervisor")) {
-    return { floor_group: "pct", admin_hours: 8 };
-  }
-  return { floor_group: "", admin_hours: null };
-}
 
 function resolveHourAnalysisCoverageSplit({ row = {}, groupKey = "other", preferredHours = 0, split = {} } = {}) {
   const defaultSplit = getHourAnalysisDefaultCoverageSplit(row, groupKey);
@@ -4344,18 +3951,7 @@ function resolveHourAnalysisCoverageSplit({ row = {}, groupKey = "other", prefer
   };
 }
 
-function buildHourAnalysisRangeFromHours(hours = 0) {
-  const expected = normalizeHourAnalysisNumber(hours, 0);
-  return { min: expected, expected, max: expected };
-}
 
-function calculateHourAnalysisRecommendedTarget(requiredWeekly = 0, reservePercent = HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT) {
-  const required = normalizeHourAnalysisNumber(requiredWeekly, 0);
-  const reserve = Math.max(0, Math.min(90, normalizeHourAnalysisNumber(reservePercent, HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT)));
-  if (required <= 0) return 0;
-  if (reserve <= 0) return required;
-  return normalizeHourAnalysisNumber(required * (1 + (reserve / 100)), 0);
-}
 
 function buildHourAnalysisCapacityStandard(requiredWeekly = 0, reliefPercent = HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT, settings = {}) {
   const floor = normalizeHourAnalysisNumber(requiredWeekly, 0);
@@ -4507,12 +4103,6 @@ export function formatHourAnalysisCapacityDelta(value = 0) {
   };
 }
 
-function getHourAnalysisToleranceHours(boundaryValue = 0, tolerancePercent = HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT) {
-  const boundary = normalizeHourAnalysisNumber(Math.abs(Number(boundaryValue) || 0), 0);
-  const tolerance = clampHourAnalysisPercent(tolerancePercent, 0, 90);
-  if (boundary <= 0 || tolerance <= 0) return 0;
-  return normalizeHourAnalysisDelta(Math.max(HOUR_ANALYSIS_MIN_TOLERANCE_HOURS, boundary * (tolerance / 100)));
-}
 
 function formatHourAnalysisSignedDelta(value = 0) {
   const delta = normalizeHourAnalysisDelta(value);
@@ -4897,29 +4487,7 @@ export function buildHourAnalysisCapacityRowVisualModel(row = {}, groupDisplay =
   };
 }
 
-function getNiceStaffingCapacityChartMax(maxValue = 0) {
-  const paddedMax = Math.max(10, normalizeHourAnalysisNumber(maxValue, 0) * 1.12);
-  const magnitude = 10 ** Math.floor(Math.log10(paddedMax));
-  const normalized = paddedMax / magnitude;
-  const niceNormalized = normalized <= 1
-    ? 1
-    : normalized <= 2
-      ? 2
-      : normalized <= 2.5
-        ? 2.5
-        : normalized <= 5
-          ? 5
-          : normalized <= 6
-            ? 6
-            : 10;
-  return normalizeHourAnalysisNumber(niceNormalized * magnitude, 0);
-}
 
-function getStaffingCapacityChartPct(value = 0, chartMax = 0) {
-  const max = normalizeHourAnalysisNumber(chartMax, 0);
-  if (max <= 0) return 0;
-  return clampHourAnalysisPercent((normalizeHourAnalysisNumber(value, 0) / max) * 100, 0, 100);
-}
 
 function formatStaffingCapacityBarHours(value = 0) {
   return `${formatHourAnalysisHours(value)}h`;
@@ -5367,28 +4935,6 @@ export function buildHourAnalysisModel({ rosterRows = [], settings = {} } = {}) 
 
 
 
-function openPdfBlob(filename, bytes, { print = false } = {}) {
-  const blob = new Blob([bytes], { type: "application/pdf" });
-  const url = window.URL.createObjectURL(blob);
-  const previewWindow = window.open(url, "_blank");
-  if (!previewWindow) {
-    window.URL.revokeObjectURL(url);
-    downloadBinaryFile(filename, bytes, "application/pdf");
-    return false;
-  }
-  if (print) {
-    window.setTimeout(() => {
-      try {
-        previewWindow.focus();
-        previewWindow.print();
-      } catch {
-        // The generated PDF is already open if Chrome blocks scripted print.
-      }
-    }, 900);
-  }
-  window.setTimeout(() => window.URL.revokeObjectURL(url), 120000);
-  return true;
-}
 
 
 export function isTrainingRecordForEmployee(record = {}, employee = {}) {
@@ -5582,18 +5128,8 @@ function getTrainingComplianceState(row) {
 
 
 
-function normalizeActorLookupEmail(value = "") {
-  const email = String(value || "").trim().toLowerCase();
-  return isEmailLike(email) ? email : "";
-}
 
 
-function getNormalizedNameTokens(value = "") {
-  return normalizeEmployeeName(value)
-    .replace(/[^a-z0-9\s]+/g, " ")
-    .split(/\s+/)
-    .filter(Boolean);
-}
 
 function getActorEmailNameParts(value = "") {
   const email = normalizeActorLookupEmail(value);
@@ -5743,46 +5279,7 @@ export function enrichTrainingActorProfileName(row = {}, {
   return verifiedEmailName ? { ...row, [nameKey]: verifiedEmailName } : row;
 }
 
-export function resolveVerifiedActorDisplayName(row = {}, fallback = "Staff") {
-  const candidates = [
-    row.actor_full_name,
-    row.actorFullName,
-    row.verified_actor_name,
-    row.verifiedActorName,
-    row.created_by_full_name,
-    row.createdByFullName,
-    row.updated_by_full_name,
-    row.updatedByFullName,
-    row.actor_name,
-    row.actorName,
-    row.created_by_name,
-    row.createdByName,
-    row.updated_by_name,
-    row.updatedByName,
-    row.email,
-    row.actor_email,
-    row.created_by_email,
-  ]
-    .map((value) => String(value || "").trim())
-    .filter(Boolean);
 
-  const fullName = candidates.find((value) => !isEmailLike(value));
-  return fullName || candidates[0] || fallback;
-}
-
-function getTrainingHistoryStateStatus(state = {}) {
-  if (!isObjectRow(state)) return "";
-  const metadata = isObjectRow(state.metadata) ? state.metadata : {};
-  return normalizePctReadinessStatus(
-    metadata.pct_readiness_status
-    || state.pct_readiness_status
-    || state.readiness_status
-    || state.status
-    || state.item_status
-    || state.training_item_status
-    || ""
-  );
-}
 
 
 function getTrainingHistoryStatusChange(event = {}) {
@@ -5805,9 +5302,6 @@ function getTrainingHistoryStatusChange(event = {}) {
   };
 }
 
-function resolveTrainingHistoryRecord(row = {}, recordMap = {}) {
-  return recordMap[row.record_id] || (isObjectRow(row.training_records) ? row.training_records : {}) || {};
-}
 
 
 function getHistoryTimestampValue(value) {
@@ -5884,9 +5378,6 @@ export function buildTrainingHistoryRows({
 }
 
 
-export function getTrainingHistoryRowDate(row = {}) {
-  return getLocalDateKey(row.created_at || row.occurred_at || row.updated_at);
-}
 
 function buildUniqueHistoryOptions(rows = [], accessor = () => "") {
   const seen = new Set();
@@ -5956,16 +5447,7 @@ export function buildTrainingHistoryDayMetrics(rows = [], dateValue = "") {
 
 
 
-function readComplianceHistoryState(event = {}, key = "new") {
-  const preferred = key === "old"
-    ? (event.old_values || event.before_state)
-    : (event.new_values || event.after_state);
-  return isObjectRow(preferred) ? preferred : {};
-}
 
-function readComplianceHistoryMetadata(row = {}) {
-  return isObjectRow(row.metadata) ? row.metadata : {};
-}
 
 function findComplianceHistoryReviewInstance(event = {}, reviewInstanceMap = {}) {
   const sourceId = String(event.source_id || "").trim();
@@ -6120,9 +5602,6 @@ function buildComplianceHistoryFilterOptions(rows = []) {
   };
 }
 
-function readComplianceAuditSnapshot(event = {}, key = "after_snapshot") {
-  return isObjectRow(event?.[key]) ? event[key] : {};
-}
 
 function getComplianceAuditRequirementId(event = {}) {
   const before = readComplianceAuditSnapshot(event, "before_snapshot");
