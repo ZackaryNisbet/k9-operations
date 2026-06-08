@@ -68,6 +68,7 @@ import {
   shiftDemandAnchor,
 } from "./scheduling/schedulingDates";
 import { isUuid, resolveSchedulingLocationName } from "./scheduling/schedulingLocation";
+import { sortRotationLanes } from "./scheduling/rotationLanes";
 
 export {
   buildHistoricalRangeSummary,
@@ -82,27 +83,6 @@ const MATRIX_TABLE_FONT = "'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe U
 
 function formatVisibleSchedulingCopy(value) {
   return String(value ?? "").replace(/\bGingr\b/g, "Gingr");
-}
-
-function normalizeRotationLaneRole(lane) {
-  const raw = String(lane?.position || lane?.role || lane?.label || lane?.id || "").toLowerCase();
-  if (raw.includes("pct")) return "pct";
-  if (raw.includes("supervisor") || /\bsup\b/.test(raw)) return "supervisor";
-  if (raw.includes("csr")) return "csr";
-  if (raw.includes("mod") || raw.includes("manager")) return "manager";
-  return "other";
-}
-
-function rotationLaneSortValue(lane) {
-  const order = { pct: 0, supervisor: 1, csr: 2, manager: 3, other: 4 };
-  return order[normalizeRotationLaneRole(lane)] ?? order.other;
-}
-
-function sortRotationLanes(lanes = []) {
-  return [...lanes].sort((a, b) => (
-    rotationLaneSortValue(a) - rotationLaneSortValue(b)
-    || String(a.label || a.id || "").localeCompare(String(b.label || b.id || ""))
-  ));
 }
 
 function SectionCard({ title, subtitle, icon, children, style }) {
