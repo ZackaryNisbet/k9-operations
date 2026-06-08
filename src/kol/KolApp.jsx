@@ -9,6 +9,7 @@ import { C, LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX, POS_BASE, PAGE_SLUGS,
 import { I, Icons } from "../shared/icons";
 import { K9Logo, K9LogoMini, Btn, Tip, Badge, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, Card, isFieldRequired, validateClientFields } from "../shared/ui";
 import { applyLeanPermissionOverrides, hasAnyLeanPermission, hasEveryLeanPermission, hasLeanPermission, hasPermission, _resolveRole, LEGACY_ROLE_MAP, ROLE_CODE_MAP, getUserLocationIds } from "../shared/permissions";
+import { isDemoActive } from "../shared/demoMode";
 import { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, resSvcIncludes, getPPStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel } from "../shared/opsHelpers";
 import K9LoadingAnimation from "../shared/K9LoadingAnimation";
 import LocationSelector from "../shared/LocationSelector";
@@ -1482,6 +1483,8 @@ function LeanAppInner() {
             const isOwnerOrAdmin = code === "owner" || code === "admin" || code === "developer" || code === "enterprise_admin";
             const isStaff = !isOwnerOrAdmin && (code === "pct" || code === "csr");
             const isManager = !isOwnerOrAdmin && (code === "supervisor" || code === "manager" || code === "mod");
+            // Demo accounts get the full rail so every page is reachable in the showcase.
+            if (isDemoActive()) return ANALYTICS_NAV_ITEMS;
             if (IS_ANALYTICS_MODE) return ANALYTICS_NAV_ITEMS;
             if (isStaff) return STAFF_NAV_ITEMS;
             if (isManager) return MANAGER_NAV_ITEMS;
@@ -1598,6 +1601,22 @@ function LeanAppInner() {
       </div>}
 
       {!isFullscreenPage && <InitialGingrSyncDock locationId={currentLocation} />}
+
+      {/* Demo-mode indicator — makes it explicit the data is anonymized & read-only */}
+      {isDemoActive() && (
+        <div style={{
+          position: "fixed", top: 12, left: "50%", transform: "translateX(-50%)",
+          zIndex: 9700, display: "flex", alignItems: "center", gap: 8,
+          padding: "7px 14px", borderRadius: 999,
+          background: "rgba(11,40,24,0.94)", color: "#F7FEE7",
+          fontSize: 12, fontWeight: 700, letterSpacing: "0.01em",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.28)", border: "1px solid rgba(217,249,157,0.32)",
+          fontFamily: "'Outfit', sans-serif", pointerEvents: "none", whiteSpace: "nowrap",
+        }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#84CC16", boxShadow: "0 0 8px #84CC16" }} />
+          Demo mode · names anonymized · read-only
+        </div>
+      )}
 
       {/* Toast Notifications */}
       {toasts.length > 0 && (

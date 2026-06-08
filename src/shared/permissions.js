@@ -35,7 +35,10 @@ const LEAN_PERMISSION_ALIAS_MAP = {
   "Photos Edit Pairings": ["Photos Edit Pairings", "Photos Module"],
 };
 
-const LEAN_FULL_ACCESS_ROLES = new Set(["enterprise_admin", "owner", "developer"]);
+// `demo` is a read-only showcase role: it can VIEW every page (full permission
+// grant here), while write access is blocked at the network layer (see
+// src/shared/demoMode.js) and PII is obfuscated in transit.
+const LEAN_FULL_ACCESS_ROLES = new Set(["enterprise_admin", "owner", "developer", "demo"]);
 
 function resolveLeanRoleKey(userRole) {
   const normalized = String(userRole || "").trim();
