@@ -103,6 +103,7 @@ import PerformanceReviewComplianceGrid, {
   PerformanceReviewComplianceGridStyles,
   ReviewCycleCell,
 } from "../components/PerformanceReviewComplianceGrid";
+import { EmptyState } from "./training/components/EmptyState";
 import { TrainingHistoryStatusChange } from "./training/components/TrainingHistoryStatusChange";
 import { CompactProgressBar } from "./training/components/CompactProgressBar";
 import { ProgressBar } from "./training/components/ProgressBar";
@@ -1321,16 +1322,6 @@ function getReadinessCellActorLine(cell = {}, status = "") {
 
 
 
-function EmptyState({ icon, title, subtitle }) {
-  const IconComp = I[icon];
-  return (
-    <div style={{ textAlign: "center", padding: "60px 20px", color: C.textMut }}>
-      {IconComp && <div style={{ marginBottom: 12, opacity: 0.4 }}><IconComp /></div>}
-      <div style={{ fontSize: 16, fontWeight: 600, color: C.textSec, marginBottom: 4 }}>{title}</div>
-      {subtitle && <div style={{ fontSize: 13 }}>{subtitle}</div>}
-    </div>
-  );
-}
 
 function LaborRosterCopyValue({ value, displayValue, copied = false, onCopy, ariaLabel }) {
   if (!value) return "—";
