@@ -103,6 +103,8 @@ import PerformanceReviewComplianceGrid, {
   PerformanceReviewComplianceGridStyles,
   ReviewCycleCell,
 } from "../components/PerformanceReviewComplianceGrid";
+import { buildComplianceHistoryFilterOptions, buildHourAnalysisGroupDisplay, buildLaborPositionAcronymSettings, buildLaborPositionOption, copyLaborModelBreakers, getDefaultLaborPositionAcronym, getLaborModelBreakersForDay, getLaborModelCoverageExplicitRoleOption, getLaborModelCoverageKind, isLaborModelMarketingCoverage, normalizeHourAnalysisExpectationMap, normalizeHourAnalysisPositionMovements, normalizeLaborModelCoverageCells, normalizeLaborModelGroupKey, normalizeLaborPositionAcronymSettings, reviewInstanceMatchesReviewCycle, updateLaborModelBreakersForDay } from "./training/helpers";
+export { buildHourAnalysisGroupDisplay, copyLaborModelBreakers, getLaborModelBreakersForDay, updateLaborModelBreakersForDay };
 import { buildHourAnalysisCapacityStatus, buildPerformanceReviewPolicyFields, buildTrainingHistoryFilterOptions, buildTrainingHistoryRows, combineHourAnalysisCapacityStandards, enrichTrainingActorProfileName, formatHourAnalysisCapacityRangeDelta, getConfiguredHourAnalysisGroupShortLabel, getOutOfPositionRoleLabel, getReviewCycleDueDateForSort, getReviewCycleInstanceKeys, getStaffingCapacityRoleSettings, inferLaborModelGroupKeyFromLabel, isDirectComplianceRequirementCycle, isReviewCycleEvidenceRequired, normalizeHourAnalysisPositionMovement, normalizeHourAnalysisRangeValue, normalizeHourAnalysisSplits, normalizeHourAnalysisThresholds, normalizeHourAnalysisWhatIfRows, normalizeLaborModelBreakerSettings, normalizeLaborModelCoverageCell, normalizeLaborPositionAcronym, resolveHourAnalysisCoverageSplit, resolveLaborActorNameByEmail, sumHourAnalysisRanges, validateTemplateVersionForPublish } from "./training/helpers";
 export { buildTrainingHistoryFilterOptions, buildTrainingHistoryRows, enrichTrainingActorProfileName, normalizeLaborModelBreakerSettings, normalizeLaborModelCoverageCell, normalizeLaborPositionAcronym, validateTemplateVersionForPublish };
 import { addHourAnalysisRange, applyTrainingHistoryFilters, buildHourAnalysisCapacityStandard, buildHourAnalysisCapacityToleranceState, buildHourAnalysisRangeFromExpected, buildPlannedCrossRoleCoverageRows, buildTemplatePreviewVersionStats, buildUniqueHistoryOptions, collectTrainingActorLookupEmails, deriveLaborPositionInitials, findComplianceHistoryCycle, findComplianceHistoryRequirement, findComplianceHistoryReviewInstance, findPolicyReviewCellForCycle, findReviewCycleRowBySortKey, flattenTrainingTemplatePreviewItems, formatHourAnalysisCapacityDelta, formatHourAnalysisHoursWithUnit, formatHourAnalysisSignedDelta, formatStaffingCapacityBarHours, getActorEmailNameParts, getComplianceAuditActionLabel, getComplianceAuditEmployeeId, getComplianceAuditRequirementId, getComplianceHistoryActor, getComplianceHistoryStatusChange, getConfiguredHourAnalysisGroupLabel, getEditableTemplateDraftVersion, getHourAnalysisEmployeeKey, getHourAnalysisGroupKey, getHourAnalysisGroupShortLabel, getReviewCycleEvidencePolicy, getReviewCycleLegacyReviewCycle, getReviewCycleOffsetDays, getReviewCycleRequirementId, getStaffPlanEntries, getTrainingHistoryStatusChange, isReviewItemAnswered, isTrainingRecordForEmployee, mergeHourAnalysisRange, normalizeHourAnalysisAuditLog, normalizeHourAnalysisCoverageSplit, normalizeHourAnalysisLaborModelColumn, normalizeHourAnalysisOverrides, normalizeLaborModelBreakerList, normalizeStaffingCapacitySettings, normalizeStaffingRoleKey, parseLaborModelCoverageCompound, sortLaborRowsByConfig, trainingRequirementAllowsReferenceUrl, trainingRequirementRequiresRenewalDueDate, updateHourAnalysisRangeBand, validateLaborModelColumns } from "./training/helpers";
@@ -539,15 +541,6 @@ const LABOR_PERFORMANCE_REVIEW_BASE_SORT_COLUMNS = [
   { key: "compliance", label: "Review Status" },
   { key: "open_checkpoints", label: "Open Checkpoints" },
 ];
-function reviewInstanceMatchesReviewCycle(instance = {}, reviewCycle = {}) {
-  const instanceCycle = String(instance?.review_cycle || "");
-  if (!instanceCycle) return false;
-  const normalizedInstanceCycle = normalizeLocalReviewCycleKey(instanceCycle);
-  return getReviewCycleInstanceKeys(reviewCycle).some((key) => (
-    String(key) === instanceCycle
-    || normalizeLocalReviewCycleKey(key) === normalizedInstanceCycle
-  ));
-}
 function getReviewCycleEvidenceDocument(reviewCycle = {}, documentsById = {}) {
   const evidence = getCompletionEvidence(reviewCycle);
   const policyCell = getReviewCyclePolicyCell(reviewCycle);
@@ -835,50 +828,9 @@ const LABOR_ROSTER_FILTER_FIELDS = [
 
 
 
-function getDefaultLaborPositionAcronym(positionTitle = "") {
-  return normalizeLaborPositionAcronym(DEFAULT_LABOR_POSITION_ACRONYMS[normalizePositionTitle(positionTitle)] || "", positionTitle);
-}
 
-function normalizeLaborPositionAcronymSettings(value = {}) {
-  if (Array.isArray(value)) {
-    return value.reduce((acc, row) => {
-      if (!isObjectRow(row)) return acc;
-      const title = row.position_title || row.positionTitle || row.title || row.normalized_title || row.normalizedTitle || "";
-      const normalizedTitle = normalizePositionTitle(title);
-      if (!normalizedTitle) return acc;
-      acc[normalizedTitle] = normalizeLaborPositionAcronym(row.position_acronym || row.positionAcronym || row.acronym, title);
-      return acc;
-    }, {});
-  }
-  if (!isObjectRow(value)) return {};
-  return Object.entries(value).reduce((acc, [title, acronym]) => {
-    const normalizedTitle = normalizePositionTitle(title);
-    if (!normalizedTitle) return acc;
-    acc[normalizedTitle] = normalizeLaborPositionAcronym(acronym, title);
-    return acc;
-  }, {});
-}
 
-function buildLaborPositionAcronymSettings(rows = []) {
-  return toObjectRows(rows).reduce((acc, row) => {
-    const positionTitle = formatLaborPositionTitle(row.position_title);
-    const normalizedTitle = normalizePositionTitle(positionTitle);
-    if (!normalizedTitle) return acc;
-    acc[normalizedTitle] = normalizeLaborPositionAcronym(row.position_acronym || row.acronym, positionTitle);
-    return acc;
-  }, {});
-}
 
-function buildLaborPositionOption(title, acronym = "") {
-  const label = formatLaborPositionTitle(title);
-  if (!label) return null;
-  return {
-    value: label,
-    label,
-    normalizedTitle: normalizePositionTitle(label),
-    acronym: normalizeLaborPositionAcronym(acronym, label),
-  };
-}
 
 
 function makeDefaultLaborPositionRows() {
@@ -2278,32 +2230,6 @@ export function isDefaultReviewComplianceRequirement(row = {}) {
 
 
 
-export function buildHourAnalysisGroupDisplay(positionRows = []) {
-  const display = Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => [
-    group.key,
-    {
-      label: group.label,
-      shortLabel: getHourAnalysisGroupShortLabel(group.key),
-      sort: 5000,
-    },
-  ]));
-
-  toObjectRows(positionRows).forEach((row, index) => {
-    const positionTitle = formatLaborPositionTitle(row.position_title);
-    const groupKey = getHourAnalysisGroupKey({ position_title: positionTitle });
-    if (!groupKey || groupKey === "other" || !display[groupKey]) return;
-    const sort = Number.isFinite(row.sort_order) ? row.sort_order : index;
-    if (display[groupKey].configured && display[groupKey].sort <= sort) return;
-    display[groupKey] = {
-      label: positionTitle || display[groupKey].label,
-      shortLabel: normalizeLaborPositionAcronym(row.position_acronym || row.acronym, positionTitle) || getHourAnalysisGroupShortLabel(groupKey),
-      sort,
-      configured: true,
-    };
-  });
-
-  return display;
-}
 
 
 
@@ -2367,26 +2293,9 @@ function getLaborModelCoverageRoleStyle(groupKey = "", roleColors = null) {
 
 
 
-function normalizeLaborModelCoverageCells(value = [], targetLength = 0) {
-  const cells = parseLaborModelCoverage(value);
-  const nextCells = Array.from({ length: targetLength }, (_, index) => normalizeLaborModelCoverageCell(cells[index] || ""));
-  return nextCells;
-}
 
 
-function isLaborModelMarketingCoverage(value = "") {
-  return normalizeLaborModelCoverageCell(value) === LABOR_MODEL_MARKETING_COVERAGE_VALUE;
-}
 
-function getLaborModelCoverageKind(value = "") {
-  const normalized = normalizeLaborModelCoverageCell(value);
-  if (!normalized) return "empty";
-  if (normalized.startsWith(`${LABOR_MODEL_HALF_COVERAGE_VALUE}:`)) return "half";
-  if (normalized === LABOR_MODEL_HALF_COVERAGE_VALUE) return "half";
-  if (normalized === LABOR_MODEL_MARKETING_COVERAGE_VALUE) return "marketing";
-  if (getLaborModelCoverageRoleOption(normalized)) return "role";
-  return "full";
-}
 
 function getLaborModelCoverageOperatingWeight(value = "") {
   const kind = getLaborModelCoverageKind(value);
@@ -2399,15 +2308,6 @@ function getLaborModelCoverageMarketingWeight(value = "") {
   return isLaborModelMarketingCoverage(value) ? 1 : 0;
 }
 
-function getLaborModelCoverageExplicitRoleOption(value = "") {
-  const normalized = normalizeLaborModelCoverageCell(value);
-  if (!normalized || normalized === LABOR_MODEL_MARKETING_COVERAGE_VALUE) return null;
-  if (normalized.includes(":")) {
-    const roleToken = normalized.split(":").find((part) => getLaborModelCoverageRoleOption(part));
-    return getLaborModelCoverageRoleOption(roleToken);
-  }
-  return getLaborModelCoverageRoleOption(normalized);
-}
 
 function getLaborModelCoverageRoleOptionForCell(value = "", rowGroupKey = "") {
   const normalized = normalizeLaborModelCoverageCell(value);
@@ -2488,41 +2388,8 @@ function getLaborModelCoverageOperatingGroupKey(value = "", row = {}) {
 
 
 
-export function getLaborModelBreakersForDay(settings = {}, dayKey = "monday") {
-  const normalizedDay = LABOR_MODEL_DAY_KEYS.includes(dayKey) ? dayKey : "monday";
-  const normalized = normalizeLaborModelBreakerSettings(settings);
-  return normalized.days[normalizedDay] || [];
-}
 
-export function updateLaborModelBreakersForDay(settings = {}, dayKey = "monday", breakers = []) {
-  const normalizedDay = LABOR_MODEL_DAY_KEYS.includes(dayKey) ? dayKey : "monday";
-  const normalized = normalizeLaborModelBreakerSettings(settings);
-  return {
-    days: {
-      ...normalized.days,
-      [normalizedDay]: normalizeLaborModelBreakerList(breakers, []),
-    },
-  };
-}
 
-export function copyLaborModelBreakers(settings = {}, sourceDay = "monday", targetDays = []) {
-  const normalizedSourceDay = LABOR_MODEL_DAY_KEYS.includes(sourceDay) ? sourceDay : "monday";
-  const normalized = normalizeLaborModelBreakerSettings(settings);
-  const sourceBreakers = normalized.days[normalizedSourceDay] || [];
-  const normalizedTargets = Array.isArray(targetDays)
-    ? targetDays.filter((dayKey) => LABOR_MODEL_DAY_KEYS.includes(dayKey) && dayKey !== normalizedSourceDay)
-    : [];
-  if (normalizedTargets.length === 0) return normalized;
-  return {
-    days: {
-      ...normalized.days,
-      ...Object.fromEntries(normalizedTargets.map((dayKey) => [
-        dayKey,
-        normalizeLaborModelBreakerList(sourceBreakers, []),
-      ])),
-    },
-  };
-}
 
 
 
@@ -2548,12 +2415,6 @@ function getLaborModelColumnBreakerMeta(dayKey = "", column = {}, laborModel = {
 }
 
 
-function normalizeLaborModelGroupKey(value = "", row = {}) {
-  const explicit = normalizeHourAnalysisGroupKey(value, row);
-  if (explicit !== "other") return explicit;
-  const inferred = inferLaborModelGroupKeyFromLabel(row.role_label || row.roleLabel || row.label || row.shift_label || row.shiftLabel || "");
-  return HOUR_ANALYSIS_GROUP_LABELS[inferred] ? inferred : "other";
-}
 
 function makeDefaultLaborModelDay(dayKey, coverageWindow, columns = [], rowDefinitions = []) {
   const normalizedColumns = columns.map(([label, hours], index) => ({
@@ -2937,19 +2798,6 @@ export function summarizeLaborCapacityModelSnapshotDiff(currentSettings = {}, sn
 
 
 
-function normalizeHourAnalysisExpectationMap(input = {}) {
-  return Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => {
-    const defaults = DEFAULT_HOUR_ANALYSIS_EXPECTATIONS[group.key] || {};
-    const raw = readHourAnalysisGroupInput(input, group.key);
-    return [
-      group.key,
-      {
-        full_time: normalizeHourAnalysisRangeValue(raw.full_time ?? raw.fullTime, defaults.full_time, "full_time"),
-        part_time: normalizeHourAnalysisRangeValue(raw.part_time ?? raw.partTime, defaults.part_time, "part_time"),
-      },
-    ];
-  }));
-}
 
 
 
@@ -2957,16 +2805,6 @@ function normalizeHourAnalysisExpectationMap(input = {}) {
 
 
 
-function normalizeHourAnalysisPositionMovements(input = {}) {
-  if (!isObjectRow(input)) return {};
-  return Object.fromEntries(Object.entries(input).flatMap(([key, value]) => {
-    const employeeKey = String(key || "").trim();
-    if (!employeeKey) return [];
-    const movement = normalizeHourAnalysisPositionMovement(value);
-    if (!movement.position_title) return [];
-    return [[employeeKey, movement]];
-  }));
-}
 
 
 
@@ -4363,16 +4201,6 @@ export function buildComplianceHistoryRows({
     .sort((a, b) => getHistoryTimestampValue(b.created_at) - getHistoryTimestampValue(a.created_at));
 }
 
-function buildComplianceHistoryFilterOptions(rows = []) {
-  const options = buildTrainingHistoryFilterOptions(rows);
-  return {
-    ...options,
-    categoryTasks: [
-      { value: "", label: "All checkpoints / requirements" },
-      ...options.categoryTasks.slice(1),
-    ],
-  };
-}
 
 
 
