@@ -1,0 +1,1115 @@
+export function rotationStudioStyles(C) {
+  return `
+        .rotation-studio-shell {
+          --studio-ink: ${C.text};
+          --studio-muted: ${C.textMut};
+          --studio-border: ${C.border};
+          --studio-border-light: ${C.borderLight};
+          --studio-primary: ${C.pri};
+          --studio-primary-soft: ${C.priLt};
+          display: grid;
+          gap: 12px;
+        }
+        .rotation-date-picker-frame {
+          position: relative;
+          display: grid;
+          gap: 10px;
+        }
+        .rotation-config-bar {
+          display: grid;
+          grid-template-columns: minmax(160px, 0.9fr) minmax(190px, 1.1fr) repeat(4, minmax(116px, 1fr)) minmax(132px, 0.75fr);
+          align-items: stretch;
+          gap: 0;
+          min-height: 86px;
+          border: 1px solid rgba(148, 163, 184, 0.34);
+          border-radius: 999px;
+          background:
+            linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96)),
+            radial-gradient(circle at 12% 0%, rgba(34, 197, 94, 0.12), transparent 34%);
+          box-shadow: 0 24px 52px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+          overflow: hidden;
+          animation: rotationStudioSettle 360ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+        }
+        .rotation-config-segment {
+          position: relative;
+          display: grid;
+          align-content: center;
+          gap: 6px;
+          min-width: 0;
+          padding: 15px 18px;
+        }
+        .rotation-config-segment.rotation-date-trigger {
+          border: 0;
+          background:
+            linear-gradient(135deg, rgba(219, 234, 254, 0.94), rgba(240, 253, 244, 0.96));
+          cursor: pointer;
+          color: inherit;
+          font: inherit;
+          text-align: left;
+          transition: background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+        }
+        .rotation-config-segment.rotation-date-trigger:hover,
+        .rotation-config-segment.rotation-date-trigger:focus-visible,
+        .rotation-config-segment.rotation-date-trigger.is-open {
+          outline: none;
+          box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.35), inset 0 0 0 999px rgba(255, 255, 255, 0.18);
+        }
+        .rotation-config-segment.rotation-date-trigger:hover {
+          transform: translateY(-1px);
+        }
+        .rotation-date-trigger-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          min-width: 0;
+        }
+        .rotation-date-trigger-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 28px;
+          height: 28px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.80);
+          color: #1D4ED8;
+          box-shadow: 0 8px 18px rgba(29, 78, 216, 0.13);
+          flex: 0 0 auto;
+        }
+        .rotation-date-panel {
+          position: absolute;
+          top: calc(100% + 10px);
+          left: 0;
+          right: 0;
+          z-index: 18;
+          display: grid;
+          gap: 14px;
+          padding: 16px;
+          border: 1px solid rgba(148, 163, 184, 0.34);
+          border-radius: 24px;
+          background:
+            linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(248, 250, 252, 0.98));
+          box-shadow: 0 28px 70px rgba(15, 23, 42, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.92);
+          animation: rotationStudioSettle 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+        }
+        .rotation-date-panel-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 14px;
+        }
+        .rotation-date-heading {
+          display: grid;
+          gap: 4px;
+          min-width: 0;
+        }
+        .rotation-date-kicker {
+          color: #1D4ED8;
+          font-size: 10px;
+          font-weight: 950;
+          text-transform: uppercase;
+        }
+        .rotation-date-heading strong {
+          color: var(--studio-ink);
+          font-size: 20px;
+          font-weight: 950;
+          line-height: 1.1;
+        }
+        .rotation-date-heading span:last-child {
+          color: var(--studio-muted);
+          font-size: 11px;
+          font-weight: 800;
+          line-height: 1.35;
+        }
+        .rotation-date-month-controls {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 5px;
+          border: 1px solid rgba(148, 163, 184, 0.28);
+          border-radius: 999px;
+          background: #F8FAFC;
+          flex: 0 0 auto;
+        }
+        .rotation-date-month-controls span {
+          min-width: 128px;
+          color: var(--studio-ink);
+          font-size: 12px;
+          font-weight: 950;
+          text-align: center;
+          white-space: nowrap;
+        }
+        .rotation-date-month-controls button {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 30px;
+          height: 30px;
+          border: 0;
+          border-radius: 999px;
+          background: #FFFFFF;
+          color: var(--studio-ink);
+          cursor: pointer;
+          box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+          transition: transform 140ms ease, box-shadow 140ms ease;
+        }
+        .rotation-date-month-controls button:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
+        }
+        .rotation-date-month-controls .rotation-date-close {
+          color: var(--studio-muted);
+          box-shadow: none;
+        }
+        .rotation-date-layout {
+          display: grid;
+          grid-template-columns: minmax(0, 1.5fr) minmax(290px, 0.7fr);
+          gap: 14px;
+          align-items: stretch;
+        }
+        .rotation-calendar-pane {
+          display: grid;
+          gap: 10px;
+          min-width: 0;
+        }
+        .rotation-date-quick-row {
+          display: flex;
+          gap: 7px;
+          flex-wrap: wrap;
+        }
+        .rotation-date-quick-row button {
+          min-height: 30px;
+          padding: 0 11px;
+          border: 1px solid rgba(148, 163, 184, 0.30);
+          border-radius: 999px;
+          background: #FFFFFF;
+          color: var(--studio-muted);
+          cursor: pointer;
+          font: inherit;
+          font-size: 11px;
+          font-weight: 900;
+          transition: background 140ms ease, color 140ms ease, border-color 140ms ease, transform 140ms ease;
+        }
+        .rotation-date-quick-row button:hover,
+        .rotation-date-quick-row button.is-active {
+          transform: translateY(-1px);
+          border-color: rgba(29, 78, 216, 0.30);
+          background: #EFF6FF;
+          color: #1D4ED8;
+        }
+        .rotation-calendar-weekdays,
+        .rotation-calendar-grid {
+          display: grid;
+          grid-template-columns: repeat(7, minmax(0, 1fr));
+          gap: 6px;
+        }
+        .rotation-calendar-weekdays span {
+          color: var(--studio-muted);
+          font-size: 10px;
+          font-weight: 950;
+          text-align: center;
+          text-transform: uppercase;
+        }
+        .rotation-calendar-day {
+          position: relative;
+          display: grid;
+          grid-template-rows: auto 1fr auto;
+          gap: 5px;
+          min-height: 74px;
+          padding: 8px;
+          border: 1px solid rgba(226, 232, 240, 0.92);
+          border-radius: 14px;
+          background: #FFFFFF;
+          color: var(--studio-ink);
+          cursor: pointer;
+          font: inherit;
+          text-align: left;
+          overflow: hidden;
+          transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease, background 140ms ease;
+        }
+        .rotation-calendar-day:hover,
+        .rotation-calendar-day:focus-visible {
+          outline: none;
+          transform: translateY(-2px);
+          border-color: rgba(29, 78, 216, 0.34);
+          box-shadow: 0 14px 24px rgba(15, 23, 42, 0.12);
+        }
+        .rotation-calendar-day.is-outside {
+          opacity: 0.44;
+          background: #F8FAFC;
+        }
+        .rotation-calendar-day.is-selected {
+          border-color: #1D4ED8;
+          background: linear-gradient(180deg, #EFF6FF, #FFFFFF);
+          box-shadow: inset 0 0 0 2px rgba(29, 78, 216, 0.18), 0 16px 30px rgba(29, 78, 216, 0.12);
+        }
+        .rotation-calendar-day.is-today:not(.is-selected) {
+          border-color: rgba(132, 204, 22, 0.60);
+          background: #F7FEE7;
+        }
+        .rotation-calendar-day.is-published {
+          border-color: rgba(22, 163, 74, 0.42);
+        }
+        .rotation-calendar-day.is-draft {
+          border-color: rgba(245, 158, 11, 0.42);
+        }
+        .rotation-calendar-day-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 4px;
+        }
+        .rotation-calendar-day-top > span {
+          color: var(--studio-ink);
+          font-size: 15px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .rotation-calendar-day-top small {
+          color: #65A30D;
+          font-size: 8.5px;
+          font-weight: 950;
+          text-transform: uppercase;
+        }
+        .rotation-calendar-day-status {
+          align-self: end;
+          color: var(--studio-muted);
+          font-size: 10px;
+          font-weight: 900;
+          line-height: 1.15;
+          overflow-wrap: anywhere;
+        }
+        .rotation-calendar-day.is-published .rotation-calendar-day-status,
+        .rotation-calendar-day.is-ready .rotation-calendar-day-status {
+          color: #15803D;
+        }
+        .rotation-calendar-day.is-draft .rotation-calendar-day-status {
+          color: #B45309;
+        }
+        .rotation-calendar-day.is-missing .rotation-calendar-day-status {
+          color: #991B1B;
+        }
+        .rotation-calendar-day-dots {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          min-height: 7px;
+        }
+        .rotation-calendar-day-dots i {
+          width: 7px;
+          height: 7px;
+          border-radius: 999px;
+          display: inline-block;
+        }
+        .rotation-calendar-day-dots .is-published { background: #16A34A; }
+        .rotation-calendar-day-dots .is-draft { background: #F59E0B; }
+        .rotation-calendar-day-dots .is-staffed { background: #2563EB; }
+        .rotation-calendar-day-dots .is-ready { background: #84CC16; }
+        .rotation-date-summary-panel {
+          display: grid;
+          gap: 10px;
+          min-width: 0;
+        }
+        .rotation-date-selected-card {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 10px;
+          padding: 12px;
+          border: 1px solid rgba(148, 163, 184, 0.30);
+          border-radius: 16px;
+          background: #FFFFFF;
+        }
+        .rotation-date-selected-card.is-published {
+          border-color: rgba(22, 163, 74, 0.38);
+          background: #F0FDF4;
+        }
+        .rotation-date-selected-card.is-draft {
+          border-color: rgba(245, 158, 11, 0.38);
+          background: #FFFBEB;
+        }
+        .rotation-date-selected-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 38px;
+          height: 38px;
+          border-radius: 12px;
+          background: #111827;
+          color: #FFFFFF;
+          box-shadow: 0 12px 24px rgba(17, 24, 39, 0.18);
+        }
+        .rotation-date-selected-card div {
+          display: grid;
+          gap: 2px;
+          min-width: 0;
+        }
+        .rotation-date-selected-card div span {
+          color: var(--studio-muted);
+          font-size: 10px;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+        .rotation-date-selected-card div strong {
+          color: var(--studio-ink);
+          font-size: 14px;
+          font-weight: 950;
+          line-height: 1.2;
+        }
+        .rotation-date-state-pill {
+          justify-self: end;
+          padding: 5px 9px;
+          border-radius: 999px;
+          background: #F1F5F9;
+          color: var(--studio-muted);
+          font-size: 10px;
+          font-weight: 950;
+          white-space: nowrap;
+        }
+        .rotation-date-selected-card.is-published .rotation-date-state-pill {
+          background: #DCFCE7;
+          color: #15803D;
+        }
+        .rotation-date-selected-card.is-draft .rotation-date-state-pill {
+          background: #FEF3C7;
+          color: #B45309;
+        }
+        .rotation-date-signal-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 8px;
+        }
+        .rotation-date-signal-grid div {
+          display: grid;
+          gap: 4px;
+          padding: 10px;
+          border: 1px solid rgba(226, 232, 240, 0.92);
+          border-radius: 14px;
+          background: #FFFFFF;
+        }
+        .rotation-date-signal-grid span,
+        .rotation-date-submissions-title span {
+          color: var(--studio-muted);
+          font-size: 9.5px;
+          font-weight: 950;
+          text-transform: uppercase;
+        }
+        .rotation-date-signal-grid strong {
+          color: var(--studio-ink);
+          font-size: 13px;
+          font-weight: 950;
+          line-height: 1.1;
+          overflow-wrap: anywhere;
+        }
+        .rotation-date-submissions {
+          display: grid;
+          gap: 7px;
+          padding: 12px;
+          border: 1px solid rgba(226, 232, 240, 0.92);
+          border-radius: 16px;
+          background: #F8FAFC;
+        }
+        .rotation-date-submissions-title {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+        .rotation-date-submissions-title small {
+          color: #1D4ED8;
+          font-size: 10px;
+          font-weight: 900;
+        }
+        .rotation-date-submissions button {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto auto;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 9px;
+          border: 1px solid rgba(148, 163, 184, 0.24);
+          border-radius: 12px;
+          background: #FFFFFF;
+          color: var(--studio-ink);
+          cursor: pointer;
+          font: inherit;
+          text-align: left;
+          transition: transform 130ms ease, box-shadow 130ms ease;
+        }
+        .rotation-date-submissions button:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 10px 18px rgba(15, 23, 42, 0.10);
+        }
+        .rotation-date-submissions button span {
+          font-size: 11px;
+          font-weight: 950;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .rotation-date-submissions button strong {
+          color: var(--studio-muted);
+          font-size: 10px;
+          font-weight: 950;
+        }
+        .rotation-date-submissions button small {
+          color: #1D4ED8;
+          font-size: 10px;
+          font-weight: 950;
+        }
+        .rotation-date-empty-state {
+          padding: 12px;
+          border: 1px dashed rgba(148, 163, 184, 0.42);
+          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.72);
+          color: var(--studio-muted);
+          font-size: 11px;
+          font-weight: 800;
+          line-height: 1.4;
+        }
+        .rotation-config-segment + .rotation-config-segment {
+          border-left: 1px solid rgba(148, 163, 184, 0.22);
+        }
+        .rotation-config-kicker,
+        .rotation-count-label,
+        .rotation-preview-eyebrow {
+          color: var(--studio-muted);
+          font-size: 10px;
+          font-weight: 900;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .rotation-config-title {
+          color: var(--studio-ink);
+          font-size: 15px;
+          font-weight: 900;
+          line-height: 1.1;
+        }
+        .rotation-shift-toggle {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 6px;
+          padding: 4px;
+          border-radius: 999px;
+          border: 1px solid rgba(148, 163, 184, 0.26);
+          background: rgba(241, 245, 249, 0.78);
+        }
+        .rotation-shift-toggle button {
+          border: 0;
+          border-radius: 999px;
+          padding: 9px 10px;
+          background: transparent;
+          color: var(--studio-muted);
+          cursor: pointer;
+          font: inherit;
+          font-size: 12px;
+          font-weight: 900;
+          transition: background 160ms ease, color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+        }
+        .rotation-shift-toggle button.is-active {
+          background: #FFFFFF;
+          color: var(--studio-primary);
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+        }
+        .rotation-shift-toggle button:hover {
+          transform: translateY(-1px);
+        }
+        .rotation-count-stepper {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          min-width: 0;
+        }
+        .rotation-count-stepper > div:first-child {
+          display: grid;
+          gap: 3px;
+          min-width: 0;
+        }
+        .rotation-count-value {
+          color: var(--studio-ink);
+          font-size: 24px;
+          font-weight: 950;
+          line-height: 1;
+        }
+        .rotation-count-controls {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          padding: 4px;
+          border-radius: 999px;
+          background: rgba(241, 245, 249, 0.86);
+          border: 1px solid rgba(148, 163, 184, 0.22);
+        }
+        .rotation-count-controls button {
+          width: 28px;
+          height: 28px;
+          border: 0;
+          border-radius: 999px;
+          background: #FFFFFF;
+          color: var(--studio-ink);
+          cursor: pointer;
+          font: inherit;
+          font-size: 17px;
+          font-weight: 900;
+          line-height: 1;
+          box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+          transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
+        }
+        .rotation-count-controls button:hover:not(:disabled) {
+          transform: translateY(-1px);
+          box-shadow: 0 8px 16px rgba(15, 23, 42, 0.12);
+        }
+        .rotation-count-controls button:disabled {
+          cursor: default;
+          opacity: 0.42;
+        }
+        .rotation-total-pill {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          min-height: 44px;
+          border-radius: 999px;
+          background: #111827;
+          color: #FFFFFF;
+          font-size: 12px;
+          font-weight: 900;
+          box-shadow: 0 14px 26px rgba(15, 23, 42, 0.22);
+        }
+        .rotation-studio-toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+        .rotation-studio-caption {
+          display: grid;
+          gap: 4px;
+          color: var(--studio-muted);
+          font-size: 11px;
+          font-weight: 700;
+          line-height: 1.45;
+        }
+        .rotation-studio-caption strong {
+          color: var(--studio-ink);
+          font-size: 13px;
+          font-weight: 900;
+        }
+        .rotation-roster-panel {
+          display: grid;
+          gap: 10px;
+          padding: 12px;
+          border: 1px solid rgba(148, 163, 184, 0.28);
+          border-radius: 14px;
+          background: rgba(248, 250, 252, 0.72);
+        }
+        .rotation-roster-grid {
+          display: grid;
+          gap: 7px;
+        }
+        .rotation-roster-row {
+          display: grid;
+          grid-template-columns: minmax(128px, 0.9fr) minmax(180px, 1fr) 120px 120px;
+          align-items: center;
+          gap: 8px;
+        }
+        .rotation-roster-role {
+          display: grid;
+          gap: 2px;
+          min-width: 0;
+          color: var(--studio-ink);
+          font-size: 12px;
+        }
+        .rotation-roster-role span,
+        .rotation-roster-empty {
+          color: var(--studio-muted);
+          font-size: 11px;
+          font-weight: 700;
+        }
+        .rotation-roster-row input {
+          min-width: 0;
+          border: 1px solid var(--studio-border);
+          border-radius: 10px;
+          padding: 8px 10px;
+          background: #FFFFFF;
+          color: var(--studio-ink);
+          font: inherit;
+          font-size: 12px;
+        }
+        .rotation-template-section {
+          display: grid;
+          gap: 7px;
+        }
+        .rotation-template-section-header {
+          display: flex;
+          align-items: flex-end;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+        .rotation-template-section-header h3 {
+          margin: 0;
+          color: var(--studio-ink);
+          font-size: 13px;
+          font-weight: 950;
+        }
+        .rotation-template-section-header p {
+          margin: 2px 0 0;
+          color: var(--studio-muted);
+          font-size: 10px;
+          font-weight: 700;
+          line-height: 1.35;
+        }
+        .rotation-template-rail {
+          display: grid;
+          grid-auto-flow: column;
+          grid-auto-columns: minmax(142px, 158px);
+          gap: 7px;
+          overflow-x: auto;
+          padding: 2px 2px 7px;
+          scroll-snap-type: x proximity;
+        }
+        .rotation-template-card {
+          position: relative;
+          display: grid;
+          grid-template-rows: 30px minmax(0, 1fr);
+          gap: 5px;
+          height: 78px;
+          padding: 7px;
+          border: 1px solid rgba(148, 163, 184, 0.30);
+          border-radius: 10px;
+          background: linear-gradient(180deg, #FFFFFF, #F8FAFC);
+          color: var(--studio-ink);
+          text-align: left;
+          font: inherit;
+          cursor: pointer;
+          scroll-snap-align: start;
+          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+          transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+          overflow: hidden;
+        }
+        .rotation-template-card::after {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background: radial-gradient(circle at 18% 0%, rgba(20, 83, 45, 0.11), transparent 34%);
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity 180ms ease;
+        }
+        .rotation-template-card:hover,
+        .rotation-template-card:focus-visible,
+        .rotation-template-card.is-previewing {
+          transform: translateY(-1px);
+          border-color: rgba(20, 83, 45, 0.34);
+          box-shadow: 0 12px 22px rgba(15, 23, 42, 0.12);
+          outline: none;
+        }
+        .rotation-template-card:hover::after,
+        .rotation-template-card.is-previewing::after {
+          opacity: 1;
+        }
+        .rotation-template-card.is-applied {
+          border-color: rgba(20, 83, 45, 0.55);
+          background: linear-gradient(180deg, #F0FDF4, #FFFFFF);
+          box-shadow: 0 12px 24px rgba(20, 83, 45, 0.13);
+        }
+        .rotation-template-thumb {
+          display: grid;
+          gap: 2px;
+          padding: 4px;
+          border-radius: 8px;
+          background: rgba(241, 245, 249, 0.8);
+          border: 1px solid rgba(148, 163, 184, 0.22);
+          overflow: hidden;
+        }
+        .rotation-template-thumb-lane {
+          display: grid;
+          grid-template-columns: repeat(6, 1fr);
+          gap: 2px;
+        }
+        .rotation-template-thumb-lane span {
+          height: 5px;
+          border: 1px solid;
+          border-radius: 999px;
+        }
+        .rotation-template-card-name {
+          color: var(--studio-ink);
+          font-size: 10.5px;
+          font-weight: 950;
+          line-height: 1.16;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+        .rotation-preview-canvas {
+          display: grid;
+          gap: 12px;
+          padding: 14px;
+          border: 1px solid rgba(148, 163, 184, 0.32);
+          border-radius: 18px;
+          background:
+            linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.92)),
+            radial-gradient(circle at 85% 8%, rgba(59, 130, 246, 0.10), transparent 28%);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+        }
+        .rotation-preview-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+        .rotation-preview-header h4 {
+          margin: 2px 0 0;
+          color: var(--studio-ink);
+          font-size: 15px;
+          font-weight: 950;
+        }
+        .rotation-preview-status {
+          display: inline-flex;
+          align-items: center;
+          min-height: 30px;
+          padding: 0 10px;
+          border-radius: 999px;
+          background: rgba(241, 245, 249, 0.92);
+          color: var(--studio-muted);
+          font-size: 11px;
+          font-weight: 900;
+        }
+        .rotation-preview-status.is-preview {
+          background: ${C.warnLt};
+          color: ${C.warn};
+        }
+        .rotation-preview-status.is-applied {
+          background: ${C.sucLt};
+          color: ${C.suc};
+        }
+        .rotation-preview-scroll {
+          overflow: auto;
+          border: 1px solid rgba(148, 163, 184, 0.24);
+          border-radius: 14px;
+          background: #FFFFFF;
+        }
+        .rotation-preview-grid {
+          display: grid;
+          min-width: 900px;
+          font-size: 11px;
+        }
+        .rotation-preview-axis,
+        .rotation-preview-lane,
+        .rotation-preview-time {
+          position: sticky;
+          z-index: 2;
+          background: #F8FAFC;
+          border-bottom: 1px solid var(--studio-border-light);
+        }
+        .rotation-preview-axis,
+        .rotation-preview-time {
+          left: 0;
+          z-index: 3;
+          border-right: 1px solid var(--studio-border);
+        }
+        .rotation-preview-axis,
+        .rotation-preview-lane {
+          top: 0;
+        }
+        .rotation-preview-axis {
+          padding: 12px 10px;
+          color: var(--studio-muted);
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .rotation-preview-lane {
+          display: grid;
+          gap: 2px;
+          padding: 10px 8px;
+          text-align: center;
+          border-right: 1px solid rgba(226, 232, 240, 0.68);
+          color: var(--studio-ink);
+          font-weight: 950;
+        }
+        .rotation-preview-lane small {
+          color: var(--studio-muted);
+          font-size: 9px;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+        .rotation-preview-time {
+          display: flex;
+          align-items: center;
+          padding: 10px;
+          color: var(--studio-muted);
+          font-size: 10px;
+          font-weight: 900;
+          white-space: nowrap;
+        }
+        .rotation-preview-cell {
+          position: relative;
+          min-height: 54px;
+          border: 0;
+          border-right: 1px solid rgba(226, 232, 240, 0.70);
+          border-bottom: 1px solid rgba(226, 232, 240, 0.70);
+          background: var(--cell-bg);
+          color: var(--cell-text);
+          cursor: pointer;
+          font: inherit;
+          font-size: 10px;
+          font-weight: 900;
+          text-align: center;
+          transition: background 130ms ease, color 130ms ease, opacity 130ms ease, box-shadow 130ms ease, transform 130ms ease;
+        }
+        .rotation-preview-cell:disabled {
+          cursor: default;
+        }
+        .rotation-preview-cell > span {
+          display: block;
+          padding: 0 7px;
+          line-height: 1.25;
+        }
+        .rotation-preview-cell small {
+          display: block;
+          margin-top: 2px;
+          padding: 0 7px;
+          opacity: 0.78;
+          font-size: 9px;
+          font-weight: 800;
+          line-height: 1.25;
+        }
+        .rotation-preview-cell.is-empty {
+          background: linear-gradient(180deg, #FFFFFF, #FBFCFE);
+          color: #CBD5E1;
+        }
+        .rotation-preview-cell.is-filled {
+          box-shadow: inset 0 0 0 1px var(--cell-border);
+        }
+        .rotation-preview-cell.is-ghost {
+          opacity: 0.48;
+          box-shadow: inset 0 0 0 1px var(--cell-border), inset 0 0 0 999px rgba(255, 255, 255, 0.20);
+          animation: rotationGhostIn 140ms ease-out both;
+        }
+        .rotation-preview-cell.is-selected {
+          z-index: 1;
+          box-shadow: inset 0 0 0 2px #111827, 0 0 0 3px rgba(17, 24, 39, 0.12);
+        }
+        .rotation-preview-cell:not(:disabled):hover {
+          transform: translateY(-1px);
+          box-shadow: inset 0 0 0 2px rgba(17, 24, 39, 0.38), 0 10px 18px rgba(15, 23, 42, 0.10);
+          z-index: 2;
+        }
+        .rotation-preview-cell.is-editable::after {
+          content: "Edit";
+          position: absolute;
+          right: 5px;
+          bottom: 4px;
+          padding: 2px 5px;
+          border-radius: 999px;
+          background: rgba(17, 24, 39, 0.82);
+          color: #FFFFFF;
+          font-size: 8px;
+          font-weight: 950;
+          opacity: 0;
+          transform: translateY(2px);
+          transition: opacity 130ms ease, transform 130ms ease;
+          pointer-events: none;
+        }
+        .rotation-preview-cell.is-editable:hover::after,
+        .rotation-preview-cell.is-selected::after {
+          opacity: 1;
+          transform: translateY(0);
+        }
+        .rotation-preview-empty-copy {
+          opacity: 0;
+        }
+        .rotation-cell-inspector {
+          position: sticky;
+          top: 10px;
+          z-index: 8;
+          display: grid;
+          grid-template-columns: minmax(126px, 0.3fr) minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 10px;
+          padding: 10px;
+          border: 1px solid rgba(17, 24, 39, 0.12);
+          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.98);
+          box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+          animation: rotationStudioSettle 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+          backdrop-filter: blur(12px);
+        }
+        .rotation-cell-inspector > div:first-child {
+          display: grid;
+          gap: 2px;
+        }
+        .rotation-cell-inspector strong {
+          color: var(--studio-ink);
+          font-size: 13px;
+          font-weight: 950;
+        }
+        .rotation-cell-inspector span {
+          color: var(--studio-muted);
+          font-size: 11px;
+          font-weight: 800;
+        }
+        .rotation-task-palette {
+          display: flex;
+          gap: 5px;
+          flex-wrap: wrap;
+        }
+        .rotation-task-palette button,
+        .rotation-inspector-close {
+          border: 1px solid;
+          border-radius: 999px;
+          padding: 5px 8px;
+          cursor: pointer;
+          font: inherit;
+          font-size: 9.5px;
+          font-weight: 900;
+          transition: transform 130ms ease, box-shadow 130ms ease;
+        }
+        .rotation-task-palette button:hover,
+        .rotation-inspector-close:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 8px 14px rgba(15, 23, 42, 0.10);
+        }
+        .rotation-inspector-close {
+          width: fit-content;
+          border-color: var(--studio-border);
+          background: #FFFFFF;
+          color: var(--studio-muted);
+        }
+        .rotation-action-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+        .rotation-action-note {
+          color: var(--studio-muted);
+          font-size: 11px;
+          font-weight: 700;
+          line-height: 1.45;
+        }
+        .rotation-action-buttons {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .rotation-muted-button {
+          border: 1px solid var(--studio-border);
+          border-radius: 10px;
+          background: #FFFFFF;
+          color: var(--studio-ink);
+          cursor: pointer;
+          font: inherit;
+          font-size: 11px;
+          font-weight: 900;
+          padding: 7px 10px;
+        }
+        @keyframes rotationStudioSettle {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes rotationGhostIn {
+          from { opacity: 0; transform: scale(0.985); }
+          to { opacity: 0.48; transform: scale(1); }
+        }
+        @media (max-width: 1120px) {
+          .rotation-config-bar {
+            grid-template-columns: minmax(180px, 1fr) minmax(220px, 1fr);
+            border-radius: 24px;
+          }
+          .rotation-config-segment:nth-child(odd) {
+            border-left: 0;
+          }
+          .rotation-config-segment {
+            border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+          }
+          .rotation-date-layout {
+            grid-template-columns: 1fr;
+          }
+        }
+        @media (max-width: 720px) {
+          .rotation-date-panel {
+            position: absolute;
+            top: 86px;
+            left: -60px;
+            right: auto;
+            width: min(330px, calc(100vw - 86px));
+            box-sizing: border-box;
+            border-radius: 18px;
+            padding: 12px;
+            max-height: calc(100vh - 130px);
+            overflow-y: auto;
+          }
+          .rotation-date-panel-header,
+          .rotation-date-month-controls {
+            align-items: stretch;
+          }
+          .rotation-date-panel-header {
+            display: grid;
+          }
+          .rotation-date-month-controls {
+            justify-content: space-between;
+            width: 100%;
+            box-sizing: border-box;
+          }
+          .rotation-date-month-controls span {
+            min-width: 0;
+            flex: 1;
+          }
+          .rotation-calendar-weekdays,
+          .rotation-calendar-grid {
+            gap: 4px;
+          }
+          .rotation-calendar-day {
+            min-height: 46px;
+            border-radius: 11px;
+            padding: 6px;
+            grid-template-rows: auto auto;
+          }
+          .rotation-calendar-day-status {
+            display: none;
+          }
+          .rotation-calendar-day-top small {
+            display: none;
+          }
+          .rotation-date-signal-grid {
+            grid-template-columns: 1fr;
+          }
+          .rotation-date-selected-card {
+            grid-template-columns: auto minmax(0, 1fr);
+          }
+          .rotation-date-state-pill {
+            grid-column: 1 / -1;
+            justify-self: start;
+          }
+          .rotation-config-bar {
+            grid-template-columns: 1fr;
+            border-radius: 22px;
+          }
+          .rotation-config-segment + .rotation-config-segment {
+            border-left: 0;
+          }
+          .rotation-roster-row {
+            grid-template-columns: 1fr;
+          }
+          .rotation-template-rail {
+            grid-auto-columns: minmax(148px, 48vw);
+          }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .rotation-studio-shell *,
+          .rotation-studio-shell *::before,
+          .rotation-studio-shell *::after {
+            animation: none !important;
+            transition: none !important;
+          }
+        }
+      `;
+}

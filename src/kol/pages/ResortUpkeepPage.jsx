@@ -61,202 +61,76 @@ import {
   StackBadge,
 } from "../../shared/listSurface";
 import { CustomSelect, LaborIntro } from "../../shared/ui";
-
-const TABS = [
-  { id: "due", label: "Due" },
-  { id: "vendors", label: "Vendors" },
-  { id: "licenses", label: "Licenses" },
-  { id: "guide", label: "Guide" },
-];
-
-const EMPTY_DASHBOARD = {
-  maintenance: [],
-  maintenanceSummary: { active: 0, overdue: 0, ready_to_submit: 0, submitted: 0, open: 0 },
-  vendors: { active: 0, archived: 0 },
-  licenses: { active: 0, non_compliant: 0, expiring_soon: 0 },
-  troubleshooting: [],
-};
-
-const GOOGLE_PLACES_API_KEY = import.meta.env?.VITE_GOOGLE_PLACES_API_KEY || "";
-let googlePlacesScriptPromise = null;
-
-function loadGooglePlacesScript() {
-  if (typeof document === "undefined") return Promise.resolve(false);
-  if (window.google?.maps?.places) return Promise.resolve(true);
-  if (!GOOGLE_PLACES_API_KEY) return Promise.resolve(false);
-  if (googlePlacesScriptPromise) return googlePlacesScriptPromise;
-  googlePlacesScriptPromise = new Promise((resolve, reject) => {
-    const existing = document.querySelector("script[data-k9-resort-upkeep-google-places]");
-    if (existing) {
-      existing.addEventListener("load", () => resolve(true), { once: true });
-      existing.addEventListener("error", reject, { once: true });
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_PLACES_API_KEY)}&libraries=places`;
-    script.async = true;
-    script.defer = true;
-    script.dataset.k9ResortUpkeepGooglePlaces = "true";
-    script.onload = () => resolve(true);
-    script.onerror = reject;
-    document.head.appendChild(script);
-  }).catch(() => false);
-  return googlePlacesScriptPromise;
-}
-
-async function searchGoogleVendors(query) {
-  const ready = await loadGooglePlacesScript();
-  if (!ready || !window.google?.maps?.places?.AutocompleteService) return [];
-  const service = new window.google.maps.places.AutocompleteService();
-  return new Promise((resolve) => {
-    service.getPlacePredictions({ input: query, types: ["establishment"] }, (predictions, status) => {
-      if (status !== window.google.maps.places.PlacesServiceStatus.OK || !predictions) {
-        resolve([]);
-        return;
-      }
-      resolve(predictions.slice(0, 5));
-    });
-  });
-}
-
-async function getGoogleVendorDetails(placeId) {
-  const ready = await loadGooglePlacesScript();
-  if (!ready || !window.google?.maps?.places?.PlacesService || !placeId) return null;
-  const div = document.createElement("div");
-  const service = new window.google.maps.places.PlacesService(div);
-  return new Promise((resolve) => {
-    service.getDetails(
-      { placeId, fields: ["place_id", "name", "formatted_address", "address_components", "website"] },
-      (place, status) => resolve(status === window.google.maps.places.PlacesServiceStatus.OK ? place : null),
-    );
-  });
-}
-
-function parsePlaceAddress(place) {
-  const components = place?.address_components || [];
-  const byType = (type) => components.find((item) => item.types?.includes(type));
-  const streetNumber = byType("street_number")?.long_name || "";
-  const route = byType("route")?.long_name || "";
-  const city = byType("locality")?.long_name || byType("postal_town")?.long_name || byType("sublocality")?.long_name || "";
-  const state = byType("administrative_area_level_1")?.short_name || "";
-  const zip = byType("postal_code")?.long_name || "";
-  const country = byType("country")?.short_name || "US";
-  const line1 = [streetNumber, route].filter(Boolean).join(" ").trim();
-  return {
-    business_address: place?.formatted_address || line1,
-    address_line_1: line1,
-    address_city: city,
-    address_state: state,
-    address_postal_code: zip,
-    address_country: country,
-    google_place_id: place?.place_id || "",
-  };
-}
-
-const input = {
-  width: "100%",
-  boxSizing: "border-box",
-  border: `1px solid ${C.border}`,
-  borderRadius: 10,
-  background: "#fff",
-  color: C.text,
-  padding: "10px 12px",
-  fontSize: 13,
-  fontFamily: "inherit",
-};
-
-function actorName(profile) {
-  return profile?.full_name || profile?.name || profile?.email || "K9 Operations";
-}
-
-function blankVendor(locationId) {
-  return {
-    location_id: locationId,
-    business_name: "",
-    business_address: "",
-    website: "",
-    has_contract: false,
-    contract_effective_start: "",
-    contract_effective_end: "",
-    contact_info: [],
-    notes: "",
-    is_archived: false,
-  };
-}
-
-function blankLicense(locationId) {
-  return {
-    location_id: locationId,
-    requirement_name: "",
-    issuing_organization: "",
-    status: "non_compliant",
-    expiration_date: "",
-    next_expected_date: "",
-    cadence_months: "",
-    contact_info: [],
-    website_links: [],
-    notes: "",
-    is_active: true,
-  };
-}
-
-function primaryContact(contacts = []) {
-  const contact = Array.isArray(contacts) ? contacts[0] || {} : {};
-  return {
-    name: String(contact.name || contact.contact_name || ""),
-    role: String(contact.role || contact.title || ""),
-    phone: String(contact.phone || contact.phone_number || ""),
-    email: String(contact.email || ""),
-    notes: String(contact.notes || contact.note || ""),
-  };
-}
-
-function primaryLink(links = []) {
-  const link = Array.isArray(links) ? links[0] || {} : {};
-  return {
-    label: String(link.label || link.title || ""),
-    url: String(link.url || link.href || link.website || ""),
-  };
-}
-
-function mergePrimaryContact(existing = [], contact) {
-  const cleaned = {
-    name: contact.name.trim(),
-    role: contact.role.trim(),
-    phone: contact.phone.trim(),
-    email: contact.email.trim(),
-    notes: contact.notes.trim(),
-  };
-  const rest = Array.isArray(existing) ? existing.slice(1) : [];
-  return Object.values(cleaned).some(Boolean) ? [cleaned, ...rest] : rest;
-}
-
-function mergePrimaryLink(existing = [], link) {
-  const cleaned = {
-    label: link.label.trim() || "Requirement link",
-    url: link.url.trim(),
-  };
-  const rest = Array.isArray(existing) ? existing.slice(1) : [];
-  return cleaned.url ? [cleaned, ...rest] : rest;
-}
-
-function friendlyErrorMessage(error, fallback = "This Resort Upkeep section could not be loaded.") {
-  const message = error?.message || String(error || "");
-  if (/failed to fetch/i.test(message)) return `${fallback} Network access failed. Retry when the connection settles.`;
-  return message || fallback;
-}
-
-function withUpkeepTimeout(promise, message = "This Resort Upkeep request took too long to load.", ms = 12000) {
-  let timeoutId;
-  const timeout = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error(message)), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
-}
-
-function plural(value, single, many = `${single}s`) {
-  return `${value} ${value === 1 ? single : many}`;
-}
+import { searchGoogleVendors, getGoogleVendorDetails, parsePlaceAddress } from "./resortUpkeep/googlePlaces";
+import {
+  actorName,
+  blankVendor,
+  blankLicense,
+  primaryContact,
+  primaryLink,
+  mergePrimaryContact,
+  mergePrimaryLink,
+  friendlyErrorMessage,
+  withUpkeepTimeout,
+  plural,
+  formatDueRange,
+} from "./resortUpkeep/upkeepHelpers";
+import {
+  TABS,
+  EMPTY_DASHBOARD,
+  INTRO_DEFAULTS,
+  DUE_WINDOWS,
+  KIND_TONE,
+  dueToneToStatus,
+  dueToneToBadge,
+} from "./resortUpkeep/constants";
+import {
+  SmallPillStyle,
+  panel,
+  eyebrow,
+  workspaceGrid,
+  leftRail,
+  detailPanel,
+  subPanel,
+  sectionLabel,
+  cardButton,
+  rowButton,
+  selectedRowButton,
+  compactRowButton,
+  selectedCompactRowButton,
+  maintenanceItem,
+  checkedMaintenanceItem,
+  primaryBtn,
+  secondaryBtn,
+  chipButton,
+  dangerBtn,
+  checkRow,
+  inlineLinkButton,
+  muOverlay,
+  muCard,
+  muHead,
+  muBody,
+  muFoot,
+  muProgressTrack,
+  muSmallBtn,
+  muSmallPrimary,
+  muItem,
+  muItemDone,
+  muToggle,
+  muToggleOn,
+  impTh,
+  impTd,
+  impCellInput,
+  impCellFocus,
+  impCellBlur,
+  input,
+  mxTableWrap,
+  mxHeadRow,
+  mxHeadCell,
+  mxRow,
+  mxText,
+  mxArrow,
+} from "./resortUpkeep/styles";
 
 export default function ResortUpkeepPage({ profile, locationId: selectedLocationId, addGlobalToast = () => {} }) {
   const locationId = selectedLocationId || profile?.location_id || "";
@@ -397,41 +271,6 @@ function GearIcon() {
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   );
-}
-
-const INTRO_DEFAULTS = {
-  due: "Everything overdue or coming due across building maintenance, licenses, and vendor contracts. Open a maintenance row to complete its checklist.",
-  vendors: "The facility vendor and utility call list: trade, company, contact, contract, service frequency and cost. A full company directory (multiple contacts and documents per company) is planned; for now this is the call list.",
-  licenses: "Permits and compliance requirements with renewal frequency, due dates, compliance status, proof documents, and an update log.",
-  guide: "Field reference and escalation paths for common facility issues. Expanded for fast scanning under operational pressure.",
-};
-
-const DUE_WINDOWS = [
-  { id: 30, label: "30d" },
-  { id: 60, label: "60d" },
-  { id: 90, label: "90d" },
-  { id: Infinity, label: "All" },
-];
-
-// Map a due item's kind / urgency onto the shared StatusPill + StackBadge tones.
-const KIND_TONE = { maintenance: "primary", license: "info", vendor: "accent" };
-const dueToneToStatus = (tone) => (tone === "danger" ? "danger" : tone === "warn" ? "warning" : "neutral");
-const dueToneToBadge = (tone) => (tone === "danger" ? "danger" : tone === "warn" ? "warning" : "primary");
-
-function fmtDueCompact(value) {
-  if (!value) return "—";
-  try {
-    return new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" });
-  } catch {
-    return String(value);
-  }
-}
-
-function formatDueRange(item) {
-  if (item.dueStart && item.dueEnd && item.dueStart !== item.dueEnd) {
-    return `${fmtDueCompact(item.dueStart)} – ${fmtDueCompact(item.dueEnd)}`;
-  }
-  return fmtDueCompact(item.dueDate || item.dueEnd || item.dueStart);
 }
 
 // The unified "what's due" rollup, composed from the shared list-surface
@@ -947,24 +786,6 @@ function ChecklistItemRow({ item, period, locationId, actor, canEdit, onSaved })
   );
 }
 
-const muOverlay = { position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "6vh 16px", zIndex: 1000, overflowY: "auto" };
-const muCard = { background: "#fff", borderRadius: 14, width: "100%", maxWidth: 720, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 24px 60px rgba(15,23,42,0.28)" };
-const muHead = { padding: "16px 20px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 };
-const muBody = { padding: "16px 20px", overflowY: "auto" };
-const muFoot = { padding: "12px 20px", borderTop: `1px solid ${C.borderLight}`, display: "flex", alignItems: "center", gap: 12 };
-const muProgressTrack = { marginTop: 10, height: 6, borderRadius: 999, background: C.borderLight, overflow: "hidden" };
-const muSmallBtn = { display: "inline-flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", color: C.text, padding: "5px 10px", fontSize: 12, fontWeight: 700, fontFamily: "inherit", whiteSpace: "nowrap" };
-const muSmallPrimary = { border: 0, borderRadius: 8, background: C.pri, color: "#fff", padding: "5px 11px", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
-const muItem = { display: "flex", gap: 12, alignItems: "flex-start", padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: "#fff" };
-const muItemDone = { ...muItem, borderColor: "#BBF7D0", background: "#F0FDF4" };
-const muToggle = { width: 26, height: 26, flexShrink: 0, borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", color: "transparent", cursor: "pointer", fontWeight: 900, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" };
-const muToggleOn = { ...muToggle, border: `1.5px solid ${C.suc}`, background: C.suc, color: "#fff" };
-const impTh = { textAlign: "left", padding: "7px 9px", fontSize: 10, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", color: C.textMut, whiteSpace: "nowrap" };
-const impTd = { padding: "4px 6px", color: C.text, verticalAlign: "middle" };
-const impCellInput = { width: "100%", minWidth: 70, boxSizing: "border-box", border: `1px solid ${C.borderLight}`, borderRadius: 6, background: "transparent", padding: "4px 6px", fontSize: 11.5, fontFamily: "inherit", color: C.text };
-const impCellFocus = (e) => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = "#fff"; };
-const impCellBlur = (e) => { e.currentTarget.style.borderColor = C.borderLight; e.currentTarget.style.background = "transparent"; };
-
 // Reusable modal shell + labelled field for the Vendors/Licenses/Settings editors.
 function UpkeepModal({ title, subtitle, onClose, children, footer, maxWidth = 640 }) {
   return (
@@ -993,8 +814,6 @@ function MField({ label, children, hint }) {
     </label>
   );
 }
-
-const mSelect = { ...({ width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 10, background: "#fff", color: C.text, padding: "9px 11px", fontSize: 13, fontFamily: "inherit", fontWeight: 600 }) };
 
 function MaintenancePanel({ locationId, actor, dashboard, canComplete, canManage, onRefresh, toast }) {
   const [selectedId, setSelectedId] = useState("");
@@ -2791,14 +2610,6 @@ function TemplateVersionHistory({ versions, draft, canManage, busy, onDiscardDra
   );
 }
 
-const MX_GRID = "minmax(0, 1fr) 150px 140px 92px";
-const mxTableWrap = { border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden", background: C.surface };
-const mxHeadRow = { display: "grid", gridTemplateColumns: MX_GRID, gap: 8, padding: "8px 12px", background: "#fff", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut };
-const mxHeadCell = { display: "flex", alignItems: "center", minHeight: 16 };
-const mxRow = { display: "grid", gridTemplateColumns: MX_GRID, gap: 8, padding: "8px 12px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "start" };
-const mxText = { width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, lineHeight: 1.4, fontFamily: "inherit", color: C.text, background: "#fff", outline: "none", resize: "none", overflow: "hidden", minHeight: 38, whiteSpace: "pre-wrap", wordBreak: "break-word" };
-const mxArrow = { width: 24, height: 24, display: "inline-flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.border}`, borderRadius: 6, background: "#fff", color: C.textSec, cursor: "pointer", fontSize: 12, fontWeight: 800, fontFamily: "inherit", padding: 0 };
-
 function EntityLayout({
   title,
   subtitle,
@@ -3034,8 +2845,6 @@ function SmallPill({ children }) {
   return <span style={SmallPillStyle}>{children}</span>;
 }
 
-const SmallPillStyle = { borderRadius: 999, padding: "4px 8px", background: C.borderLight, color: C.textMut, fontSize: 11, fontWeight: 900 };
-
 function InlineAlert({ children, tone = "warning" }) {
   const danger = tone === "danger";
   return (
@@ -3084,158 +2893,3 @@ function EmptyCard({ title, text, compact = false }) {
     </div>
   );
 }
-
-const panel = {
-  border: `1px solid ${C.border}`,
-  borderRadius: 14,
-  background: "#fff",
-  padding: 16,
-  boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
-};
-
-const eyebrow = {
-  fontSize: 11,
-  fontWeight: 950,
-  color: C.pri,
-  letterSpacing: ".08em",
-  textTransform: "uppercase",
-};
-
-const workspaceGrid = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))",
-  gap: 16,
-  alignItems: "start",
-};
-
-const leftRail = {
-  display: "grid",
-  gap: 10,
-  alignContent: "start",
-  minWidth: 0,
-};
-
-const detailPanel = {
-  ...panel,
-  minHeight: 460,
-  minWidth: 0,
-};
-
-const subPanel = {
-  ...panel,
-  padding: 12,
-};
-
-const sectionLabel = {
-  fontSize: 11,
-  fontWeight: 950,
-  color: C.textMut,
-  textTransform: "uppercase",
-  letterSpacing: ".08em",
-};
-
-const cardButton = {
-  appearance: "none",
-  width: "100%",
-  textAlign: "left",
-  border: `1px solid ${C.border}`,
-  borderRadius: 14,
-  background: "#fff",
-  color: C.text,
-  padding: 14,
-  cursor: "pointer",
-  fontFamily: "inherit",
-  outline: "none",
-};
-
-const rowButton = {
-  ...cardButton,
-  borderRadius: 12,
-  padding: 13,
-};
-
-const selectedRowButton = {
-  ...rowButton,
-  borderColor: C.pri,
-  background: "#F8FAFC",
-  boxShadow: "inset 3px 0 0 #14532D",
-};
-
-const compactRowButton = {
-  ...cardButton,
-  padding: 10,
-  borderRadius: 10,
-};
-
-const selectedCompactRowButton = {
-  ...compactRowButton,
-  borderColor: C.pri,
-  background: "#F8FAFC",
-};
-
-const maintenanceItem = {
-  border: `1px solid ${C.border}`,
-  background: "#fff",
-  borderRadius: 12,
-  padding: 12,
-};
-
-const checkedMaintenanceItem = {
-  ...maintenanceItem,
-  borderColor: "#BBF7D0",
-  background: "#F0FDF4",
-};
-
-const articleCard = {
-  border: `1px solid ${C.border}`,
-  borderRadius: 12,
-  padding: 13,
-  background: "#fff",
-};
-
-const primaryBtn = {
-  appearance: "none",
-  border: 0,
-  borderRadius: 10,
-  background: C.pri,
-  color: "#fff",
-  padding: "10px 14px",
-  fontWeight: 900,
-  cursor: "pointer",
-  fontFamily: "inherit",
-  outline: "none",
-};
-
-const secondaryBtn = {
-  appearance: "none",
-  border: `1px solid ${C.border}`,
-  borderRadius: 10,
-  background: "#fff",
-  color: C.text,
-  padding: "10px 14px",
-  fontWeight: 900,
-  cursor: "pointer",
-  fontFamily: "inherit",
-  outline: "none",
-};
-
-const chipButton = {
-  ...secondaryBtn,
-  borderRadius: 999,
-  padding: "6px 9px",
-  background: C.surfaceHover,
-};
-
-const dangerBtn = { ...primaryBtn, background: C.dan };
-const checkRow = { display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: C.text, fontWeight: 800 };
-const inlineLinkButton = {
-  appearance: "none",
-  border: 0,
-  background: "transparent",
-  color: "inherit",
-  fontWeight: 950,
-  cursor: "pointer",
-  padding: 0,
-  textDecoration: "underline",
-  fontFamily: "inherit",
-};
