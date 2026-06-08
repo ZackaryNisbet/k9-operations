@@ -14,107 +14,8 @@ import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
 import { getInventoryWorkflow } from "./inventoryStatus";
-
-// ─── OPS-010: Full FE/BE checklist templates imported from POS app ───────────
-// These replace the condensed shared/theme defaults for Lite locations.
-const POS_FE_TEMPLATE = [
-  {id:"fe1",time:"6:15",label:"AM feeding and medication"},
-  {id:"fe2",time:"6:45",label:"Check voicemails, document on Voicemail Log"},
-  {id:"fe3",time:"7:00",label:"Confirm everyone has a radio and name tag"},
-  {id:"fe4",time:"7:15",label:"Review & Start EOD"},
-  {id:"fe5",time:"8:00",label:"Check tour book / evals, document on Tour Log & Eval Log"},
-  {id:"fe6",time:"8:15",label:"Confirm transport of boarding dogs to daycare"},
-  {id:"fe7",time:"8:45",label:"After baths check dogs leaving that day, compare w/ check-in sheet"},
-  {id:"fe8",time:"9:00",label:"Check belongings for dogs leaving"},
-  {id:"fe9",time:"9:15",label:"Return calls from voicemail log"},
-  {id:"fe10",time:"9:30",label:"Check & return emails"},
-  {id:"fe11",time:"9:45",label:"Notate any Day Boarders"},
-  {id:"fe12",time:"10:00",label:"Evaluations - 10am to noon, document on Eval Log"},
-  {id:"fe13",time:"10:15",label:"Clean counters"},
-  {id:"fe14",time:"10:30",label:"Clean tour area with rescue wipes as needed"},
-  {id:"fe15",time:"10:45",label:"Dust Lobby"},
-  {id:"fe16",time:"11:00",label:"AM playtime and let outs begin (initial only when completed)"},
-  {id:"fe17",time:"11:15",label:"Recheck EOD"},
-  {id:"fe18",time:"11:30",label:"Check & return emails"},
-  {id:"fe19",time:"11:45",label:"Open invoice check - Reports > Revenue > Open Invoices"},
-  {id:"fe20",time:"12:00",label:"Noon feeding and medication (if needed), Noon feeding/med log"},
-  {id:"fe21",time:"12:30",label:"Afternoon walkthrough - Compliance check"},
-  {id:"fe22",time:"12:45",label:"Double check dogs that have not left yet, perform Fresh & Clean when needed"},
-  {id:"fe23",time:"13:00",label:"Baths for daycare dogs"},
-  {id:"fe24",time:"13:15",label:"Run day charge for any boarding dogs that have not been picked up"},
-  {id:"fe25",time:"13:30",label:"Check daycare board - daycare list"},
-  {id:"fe26",time:"13:45",label:"Make booklet list - 3 or less - daycare list"},
-  {id:"fe27",time:"14:00",label:"Vaccinations check"},
-  {id:"fe28",time:"14:15",label:"Front Lobby/Tour Area swept & mopped"},
-  {id:"fe29",time:"14:30",label:"PM playtime and let outs begin"},
-  {id:"fe30",time:"14:45",label:"Exterior walkthrough / perimeter inspections"},
-  {id:"fe31",time:"15:00",label:"Paperwork for next day"},
-  {id:"fe32",time:"15:15",label:"Check belongings for next day departures"},
-  {id:"fe33",time:"15:30",label:"Check & return emails"},
-  {id:"fe34",time:"16:00",label:"Scan, name & store new customer policy sheets"},
-  {id:"fe35",time:"17:30",label:"PM feeding and medication - replace all food bowls (start earlier if busy)"},
-  {id:"fe36",time:"18:00",label:"Clean and set food cart"},
-  {id:"fe37",time:"18:30",label:"Double check / update paperwork"},
-  {id:"fe38",time:"18:45",label:"Review, close & save EOD"},
-  {id:"fe39",time:"19:00",label:"Closing Instructions Checklist"},
-  {id:"fe40",time:"19:30",label:"Evening walkthrough / lock up"},
-  {id:"fe_ad1",time:"",label:"Follow up on tour forms",dayOfWeek:3},
-  {id:"fe_ad2",time:"",label:"Client follow up for minor and major issues (handle within 24hrs)",dayOfWeek:3},
-  {id:"fe_ad3",time:"",label:"Send out thank you cards",dayOfWeek:3},
-  {id:"fe_ad4",time:"",label:"Print any needed forms",dayOfWeek:3},
-  {id:"fe_ad5",time:"",label:"Take inventory for front and back end",dayOfWeek:3},
-  {id:"fe_ad6",time:"",label:"Sign check - Upcoming holidays and scheduling",dayOfWeek:3},
-];
-
-const POS_BE_TEMPLATE = [
-  {id:"be1",time:"6:00",label:"(2) People - Prepare mops for spot cleaning, each daycare, disinfecting and lobby"},
-  {id:"be2",time:"6:00",label:"Prepare janitor cart with cleaning supplies, trash bag, gloves and safety materials"},
-  {id:"be3",time:"6:10",label:"(2) People - Perform spot cleaning of all accommodation prior to feeding - follow the standard path"},
-  {id:"be4",time:"6:10",label:"(1) Person - Mop front lobby and luxury hallway with OdorPet Cherry"},
-  {id:"be5",time:"6:45",label:"Clean windows in all customer facing areas"},
-  {id:"be6",time:"7:00",label:"Large & Small Daycare will go into daycare to allow for transportation of boarding dogs"},
-  {id:"be7",time:"7:00",label:"Daily Room Cleaning of all overnight dogs (follow standard path) - transport daycare dogs to daycare, red collar dogs 1 by 1 for elimination breaks"},
-  {id:"be8",time:"7:00",label:"Bring fresh water to each daycare. Note: Mop hallways of each section as you exit"},
-  {id:"be9",time:"7:30",label:"Replace water in all boarding rooms"},
-  {id:"be10",time:"7:45",label:"Perform all baths (standard and waterless) - check bath list"},
-  {id:"be11",time:"8:30",label:"Ensure all drying units are set to 85 or less & never leave a dog unattended"},
-  {id:"be12",time:"8:45",label:"Clean bathing area once complete"},
-  {id:"be13",time:"9:00",label:"Disinfect rooms - check disinfecting list"},
-  {id:"be14",time:"10:00",label:"Shift Change"},
-  {id:"be15",time:"10:15",label:"Disinfect bowls, dry and place in storage area"},
-  {id:"be16",time:"10:30",label:"Refill water in all boarding rooms and spot clean as needed - Check happiness and health"},
-  {id:"be17",time:"11:00",label:"Remove daycare water bowls & clean - leave a new one with water in it behind"},
-  {id:"be18",time:"11:15",label:"Clean Kitchen/break area"},
-  {id:"be19",time:"11:30",label:"Rake hair and wysiwash outdoor areas - fence/grass of Pens (after personal playtimes)"},
-  {id:"be20",time:"12:00",label:"Lunch Change"},
-  {id:"be21",time:"12:30",label:"Lunch Change"},
-  {id:"be22",time:"13:00",label:"Lunch Change"},
-  {id:"be23",time:"13:30",label:"Daycare/additional baths - check bath list"},
-  {id:"be24",time:"14:15",label:"Weekly Task - See Weekly Task List"},
-  {id:"be25",time:"15:00",label:"Restock any supplies needed from storage"},
-  {id:"be26",time:"15:15",label:"Mop with Rescue the front lobby, tour area, and bathrooms; daily clean bathrooms"},
-  {id:"be27",time:"16:00",label:"Shift Change"},
-  {id:"be28",time:"16:15",label:"Rake hair and wysiwash outdoor areas - fence/grass of Large daycare"},
-  {id:"be29",time:"16:45",label:"Rake hair and wysiwash outdoor areas - fence/grass of Small daycare"},
-  {id:"be30",time:"17:00",label:"Disinfect outgoing red collar rooms"},
-  {id:"be31",time:"17:30",label:"Replace all water bowls with similar size and fill all water bowls"},
-  {id:"be32",time:"17:45",label:"Remove daycare water bowls & clean"},
-  {id:"be33",time:"18:00",label:"Evening let outs for red collars"},
-  {id:"be34",time:"18:30",label:"Bring boarding dogs from small and large daycare back to their rooms"},
-  {id:"be35",time:"19:00",label:"Mop small daycare"},
-  {id:"be36",time:"19:00",label:"Mop large daycare"},
-  {id:"be37",time:"19:00",label:"Change garbages"},
-  {id:"be38",time:"19:00",label:"Clean out all mop buckets"},
-  {id:"be39",time:"19:15",label:"End of Day"},
-  {id:"be_w1",time:"",label:"Disinfect leads, boots, and aprons",dayOfWeek:1},
-  {id:"be_w2",time:"",label:"Take inventory and report to front end",dayOfWeek:1},
-  {id:"be_w3",time:"",label:"Disinfect outdoor pen area w/ Rescue",dayOfWeek:2},
-  {id:"be_w4",time:"",label:"Disinfect small outdoor area w/ Rescue",dayOfWeek:3},
-  {id:"be_w5",time:"",label:"Disinfect large outdoor area w/ Rescue",dayOfWeek:4},
-  {id:"be_w6",time:"",label:"Disinfect bathrooms",dayOfWeek:5},
-  {id:"be_w7",time:"",label:"Disinfect bathing area",dayOfWeek:6},
-  {id:"be_w8",time:"",label:"Vacuum and clean vents",dayOfWeek:0},
-];
+import { POS_FE_TEMPLATE, POS_BE_TEMPLATE, EXCLUDED_SERVICES, COLLAR_PILL_COLORS, statusConfig, nbtn } from "./operations/constants";
+import { fmtCompletionTime } from "./operations/helpers";
 
 function OperationsHub({ data, save, nav, profile }) {
   const td = todayStr();
@@ -301,17 +202,6 @@ function OperationsHub({ data, save, nav, profile }) {
     const allOps = data.dailyOps || [];
     return allOps.find(e => e.id === entryId);
   }, [data, viewDate]);
-
-  // Format timestamp for display
-  const fmtCompletionTime = (isoStr) => {
-    if (!isoStr) return "";
-    const d = new Date(isoStr);
-    const h = d.getHours();
-    const m = String(d.getMinutes()).padStart(2, "0");
-    const ampm = h >= 12 ? "PM" : "AM";
-    const hr = h > 12 ? h - 12 : h || 12;
-    return `${hr}:${m} ${ampm}`;
-  };
 
   // Auto-save toggle handler (OPS-008: auto-save on toggle, OPS-007: records timestamp)
   const handleChecklistToggle = useCallback(async (typeSub, itemId, checked) => {
@@ -568,17 +458,6 @@ function OperationsHub({ data, save, nav, profile }) {
     { key: "daily", label: "Daily Operations", items: OPERATIONS_CATALOG.filter(c => c.frequency === "daily") },
     { key: "weekly", label: "Weekly Maintenance", items: OPERATIONS_CATALOG.filter(c => c.frequency === "weekly") },
   ];
-
-  const statusConfig = {
-    not_started: { label: "Not Started", bg: C.surfaceHover, color: C.textMut, barColor: C.borderLight },
-    in_progress: { label: "In Progress", bg: C.warnLt, color: C.warn, barColor: "#F59E0B" },
-    ready: { label: "Ready", bg: C.priLt, color: C.pri, barColor: C.pri },
-    completed: { label: "Completed", bg: C.sucLt, color: C.suc, barColor: "#10B981" },
-    coming_soon: { label: "Coming Soon", bg: C.surfaceHover, color: C.textMut, barColor: C.borderLight },
-    none: { label: "", bg: "transparent", color: "transparent", barColor: "transparent" },
-  };
-
-  const nbtn = { border: "none", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit", fontWeight: 600, fontSize: 12 };
 
   if (data.loading) return (
     <div style={{ padding: 60, textAlign: "center" }}>
@@ -1002,7 +881,6 @@ function OperationsHub({ data, save, nav, profile }) {
       {/* ─── Services Section (Dynamic from Gingr) ─────────────────────────────── */}
       {(hp("view_daily_ops")) && (() => {
         // Dynamically discover all unique services from today's in-house reservations
-        const EXCLUDED_SERVICES = ["food from home", "medication administration", "private play overnight rate"];
         const reservations = data.reservations || [];
         const dataLoaded = reservations.length > 0;
         const inHouseToday = reservations.filter(r =>
@@ -1193,15 +1071,6 @@ function OperationsHub({ data, save, nav, profile }) {
         const collarsPct = collarsTotal > 0 ? Math.round((collarsDone / collarsTotal) * 100) : 0;
         const collarsStatus = collarsTotal === 0 ? "not_started" : collarsDone >= collarsTotal ? "completed" : collarsDone > 0 ? "in_progress" : "not_started";
         const csc = statusConfig[collarsStatus];
-        const COLLAR_PILL_COLORS = [
-          { key: "pink", bg: "#FCE4EC", text: "#C2185B" },
-          { key: "red", bg: "#FFEBEE", text: "#C62828" },
-          { key: "green", bg: "#E8F5E9", text: "#2E7D32" },
-          { key: "blue", bg: "#E3F2FD", text: "#1565C0" },
-          { key: "yellow", bg: "#FFFDE7", text: "#F9A825" },
-          { key: "unclassified", label: "Unclassified", bg: "#F3F4F6", text: "#4B5563" },
-          { key: "halfAndHalf", label: "H&H", bg: "#F3E5F5", text: "#7B1FA2" },
-        ];
         return (
           <div style={{ marginBottom: 32 }}>
             <div style={{ margin: "8px 0 18px", height: 1, background: C.borderLight }} />
