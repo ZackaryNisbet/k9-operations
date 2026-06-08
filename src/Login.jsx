@@ -37,7 +37,7 @@ const TOS_SECTIONS = [
   { t: "11. Indemnification", b: "You agree to indemnify K9 Operations LLC against claims arising from your use of the Service, violation of these Terms, or your operation of a pet care facility." },
   { t: "12. Governing Law", b: "These Terms are governed by New Jersey law. Disputes shall be resolved in Burlington County, NJ courts." },
   { t: "13. Changes to Terms", b: "We will provide at least 30 days notice for material changes. Continued use constitutes acceptance of modified Terms." },
-  { t: "14. Contact", b: "Questions? Contact us at zacknisbet@gmail.com" },
+  { t: "14. Contact", b: "Questions? Contact us at zack.nisbet@k9operations.com" },
 ];
 
 const PRIVACY_SECTIONS = [
@@ -46,12 +46,12 @@ const PRIVACY_SECTIONS = [
   { t: "3. How We Share Your Information", b: "We do not sell, rent, or trade your personal information. We share data only with service providers (Supabase for database hosting, Vercel for application hosting, payment processors), when required by law, or in connection with a business transfer." },
   { t: "4. Data Security", b: "All data is encrypted at rest (AES-256) and in transit (TLS 1.2+). We use role-based access controls and hashed passwords. We do not store credit card numbers or sensitive payment credentials." },
   { t: "5. Data Retention", b: "We retain data while your account is active. After termination, you have 30 days to export your data. Customer Data is deleted within 90 days of the export period, unless retention is required by law." },
-  { t: "6. Your Rights", b: "You may request access to, correction of, or deletion of your personal information. You may request data export in CSV or JSON format. You may opt out of marketing communications at any time. Contact zacknisbet@gmail.com to exercise these rights." },
+  { t: "6. Your Rights", b: "You may request access to, correction of, or deletion of your personal information. You may request data export in CSV or JSON format. You may opt out of marketing communications at any time. Contact zack.nisbet@k9operations.com to exercise these rights." },
   { t: "7. Children's Privacy", b: "The Service is not directed to children under 13. We do not knowingly collect personal information from children under 13." },
   { t: "8. Third-Party Services", b: "This Privacy Policy does not apply to third-party services accessed through the platform. We encourage you to review their privacy policies." },
   { t: "9. State-Specific Disclosures", b: "California residents may have additional rights under CCPA/CPRA, including the right to know, delete, and opt out of data sales (we do not sell data). New Jersey residents have the right to access and correct their information and receive breach notifications." },
   { t: "10. Changes to This Policy", b: "We provide at least 30 days notice for material changes. Continued use constitutes acceptance." },
-  { t: "11. Contact", b: "Questions about privacy? Email zacknisbet@gmail.com with \"Privacy\" in the subject line." },
+  { t: "11. Contact", b: "Questions about privacy? Email zack.nisbet@k9operations.com with \"Privacy\" in the subject line." },
 ];
 
 // ─── Legal Modal ──────────────────────────────────────────────────────────────

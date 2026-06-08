@@ -2302,7 +2302,7 @@ function TroubleshootingPanel({ tabsBar, explainer, articles }) {
       {explainer}
 
       <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 10, background: C.warnLt, border: "1px solid #FDE68A", color: "#92400E", fontSize: 12, fontWeight: 700, lineHeight: 1.45 }}>
-        Emergency or same-day service: call Mike Williams at (623) 261-3294. Non-emergency: mike.williams@k9resorts.com.
+        Emergency or same-day service: call your facilities vendor at the number on file. Non-emergency: use the vendor email saved in Settings.
       </div>
 
       <div style={{ marginTop: 14, display: "grid", gap: 18 }}>
