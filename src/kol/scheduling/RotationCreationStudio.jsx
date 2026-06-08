@@ -2,10 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { C } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Btn } from "../../shared/ui";
-import {
-  TASK_COLORS,
-  deriveStaffPlanFromShiftEntries,
-} from "../../shared/schedulingEngine";
+import { deriveStaffPlanFromShiftEntries } from "../../shared/schedulingEngine";
 import {
   findRotationTemplateCandidates,
   getTemplateDisplayName,
@@ -19,7 +16,6 @@ import {
   addScheduleDays,
   dateToIso,
   formatDayLabel,
-  formatTimeLabel,
   getCalendarMonthLabel,
   getCompactScheduleDateLabel,
   getDateScheduleState,
@@ -49,140 +45,8 @@ import { rotationStudioStyles } from "./rotationStudio/rotationStudioStyles";
 import { CountStepper } from "./rotationStudio/CountStepper";
 import { RosterEditor } from "./rotationStudio/RosterEditor";
 import { TemplateCard } from "./rotationStudio/TemplateCard";
-
-const TASK_PICKER_KEYS = [
-  "lgdc",
-  "smdc",
-  "pp",
-  "break",
-  "bath",
-  "transport",
-  "feed",
-  "opening",
-  "room_clean",
-  "sup",
-  "float",
-  "off",
-];
-
-function PreviewCanvas({
-  grid,
-  hoverGrid,
-  applied,
-  customizeMode,
-  selectedCell,
-  onSelectCell,
-}) {
-  const lanes = grid.lanes || [];
-  const slots = grid.slots || [];
-  const isHoveringDifferentTemplate = Boolean(hoverGrid);
-  const canEditCells = Boolean(customizeMode && applied);
-
-  return (
-    <div className="rotation-preview-canvas">
-      <div className="rotation-preview-header">
-        <div>
-          <span className="rotation-preview-eyebrow">Schedule canvas</span>
-          <h4>{applied ? "Template draft" : "Blank grid"}</h4>
-        </div>
-        <span className={`rotation-preview-status${isHoveringDifferentTemplate ? " is-preview" : applied ? " is-applied" : ""}`}>
-          {isHoveringDifferentTemplate ? "Preview only" : applied ? "Cell edits active" : "Choose a template"}
-        </span>
-      </div>
-      <div className="rotation-preview-scroll">
-        <div
-          className="rotation-preview-grid"
-          style={{
-            gridTemplateColumns: `92px repeat(${Math.max(lanes.length, 1)}, minmax(128px, 1fr))`,
-          }}
-        >
-          <div className="rotation-preview-axis is-corner">Time</div>
-          {lanes.map((lane) => (
-            <div key={lane.id} className="rotation-preview-lane">
-              <span>{lane.label}</span>
-              <small>{lane.role || "pct"}</small>
-            </div>
-          ))}
-          {slots.map((slot) => (
-            <React.Fragment key={slot.time}>
-              <div className="rotation-preview-time">{slot.label || formatTimeLabel(slot.time)}</div>
-              {lanes.map((lane) => {
-                const committed = grid.cells?.[lane.id]?.[slot.time] || null;
-                const ghost = hoverGrid?.cells?.[lane.id]?.[slot.time] || null;
-                const cell = ghost || committed;
-                const taskKey = cell?.task || "off";
-                const color = TASK_COLORS[taskKey] || TASK_COLORS.float;
-                const isSelected = selectedCell?.laneId === lane.id && selectedCell?.slotTime === slot.time;
-                return (
-                  <button
-                    key={`${lane.id}-${slot.time}`}
-                    type="button"
-                    className={`rotation-preview-cell${ghost ? " is-ghost" : committed ? " is-filled" : " is-empty"}${isSelected ? " is-selected" : ""}${canEditCells ? " is-editable" : ""}`}
-                    onClick={() => {
-                      if (canEditCells) onSelectCell({ laneId: lane.id, slotTime: slot.time });
-                    }}
-                    disabled={!canEditCells}
-                    style={{
-                      "--cell-bg": taskKey === "off" ? "#FFFFFF" : color.bg,
-                      "--cell-text": taskKey === "off" ? "#94A3B8" : color.text,
-                      "--cell-border": taskKey === "off" ? "#E5E7EB" : `${color.text}24`,
-                    }}
-                    title={canEditCells ? `Edit ${lane.label} at ${slot.label || formatTimeLabel(slot.time)}` : "Apply a template before editing cells"}
-                    aria-label={`${canEditCells ? "Edit" : "Preview"} ${lane.label} at ${slot.label || formatTimeLabel(slot.time)}`}
-                  >
-                    {cell ? (
-                      <>
-                        <span>{cell.label || color.label}</span>
-                        {cell.detail && <small>{cell.detail}</small>}
-                      </>
-                    ) : (
-                      <span className="rotation-preview-empty-copy">Open</span>
-                    )}
-                  </button>
-                );
-              })}
-            </React.Fragment>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CellInspector({ cell, laneLabel, onApplyTask, onClose }) {
-  if (!cell) return null;
-  return (
-    <div className="rotation-cell-inspector">
-      <div>
-        <strong>Cell edit</strong>
-        <span>{formatTimeLabel(cell.slotTime)} · {laneLabel || cell.laneId}</span>
-      </div>
-      <div className="rotation-task-palette">
-        {TASK_PICKER_KEYS.map((key) => {
-          const task = TASK_COLORS[key];
-          if (!task) return null;
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => onApplyTask(key)}
-              style={{
-                background: task.bg,
-                color: task.text,
-                borderColor: `${task.text}22`,
-              }}
-            >
-              {task.label}
-            </button>
-          );
-        })}
-      </div>
-      <button type="button" className="rotation-inspector-close" onClick={onClose}>
-        Done
-      </button>
-    </div>
-  );
-}
+import { PreviewCanvas } from "./rotationStudio/PreviewCanvas";
+import { CellInspector } from "./rotationStudio/CellInspector";
 
 const CALENDAR_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
