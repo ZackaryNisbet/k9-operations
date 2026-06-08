@@ -114,17 +114,25 @@ function Reveal({ children, delay = 0, as: Tag = 'div', style, className = '' })
   );
 }
 
-// ─── App-frame chrome (drop a real <img> screenshot in here later) ─────────────
-function AppFrame({ title = 'K9 Operations', children, dark = false }) {
+// ─── App-frame chrome ──────────────────────────────────────────────────────────
+// Pass `shot` (a real screenshot path, e.g. "/shots/crm.png") to show the actual
+// app; otherwise the CSS placeholder children render. Real screenshots replace the
+// placeholders once captured from the live base platform (see
+// scripts/capture-marketing-shots.mjs).
+function AppFrame({ title = 'K9 Operations', children, shot }) {
   return (
-    <div className={`app-frame ${dark ? 'app-frame-dark' : ''}`}>
+    <div className="app-frame">
       <div className="app-frame-bar">
         <span className="dot" style={{ background: '#F87171' }} />
         <span className="dot" style={{ background: '#FBBF24' }} />
         <span className="dot" style={{ background: '#34D399' }} />
         <span className="app-frame-title">{title}</span>
       </div>
-      <div className="app-frame-body">{children}</div>
+      <div className="app-frame-body" style={shot ? { padding: 0 } : undefined}>
+        {shot
+          ? <img src={shot} alt={title} loading="lazy" style={{ display: 'block', width: '100%', height: 'auto' }} />
+          : children}
+      </div>
     </div>
   );
 }
