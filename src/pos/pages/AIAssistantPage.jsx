@@ -2,6 +2,8 @@ import { C } from "../constants/colors";
 import { K9LoadingAnimation } from "../components/K9LoadingAnimation";
 import { gid } from "../lib/format";
 import { renderAIFormattedText } from "../lib/aiText";
+import { OPS_MANUAL_KB } from "../constants/opsManual";
+import { findOpsManualAnswer } from "../lib/opsManual";
 import { supabase } from "../../supabaseClient";
 import { useEffect, useRef, useState } from "react";
 
@@ -22,9 +24,9 @@ function AIAssistantPage({ data, save, nav, profile }) {
 
   const starterQueries = [
     "What's my revenue this month?",
-    "Show me today's schedule",
-    "How many dogs are due for vaccines?",
-    "Find client by name"
+    "What's the dress code?",
+    "Explain the collar colors",
+    "How many dogs are due for vaccines?"
   ];
 
   const handleSendMessage = async (messageText) => {
@@ -40,6 +42,23 @@ function AIAssistantPage({ data, save, nav, profile }) {
     setMessages(prev => [...prev, userMessage]);
     setInputValue("");
     setIsLoading(true);
+
+    // Operations Manual: answer policy/procedure questions instantly from the local
+    // knowledge base (hours, dress code, collar system, belongings, …). Live-data
+    // questions (revenue, schedules, counts) fall through to the edge function below.
+    const manualEntry = findOpsManualAnswer(OPS_MANUAL_KB, textToSend);
+    if (manualEntry) {
+      const manualMsg = {
+        id: gid(),
+        role: "assistant",
+        text: `**${manualEntry.title}**\n\n${String(manualEntry.answer || "").replace(/\n/g, "\n\n")}`,
+        source: "manual",
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      };
+      setMessages(prev => [...prev, manualMsg]);
+      setIsLoading(false);
+      return;
+    }
 
     try {
       const { data: result, error } = await supabase.functions.invoke("ai-assistant", {
@@ -197,6 +216,12 @@ function AIAssistantPage({ data, save, nav, profile }) {
   const renderMessageContent = (msg) => {
     return (
       <>
+        {msg.source === "manual" && msg.role === "assistant" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.pri }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#84CC16", display: "inline-block" }} />
+            Operations Manual
+          </div>
+        )}
         <div style={{
           padding: "11px 15px",
           borderRadius: msg.role === "user" ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
@@ -253,7 +278,7 @@ function AIAssistantPage({ data, save, nav, profile }) {
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", textAlign: "center" }}>
             <h2 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: C.text, marginBottom: 12 }}>K9 AI Assistant</h2>
             <p style={{ margin: 0, fontSize: 14, color: C.textMut, maxWidth: 480, marginBottom: 32, lineHeight: 1.6 }}>
-              Ask me anything about your business. I can help with reservations, client insights, revenue analysis, and more.
+              Ask me anything about your business — revenue and client insights from your live data, or facility policies and procedures straight from the operations manual.
             </p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", maxWidth: 600 }}>
               {starterQueries.map((q, i) => (
