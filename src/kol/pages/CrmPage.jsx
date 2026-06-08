@@ -6,9 +6,9 @@
 // ignite_leads (lead_type = web_form). Pure logic lives in ../crmData.
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../supabaseClient";
-import { C, fmtDate, fmtDateFull, todayStr, addDays } from "../../shared/theme";
+import { C, fmtDate, todayStr, addDays } from "../../shared/theme";
 import { I } from "../../shared/icons";
-import { Btn, Modal, LogEntryModal, RecordActivityModal, StatusSelect, Badge, Inp, CustomSelect } from "../../shared/ui";
+import { Btn, Modal, LogEntryModal, RecordActivityModal, StatusSelect } from "../../shared/ui";
 import IgniteOnboardingWizard from "../onboarding/IgniteOnboardingWizard";
 import IgnitePipelineDiagram from "../onboarding/IgnitePipelineDiagram";
 import { FormFields } from "./crmFormFields";
@@ -62,6 +62,9 @@ import {
 } from "../crmData";
 import { SECTION_LABEL, HEALTH_COLORS } from "./crm/constants";
 import { fmtDateTime } from "./crm/format";
+import { SetupBanner, SetupNotice } from "./crm/SetupStates";
+import { HealthBadge } from "./crm/HealthBadge";
+import { HistoryView } from "./crm/HistoryView";
 
 
 export default function CrmPage({ profile, locationId, addGlobalToast }) {
@@ -611,113 +614,6 @@ function SubmissionDetails({ lead }) {
 // Shows the touches plus the "Booking form received" baseline; the booking form
 // FIELDS are the OTHER expander mode ("Booking form details"), not here.
 
-// The follow-up "state change" — previous date crossed off, pointing to the new
-// one (mirrors the Training History status-change pills).
-function CrmHistoryStatusChange({ prev, next }) {
-  if (!prev && !next) return <span style={{ color: C.textMut }}>—</span>;
-  const pill = (label, struck) => (
-    <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, border: `1px solid ${struck ? C.border : `${C.pri}40`}`, background: struck ? C.surfaceHover : C.priLt, color: struck ? C.textMut : C.pri, padding: "2px 8px", fontSize: 10.5, fontWeight: 900, textDecoration: struck ? "line-through" : "none", opacity: struck ? 0.72 : 1, whiteSpace: "nowrap" }}>{label}</span>
-  );
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-      {prev ? pill(fmtDate(prev), true) : null}
-      {prev ? <span style={{ color: C.textMut, fontSize: 11, fontWeight: 900 }}>{"->"}</span> : null}
-      {next ? pill(fmtDate(next), false) : <span style={{ color: C.textMut }}>—</span>}
-    </span>
-  );
-}
-
-// Global change history — the Training History tab's exact layout: a metrics
-// header (changes logged / leads with activity / "N shown"), a filter toolbar
-// (Activity Date · Lead · Type · Actor), then a table (When · Lead · Action ·
-// Change with the crossed-off follow-up pills · Actor). Fed by ignite_lead_updates.
-function HistoryView({ allRows, rows, filterOptions, filters, onFilter, onClear, filterCount, metrics }) {
-  const TH = { padding: "9px 10px", fontSize: 10.5, fontWeight: 900, color: C.textMut, textTransform: "uppercase", letterSpacing: 0, borderBottom: `2px solid ${C.border}`, textAlign: "left", whiteSpace: "nowrap" };
-  const TD = { padding: "12px 10px", fontSize: 12.5, lineHeight: 1.35, fontWeight: 700, color: C.text, verticalAlign: "top" };
-  const TD2 = { ...TD, color: C.textSec, fontWeight: 650 };
-  const metricLabel = { fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" };
-  const metricNum = { fontSize: 22, fontWeight: 900, color: C.text, lineHeight: 1.1 };
-  const metricCap = { fontSize: 11, color: C.textMut, fontStyle: "normal" };
-  const filterLabel = { fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 };
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap", padding: "16px 20px", borderBottom: `1px solid ${C.border}` }}>
-        <div>
-          <div style={{ fontSize: 18, fontWeight: 900, color: C.text }}>Change history</div>
-          <div style={{ marginTop: 4, fontSize: 12, color: C.textMut, fontWeight: 700 }}>Capture, calls, texts, emails, notes, and follow-up changes across all leads.</div>
-        </div>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 22, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            <span style={metricLabel}>Changes logged</span>
-            <strong style={metricNum}>{metrics.activityCount}</strong>
-            <em style={metricCap}>{metrics.date ? fmtDateFull(metrics.date) : "—"}</em>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            <span style={metricLabel}>Leads with activity</span>
-            <strong style={metricNum}>{metrics.leadCount}</strong>
-            <em style={metricCap}>{filters.date ? "selected day" : "latest day"}</em>
-          </div>
-          <Badge color={rows.length > 0 ? "info" : "default"}>{rows.length} shown</Badge>
-        </div>
-      </div>
-      <div style={{ padding: "12px 20px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(150px, 1fr))", gap: 10, flex: 1, minWidth: 0 }}>
-          <Inp label="Activity Date" type="date" value={filters.date} onChange={(v) => onFilter("date", v)} />
-          <div>
-            <div style={filterLabel}>Lead</div>
-            <CustomSelect value={filters.lead} onChange={(v) => onFilter("lead", v)} options={filterOptions.leads} placeholder="All leads" searchable />
-          </div>
-          <div>
-            <div style={filterLabel}>Type</div>
-            <CustomSelect value={filters.type} onChange={(v) => onFilter("type", v)} options={filterOptions.types} placeholder="All types" />
-          </div>
-          <div>
-            <div style={filterLabel}>Actor</div>
-            <CustomSelect value={filters.actor} onChange={(v) => onFilter("actor", v)} options={filterOptions.actors} placeholder="All actors" searchable />
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <Btn variant="ghost" size="sm" icon={<I.Calendar />} onClick={() => onFilter("date", todayStr())}>Today</Btn>
-          <Btn variant="ghost" size="sm" onClick={onClear} disabled={filterCount === 0}>Clear Filters{filterCount > 0 ? ` (${filterCount})` : ""}</Btn>
-        </div>
-      </div>
-      {allRows.length === 0 ? (
-        <div style={{ padding: 28, textAlign: "center", color: C.textMut, fontSize: 13 }}>No change history yet.</div>
-      ) : rows.length === 0 ? (
-        <div style={{ padding: 28, textAlign: "center", color: C.textMut, fontSize: 13 }}>No history matches the current filters.</div>
-      ) : (
-        <div style={{ maxHeight: "70vh", overflow: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={TH}>When</th>
-                <th style={TH}>Lead</th>
-                <th style={TH}>Action</th>
-                <th style={TH}>Change</th>
-                <th style={TH}>Actor</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                  <td style={{ ...TD2, whiteSpace: "nowrap" }}>{fmtDateTime(r.createdAt)}</td>
-                  <td style={{ ...TD, minWidth: 150 }}>{r.leadName}</td>
-                  <td style={{ ...TD, minWidth: 110 }}>{r.system ? "Lead captured" : updateTypeLabel(r.type)}</td>
-                  <td style={{ ...TD2, minWidth: 280, lineHeight: 1.45 }}>
-                    <div style={{ color: C.text, fontWeight: 800, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{r.notes || "—"}</div>
-                    {(r.prevFollowUp || r.newFollowUp) && <div style={{ marginTop: 6 }}><CrmHistoryStatusChange prev={r.prevFollowUp} next={r.newFollowUp} /></div>}
-                  </td>
-                  <td style={{ ...TD2, whiteSpace: "nowrap" }}>{r.actor}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function UpdatesPanel({ lead, updates, onLog }) {
   const log = useMemo(() => (Array.isArray(updates) ? [...updates].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)) : []), [updates]);
   return (
@@ -832,34 +728,6 @@ function LogUpdateModal({ lead, profile, locationId, today, updates, onClose, on
       onSave={save}
       saving={saving}
     />
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Setup states (launch the onboarding wizard)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// At-a-glance pipeline health pill: green check + "Verified Xm ago · next 4:15".
-// Click to open the full detail panel. Detail/cadence live in the tooltip too.
-function HealthBadge({ model, onOpen }) {
-  const c = HEALTH_COLORS[model.tone] || C.textMut;
-  const primary = model.ok && model.verifiedAgo ? `Verified ${model.verifiedAgo}` : model.label;
-  const title = [model.detail, model.nextClock ? `Next run ${model.nextClock} (every 15 min)` : null].filter(Boolean).join(" · ");
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      title={title || model.detail}
-      style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 34, padding: "0 12px", borderRadius: 9, border: `1px solid ${c}40`, background: `${c}0F`, fontSize: 12.5, fontWeight: 700, color: c, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit" }}
-    >
-      {model.ok ? (
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" fill={c} /><path d="M5 8.2l2 2 4-4.6" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
-      ) : (
-        <span style={{ width: 8, height: 8, borderRadius: 99, background: c, boxShadow: `0 0 6px ${c}80` }} />
-      )}
-      {primary}
-      {model.nextClock ? <span style={{ color: C.textMut, fontWeight: 600 }}>· next {model.nextClock}</span> : null}
-    </button>
   );
 }
 
@@ -984,39 +852,5 @@ function HealthDetailModal({ locationId, snapshot, onClose }) {
         </div>
       </div>
     </Modal>
-  );
-}
-
-function SetupBanner({ onStart }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", marginBottom: 14, borderRadius: 12, border: `1.5px solid ${C.pri}33`, background: `linear-gradient(135deg, ${C.priLt}, ${C.surface})` }}>
-      <div style={{ width: 36, height: 36, borderRadius: 10, background: `${C.pri}14`, display: "flex", alignItems: "center", justifyContent: "center", color: C.pri, flexShrink: 0 }}>
-        <I.Sparkle />
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 800, color: C.text }}>Ignite isn't connected for this location yet</div>
-        <div style={{ fontSize: 12.5, color: C.textSec }}>Answer a few questions and we'll wire up booking-form capture — no developer required.</div>
-      </div>
-      <Btn size="sm" onClick={onStart} style={{ flexShrink: 0 }}>Set up Ignite</Btn>
-    </div>
-  );
-}
-
-function SetupNotice({ onStart, canStart }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 14, padding: "64px 24px", border: `1.5px dashed ${C.border}`, borderRadius: 16, background: C.surfaceHover }}>
-      <div style={{ width: 56, height: 56, borderRadius: 14, background: `${C.pri}12`, display: "flex", alignItems: "center", justifyContent: "center", color: C.pri }}>
-        <I.Settings />
-      </div>
-      <div style={{ fontSize: 17, fontWeight: 800, color: C.text }}>Booking-form intake isn't connected yet</div>
-      <div style={{ fontSize: 13, color: C.textMut, maxWidth: 460 }}>
-        {canStart
-          ? "Connect your website's booking/availability form for this location and submissions will start flowing in automatically. The guided setup takes about a minute — no developer needed."
-          : "This location isn't connected to its booking form yet. Ask a location admin to run the one-time Ignite setup."}
-      </div>
-      {canStart && (
-        <Btn onClick={onStart} icon={<I.Sparkle />}>Set up Ignite</Btn>
-      )}
-    </div>
   );
 }
