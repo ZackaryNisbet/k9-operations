@@ -2891,3 +2891,100 @@ export function normalizeHourAnalysisLaborModelRow(row = {}, index = 0, columns 
     coverage: normalizeLaborModelCoverageCells(source.coverage || source.cells || source.values, columns.length),
   };
 }
+
+export function normalizeLaborModelRolePalette(value = {}) {
+  const source = isObjectRow(value) ? value : {};
+  return Object.fromEntries(Object.entries(LABOR_MODEL_ROLE_PALETTE).map(([groupKey, fallback]) => {
+    const camelKey = groupKey.replace(/_([a-z])/g, (_, char) => String(char || "").toUpperCase());
+    const rawValue = source[groupKey] || source[camelKey] || source[groupKey.replace(/_/g, "-")];
+    if (typeof rawValue === "string") {
+      return [groupKey, buildLaborModelRolePalette(groupKey, rawValue)];
+    }
+    if (!isObjectRow(rawValue)) return [groupKey, fallback];
+    const strong = normalizeLaborModelHexColor(rawValue.strong || rawValue.primary || rawValue.color, fallback.strong);
+    return [groupKey, {
+      strong,
+      accent: normalizeLaborModelHexColor(rawValue.accent, mixLaborModelHexColor(strong, "#ffffff", 0.28)),
+      soft: normalizeLaborModelHexColor(rawValue.soft, mixLaborModelHexColor(strong, "#ffffff", 0.86)),
+      text: normalizeLaborModelHexColor(rawValue.text, strong),
+    }];
+  }));
+}
+
+export function getLaborModelCoverageRoleOptionForCell(value = "", rowGroupKey = "") {
+  const normalized = normalizeLaborModelCoverageCell(value);
+  if (!normalized || normalized === LABOR_MODEL_MARKETING_COVERAGE_VALUE) return null;
+  return getLaborModelCoverageExplicitRoleOption(normalized) || getLaborModelCoverageRoleOptionForGroup(rowGroupKey);
+}
+
+export function buildLaborModelCoverageValue({ duration = "full", roleValue = "", rowGroupKey = "" } = {}) {
+  const normalizedDuration = duration === "half" ? "half" : "full";
+  const roleOption = getLaborModelCoverageRoleOption(roleValue) || getLaborModelCoverageRoleOptionForGroup(rowGroupKey);
+  if (!roleOption) return normalizedDuration === "half" ? LABOR_MODEL_HALF_COVERAGE_VALUE : LABOR_MODEL_FULL_COVERAGE_VALUE;
+  return normalizedDuration === "half" ? `${LABOR_MODEL_HALF_COVERAGE_VALUE}:${roleOption.label}` : roleOption.label;
+}
+
+export function normalizeHourAnalysisLaborModelDay(dayKey, value = {}, fallback = {}) {
+  const source = isObjectRow(value) ? value : {};
+  const fallbackDay = isObjectRow(fallback) ? fallback : {};
+  const rawColumns = Array.isArray(source.columns) ? source.columns : fallbackDay.columns || [];
+  const columns = rawColumns.map((column, index) => normalizeHourAnalysisLaborModelColumn(column, index, dayKey));
+  const rawRows = Array.isArray(source.rows) ? source.rows : fallbackDay.rows || [];
+  const rows = rawRows.map((row, index) => normalizeHourAnalysisLaborModelRow(row, index, columns, dayKey));
+  return {
+    day_key: dayKey,
+    day_label: LABOR_MODEL_DAY_LABELS[dayKey] || source.day_label || source.dayLabel || fallbackDay.day_label || dayKey,
+    coverage_window: String(source.coverage_window || source.coverageWindow || fallbackDay.coverage_window || "").trim(),
+    columns,
+    rows,
+  };
+}
+
+export function calculateLaborModelRowHourBuckets(row = {}, columns = []) {
+  const cells = normalizeLaborModelCoverageCells(row.coverage, columns.length);
+  const raw = cells.reduce((sum, cell, index) => {
+    const slotHours = normalizeHourAnalysisNumber(columns[index]?.hours, 0);
+    const operatingWeight = getLaborModelCoverageOperatingWeight(cell);
+    const operatingGroupKey = getLaborModelCoverageOperatingGroupKey(cell, row);
+    if (operatingGroupKey && operatingWeight > 0) {
+      sum.roleHours[operatingGroupKey] = normalizeHourAnalysisDelta((sum.roleHours[operatingGroupKey] || 0) + (operatingWeight * slotHours));
+    }
+    return {
+      roleHours: sum.roleHours,
+      operatingHours: sum.operatingHours + (operatingWeight * slotHours),
+      marketingHours: sum.marketingHours + (getLaborModelCoverageMarketingWeight(cell) * slotHours),
+    };
+  }, { roleHours: makeLaborModelRoleHoursBucket(), operatingHours: 0, marketingHours: 0 });
+  const grossHours = raw.operatingHours + raw.marketingHours;
+  if (grossHours <= 0) return { roleHours: raw.roleHours, operatingHours: 0, marketingHours: 0, totalHours: 0, breakHours: 0 };
+  const breakHours = row.break_enabled ? Math.min(grossHours, normalizeLaborModelBreakMinutes(row.break_minutes, 30) / 60) : 0;
+  const operatingBreak = Math.min(raw.operatingHours, breakHours);
+  const marketingBreak = Math.min(raw.marketingHours, Math.max(0, breakHours - operatingBreak));
+  const operatingHours = normalizeHourAnalysisNumber(Math.max(0, raw.operatingHours - operatingBreak), 0);
+  const marketingHours = normalizeHourAnalysisNumber(Math.max(0, raw.marketingHours - marketingBreak), 0);
+  const operatingScale = raw.operatingHours > 0 ? operatingHours / raw.operatingHours : 0;
+  const roleHours = Object.fromEntries(Object.entries(raw.roleHours).map(([key, value]) => [
+    key,
+    normalizeHourAnalysisNumber(value * operatingScale, 0),
+  ]));
+  return {
+    roleHours,
+    operatingHours,
+    marketingHours,
+    totalHours: normalizeHourAnalysisNumber(operatingHours + marketingHours, 0),
+    breakHours: normalizeHourAnalysisNumber(breakHours, 0),
+  };
+}
+
+export function buildComplianceRequirementSlug(value = "", existingRequirements = []) {
+  const base = `custom_${slugifyTemplateName(value) || "requirement"}`.slice(0, 72).replace(/_+$/g, "");
+  const existingSlugs = new Set(toObjectRows(existingRequirements).map((row) => String(row.slug || "").trim()).filter(Boolean));
+  if (!existingSlugs.has(base)) return base;
+  for (let index = 2; index < 100; index += 1) {
+    const suffix = `_${index}`;
+    const candidate = `${base.slice(0, 72 - suffix.length)}${suffix}`;
+    if (!existingSlugs.has(candidate)) return candidate;
+  }
+  const timestampSuffix = `_${Date.now().toString(36).slice(-6)}`;
+  return `${base.slice(0, 72 - timestampSuffix.length)}${timestampSuffix}`;
+}
