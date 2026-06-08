@@ -84,6 +84,29 @@ import {
   dueToneToStatus,
   dueToneToBadge,
 } from "./resortUpkeep/constants";
+import {
+  SmallPillStyle,
+  panel,
+  eyebrow,
+  workspaceGrid,
+  leftRail,
+  detailPanel,
+  subPanel,
+  sectionLabel,
+  cardButton,
+  rowButton,
+  selectedRowButton,
+  compactRowButton,
+  selectedCompactRowButton,
+  maintenanceItem,
+  checkedMaintenanceItem,
+  primaryBtn,
+  secondaryBtn,
+  chipButton,
+  dangerBtn,
+  checkRow,
+  inlineLinkButton,
+} from "./resortUpkeep/styles";
 
 const input = {
   width: "100%",
@@ -2838,8 +2861,6 @@ function SmallPill({ children }) {
   return <span style={SmallPillStyle}>{children}</span>;
 }
 
-const SmallPillStyle = { borderRadius: 999, padding: "4px 8px", background: C.borderLight, color: C.textMut, fontSize: 11, fontWeight: 900 };
-
 function InlineAlert({ children, tone = "warning" }) {
   const danger = tone === "danger";
   return (
@@ -2888,158 +2909,3 @@ function EmptyCard({ title, text, compact = false }) {
     </div>
   );
 }
-
-const panel = {
-  border: `1px solid ${C.border}`,
-  borderRadius: 14,
-  background: "#fff",
-  padding: 16,
-  boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
-};
-
-const eyebrow = {
-  fontSize: 11,
-  fontWeight: 950,
-  color: C.pri,
-  letterSpacing: ".08em",
-  textTransform: "uppercase",
-};
-
-const workspaceGrid = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))",
-  gap: 16,
-  alignItems: "start",
-};
-
-const leftRail = {
-  display: "grid",
-  gap: 10,
-  alignContent: "start",
-  minWidth: 0,
-};
-
-const detailPanel = {
-  ...panel,
-  minHeight: 460,
-  minWidth: 0,
-};
-
-const subPanel = {
-  ...panel,
-  padding: 12,
-};
-
-const sectionLabel = {
-  fontSize: 11,
-  fontWeight: 950,
-  color: C.textMut,
-  textTransform: "uppercase",
-  letterSpacing: ".08em",
-};
-
-const cardButton = {
-  appearance: "none",
-  width: "100%",
-  textAlign: "left",
-  border: `1px solid ${C.border}`,
-  borderRadius: 14,
-  background: "#fff",
-  color: C.text,
-  padding: 14,
-  cursor: "pointer",
-  fontFamily: "inherit",
-  outline: "none",
-};
-
-const rowButton = {
-  ...cardButton,
-  borderRadius: 12,
-  padding: 13,
-};
-
-const selectedRowButton = {
-  ...rowButton,
-  borderColor: C.pri,
-  background: "#F8FAFC",
-  boxShadow: "inset 3px 0 0 #14532D",
-};
-
-const compactRowButton = {
-  ...cardButton,
-  padding: 10,
-  borderRadius: 10,
-};
-
-const selectedCompactRowButton = {
-  ...compactRowButton,
-  borderColor: C.pri,
-  background: "#F8FAFC",
-};
-
-const maintenanceItem = {
-  border: `1px solid ${C.border}`,
-  background: "#fff",
-  borderRadius: 12,
-  padding: 12,
-};
-
-const checkedMaintenanceItem = {
-  ...maintenanceItem,
-  borderColor: "#BBF7D0",
-  background: "#F0FDF4",
-};
-
-const articleCard = {
-  border: `1px solid ${C.border}`,
-  borderRadius: 12,
-  padding: 13,
-  background: "#fff",
-};
-
-const primaryBtn = {
-  appearance: "none",
-  border: 0,
-  borderRadius: 10,
-  background: C.pri,
-  color: "#fff",
-  padding: "10px 14px",
-  fontWeight: 900,
-  cursor: "pointer",
-  fontFamily: "inherit",
-  outline: "none",
-};
-
-const secondaryBtn = {
-  appearance: "none",
-  border: `1px solid ${C.border}`,
-  borderRadius: 10,
-  background: "#fff",
-  color: C.text,
-  padding: "10px 14px",
-  fontWeight: 900,
-  cursor: "pointer",
-  fontFamily: "inherit",
-  outline: "none",
-};
-
-const chipButton = {
-  ...secondaryBtn,
-  borderRadius: 999,
-  padding: "6px 9px",
-  background: C.surfaceHover,
-};
-
-const dangerBtn = { ...primaryBtn, background: C.dan };
-const checkRow = { display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: C.text, fontWeight: 800 };
-const inlineLinkButton = {
-  appearance: "none",
-  border: 0,
-  background: "transparent",
-  color: "inherit",
-  fontWeight: 950,
-  cursor: "pointer",
-  padding: 0,
-  textDecoration: "underline",
-  fontFamily: "inherit",
-};
