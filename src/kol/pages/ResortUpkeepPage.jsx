@@ -73,6 +73,7 @@ import {
   friendlyErrorMessage,
   withUpkeepTimeout,
   plural,
+  formatDueRange,
 } from "./resortUpkeep/upkeepHelpers";
 
 const TABS = [
@@ -261,22 +262,6 @@ const DUE_WINDOWS = [
 const KIND_TONE = { maintenance: "primary", license: "info", vendor: "accent" };
 const dueToneToStatus = (tone) => (tone === "danger" ? "danger" : tone === "warn" ? "warning" : "neutral");
 const dueToneToBadge = (tone) => (tone === "danger" ? "danger" : tone === "warn" ? "warning" : "primary");
-
-function fmtDueCompact(value) {
-  if (!value) return "—";
-  try {
-    return new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" });
-  } catch {
-    return String(value);
-  }
-}
-
-function formatDueRange(item) {
-  if (item.dueStart && item.dueEnd && item.dueStart !== item.dueEnd) {
-    return `${fmtDueCompact(item.dueStart)} – ${fmtDueCompact(item.dueEnd)}`;
-  }
-  return fmtDueCompact(item.dueDate || item.dueEnd || item.dueStart);
-}
 
 // The unified "what's due" rollup, composed from the shared list-surface
 // standard (src/shared/listSurface.jsx). It reuses data the page already loads
