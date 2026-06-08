@@ -121,3 +121,9 @@ export function SchedulingSubtabs({ activeTab, onChange }) {
     </div>
   );
 }
+
+export function getInitialSchedulingTab() {
+  if (typeof window === "undefined") return "volume";
+  const tab = new URLSearchParams(window.location.search).get("tab");
+  return tab === "rotation" ? "rotation" : "volume";
+}
