@@ -157,3 +157,7 @@ export const DEFAULT_HOUR_ANALYSIS_LABOR_MODEL = {
     ]),
   },
 };
+
+export function cloneDefaultHourAnalysisLaborModel() {
+  return JSON.parse(JSON.stringify(DEFAULT_HOUR_ANALYSIS_LABOR_MODEL));
+}
