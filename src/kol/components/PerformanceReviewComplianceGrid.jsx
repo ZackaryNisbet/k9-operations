@@ -4,30 +4,11 @@ import { I } from "../../shared/icons";
 import { LaborSearchBar, LaborIntro } from "../../shared/ui";
 import { LABOR_INTRO_DEFAULTS } from "../laborIntros";
 import { isWaivedLaborComplianceState, getLaborComplianceCellState } from "../performanceReviewData";
+import { FILTER_OP_LABELS, REQUIREMENT_STATUS_OPTIONS } from "./performanceReviewGrid/constants";
 
 const defaultFormatter = (value) => value || "-";
 const identity = (value) => value;
 const DEFAULT_COMPLIANCE_FILTERS = { employment_status: { op: "is", val: "active" } };
-const FILTER_OP_LABELS = {
-  contains: "contains",
-  equals: "equals",
-  starts: "starts with",
-  empty: "is empty",
-  notEmpty: "has value",
-  is: "is",
-  isNot: "is not",
-  after: "after",
-  before: "before",
-  inLastDays: "in last days",
-};
-const REQUIREMENT_STATUS_OPTIONS = [
-  { value: "compliant", label: "Compliant" },
-  { value: "non-compliant", label: "Non-compliant" },
-  { value: "completed", label: "Complete" },
-  { value: "waived", label: "Waived" },
-  { value: "overdue", label: "Overdue" },
-  { value: "not-started", label: "Not Started" },
-];
 
 function joinClassNames(...values) {
   return values.filter(Boolean).join(" ");
