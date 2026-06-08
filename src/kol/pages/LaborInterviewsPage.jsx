@@ -200,41 +200,6 @@ function useStorageObjectPreviewUrl({ bucket, path, versionKey = "", setPreviewU
   }, [bucket, enabled, path, versionKey, setPreviewUrl]);
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 export default function LaborInterviewsPage({ data, profile, addGlobalToast, locationName, embedded = false, viewPreset = null, recordIdPreset = "", canManage = true, onViewChange = null, onRecordChange = null, onDetailChange = null, searchSlot = null, introValue = "", canEditIntro = false, onSaveIntro = null }) {
   const actorUserId = normalizeOptionalUuid(profile?.user_id || profile?.id);
   const actorName = profile?.name || profile?.full_name || profile?.email || "System";
