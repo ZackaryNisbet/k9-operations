@@ -115,10 +115,12 @@ function Reveal({ children, delay = 0, as: Tag = 'div', style, className = '' })
 }
 
 // ─── App-frame chrome ──────────────────────────────────────────────────────────
-// Pass `shot` (a real screenshot path, e.g. "/shots/crm.png") to show the actual
-// app; otherwise the CSS placeholder children render. Real screenshots replace the
-// placeholders once captured from the live base platform (see
-// scripts/capture-marketing-shots.mjs).
+// Pass `shot` (a real screenshot path, e.g. "/shots/home.png") to show the actual
+// base platform; otherwise the CSS placeholder children render. The wired shots are
+// captured from the live base platform and were reviewed to contain only aggregate,
+// non-personal data (overview KPIs, ops progress, the demand matrix, occupancy) —
+// see scripts/capture-marketing-shots.mjs. Pillars whose real pages are inherently
+// PII-heavy (CRM, checkout TV) intentionally keep the CSS mock fallback.
 function AppFrame({ title = 'K9 Operations', children, shot }) {
   return (
     <div className="app-frame">
@@ -281,7 +283,7 @@ const PILLARS = [
     title: 'Every routine, tracked to done.',
     body: 'Opening and closing roll calls, feeding and medications, room cleaning, bathing, private play, weekly maintenance — each becomes a live checklist with real-time progress, so nothing slips on a busy day.',
     bullets: ['Role-based checklists for every shift & station', 'Live completion across the whole team', 'Care reports built from what staff log'],
-    Mock: MockOps,
+    Mock: MockOps, shot: '/shots/operations.png',
   },
   {
     eyebrow: 'Customer Lifecycle', icon: 'lifecycle',
@@ -295,14 +297,14 @@ const PILLARS = [
     title: "Staff matched to the day's demand.",
     body: 'Forecast demand, build the schedule against it, and run the whole labor program — roster, 30/60/90 reviews, interviews, and capacity planning — in one place.',
     bullets: ['Demand-matched staff scheduling', 'Training, reviews & interviews', 'Capacity & labor-cost planning'],
-    Mock: MockScheduling,
+    Mock: MockScheduling, shot: '/shots/scheduling.png',
   },
   {
     eyebrow: 'Reporting & Intelligence', icon: 'reports',
     title: 'The whole operation, in numbers.',
     body: 'Revenue, occupancy, labor, end-of-day, and package performance — pulled straight from operations. Ask a question in plain English, or open the analytics workspace for the full picture.',
     bullets: ['Live revenue, occupancy & labor dashboards', 'End-of-day reporting & reconciliation', 'Plain-language queries → instant charts'],
-    Mock: MockDashboard, reversed: true,
+    Mock: MockDashboard, reversed: true, shot: '/shots/occupancy.png',
   },
   {
     eyebrow: 'Front of House', icon: 'tv',
@@ -388,7 +390,7 @@ export default function LandingPage() {
           </div>
         </div>
         <div className="hero-shot">
-          <AppFrame title="K9 Operations · Dashboard"><MockDashboard /></AppFrame>
+          <AppFrame title="K9 Operations · Dashboard" shot="/shots/home.png"><MockDashboard /></AppFrame>
         </div>
       </header>
 
@@ -435,7 +437,7 @@ export default function LandingPage() {
                 </div>
               </Reveal>
               <Reveal className="feature-visual" delay={120}>
-                <AppFrame title={`K9 Operations · ${p.eyebrow}`}><p.Mock /></AppFrame>
+                <AppFrame title={`K9 Operations · ${p.eyebrow}`} shot={p.shot}><p.Mock /></AppFrame>
               </Reveal>
             </div>
           </div>
