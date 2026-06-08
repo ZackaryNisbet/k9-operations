@@ -92,6 +92,10 @@ review. A root `CONTRIBUTING.md` is part of the
 
 ## License
 
-Currently **proprietary** (`© 2026 K9 Operations LLC`). An OSI/source‑available
-license must be chosen before public release; see
-[docs/OPEN_SOURCE_PROPOSAL.md](docs/OPEN_SOURCE_PROPOSAL.md).
+**Source‑available, evaluation only** — © 2026 K9 Operations LLC, all rights
+reserved. The source is public to **read and review**, but the license grants **no
+right to use, run, copy, modify, or distribute** it. This is intentionally *not* an
+open‑source license. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) (third‑party
+components retain their own licenses). Rationale and alternatives:
+[docs/OPEN_SOURCE_PROPOSAL.md](docs/OPEN_SOURCE_PROPOSAL.md). *Not legal advice —
+have counsel confirm the `LICENSE` text before public release.*
