@@ -9,6 +9,7 @@ import { C, LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX, POS_BASE, PAGE_SLUGS,
 import { I, Icons } from "../shared/icons";
 import { K9Logo, K9LogoMini, Btn, Tip, Badge, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, Card, isFieldRequired, validateClientFields } from "../shared/ui";
 import { applyLeanPermissionOverrides, hasAnyLeanPermission, hasEveryLeanPermission, hasLeanPermission, hasPermission, _resolveRole, LEGACY_ROLE_MAP, ROLE_CODE_MAP, getUserLocationIds } from "../shared/permissions";
+import { isDemoActive, fakeEmail } from "../shared/demoMode";
 import { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, resSvcIncludes, getPPStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel } from "../shared/opsHelpers";
 import K9LoadingAnimation from "../shared/K9LoadingAnimation";
 import LocationSelector from "../shared/LocationSelector";
@@ -630,6 +631,11 @@ function LeanAppInner() {
   const [lcFilterOpen, setLcFilterOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sbExpanded = sidebarOpen;
+
+  // The signed-in account's email comes from the auth user (not a REST row), so the
+  // network scrubber never sees it. Mask it here so Demo accounts don't expose the
+  // real address in the sidebar.
+  const accountEmail = isDemoActive() ? fakeEmail(user?.email || "demo") : (user?.email || "User");
 
   // Use the auth profile's location_id (UUID) so it matches Supabase data
   const [currentLocation, setCurrentLocation] = useState(initialLocation);
@@ -1482,6 +1488,8 @@ function LeanAppInner() {
             const isOwnerOrAdmin = code === "owner" || code === "admin" || code === "developer" || code === "enterprise_admin";
             const isStaff = !isOwnerOrAdmin && (code === "pct" || code === "csr");
             const isManager = !isOwnerOrAdmin && (code === "supervisor" || code === "manager" || code === "mod");
+            // Demo accounts get the full rail so every page is reachable in the showcase.
+            if (isDemoActive()) return ANALYTICS_NAV_ITEMS;
             if (IS_ANALYTICS_MODE) return ANALYTICS_NAV_ITEMS;
             if (isStaff) return STAFF_NAV_ITEMS;
             if (isManager) return MANAGER_NAV_ITEMS;
@@ -1533,9 +1541,9 @@ function LeanAppInner() {
             <div style={{ position: "relative" }}>
               <button onClick={() => setAccountSwitchOpen(!accountSwitchOpen)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", border: "none", borderRadius: 8, background: accountSwitchOpen ? SIDEBAR.active : "transparent", color: SIDEBAR.itemText, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, textAlign: "left", transition: "background 0.15s" }}>
                 <div style={{ width: 26, height: 26, borderRadius: 8, background: SIDEBAR.active, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: SIDEBAR.itemActive }}>{(user?.email || "U")[0].toUpperCase()}</span>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: SIDEBAR.itemActive }}>{(accountEmail || "U")[0].toUpperCase()}</span>
                 </div>
-                <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: SIDEBAR.muted, fontSize: 11 }}>{user?.email || "User"}</div>
+                <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: SIDEBAR.muted, fontSize: 11 }}>{accountEmail}</div>
                 <span style={{ fontSize: 8, color: SIDEBAR.faint, transform: accountSwitchOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>&#9650;</span>
               </button>
 
@@ -1598,6 +1606,22 @@ function LeanAppInner() {
       </div>}
 
       {!isFullscreenPage && <InitialGingrSyncDock locationId={currentLocation} />}
+
+      {/* Demo-mode indicator — makes it explicit the data is anonymized & read-only */}
+      {isDemoActive() && (
+        <div style={{
+          position: "fixed", top: 12, left: "50%", transform: "translateX(-50%)",
+          zIndex: 9700, display: "flex", alignItems: "center", gap: 8,
+          padding: "7px 14px", borderRadius: 999,
+          background: "rgba(11,40,24,0.94)", color: "#F7FEE7",
+          fontSize: 12, fontWeight: 700, letterSpacing: "0.01em",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.28)", border: "1px solid rgba(217,249,157,0.32)",
+          fontFamily: "'Outfit', sans-serif", pointerEvents: "none", whiteSpace: "nowrap",
+        }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#84CC16", boxShadow: "0 0 8px #84CC16" }} />
+          Demo mode · names anonymized · read-only
+        </div>
+      )}
 
       {/* Toast Notifications */}
       {toasts.length > 0 && (

@@ -2,9 +2,9 @@
 // Seed inventory_catalog from inventory_items.json via Supabase REST API
 import { readFileSync } from "fs";
 
-const SUPABASE_URL = "https://YOUR_SUPABASE_PROJECT_REF.supabase.co";
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const LOCATION_ID = "11111111-1111-1111-1111-111111111111";
+const LOCATION_ID = process.env.LOCATION_ID || "";
 
 if (!SUPABASE_KEY) {
   console.error("SUPABASE_SERVICE_ROLE_KEY is required to seed inventory_catalog.");
