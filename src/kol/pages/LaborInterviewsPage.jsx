@@ -65,35 +65,60 @@ import {
   SUMMARY_SECTION_KEYS,
 } from "./laborInterviews/constants";
 import {
+  buildExportPdfFieldMap,
+  buildGuideAiCompletionBullets,
+  buildInterviewSummaryPages,
   buildLegacyGuideFromRecord,
   buildLiveTranscriptLines,
   buildNewInterviewDraft,
   buildNewPositionDraft,
   buildPayRateMetadata,
+  buildPdfReviewItems,
   buildTranscriptTimelineWaveBars,
   chunkProviderWords,
   compactDateTime,
+  composePdfReviewItemValue,
+  computeOverallScoreFromPdfMap,
+  createCustomSummaryPageId,
+  customSummarySectionKey,
   draftMapsEqual,
   extractAudioWaveformBars,
+  extractPdfQuestionPromptMap,
   fieldKey,
+  fieldValueRows,
   findActiveTranscriptLineIndex,
+  fitPdfFieldValueForSlot,
   formatDuration,
   formatFileSize,
   formatPlaybackTime,
   getAutoScoreStorageKey,
   getInterviewAudioPlaybackCandidates,
+  getPdfFieldOverlayStyle,
+  getPdfFieldPageSize,
+  getPdfFieldValueOverlayStyle,
+  getPdfPageOverlayBox,
   getResponseDraft,
+  getStoredCustomSummaryPages,
+  getStoredSummaryEdits,
+  getStoredTranscriptSummaryBullets,
   getTranscriptLineProgress,
   getTranscriptSearchResults,
+  humanizePdfFieldName,
+  isEditableSummarySectionKey,
   isInterviewRpcMissing,
+  isPdfResumeArtifact,
   isSignedAudioUrlReadable,
   isTurnActive,
   mapResponsesByTarget,
   normalizeAiReviewMode,
+  normalizeCustomSummaryPageId,
   normalizeInterviewAudioForSttOnServer,
   normalizeRpcArray,
   normalizeTranscriptSearch,
+  paginateInterviewSummaryPreview,
   payRatesFromVersion,
+  questionPartLabel,
+  questionPartShortLabel,
   readAutoScoreSetting,
   readEdgeFunctionError,
   responseKeyForPdfField,
@@ -104,6 +129,10 @@ import {
   shouldDecodeAudioWaveform,
   sleep,
   snapshotForGuide,
+  splitPdfReviewItemValue,
+  summaryBulletsToText,
+  summarySectionKey,
+  summaryTextToBullets,
   wordMatchesSearch,
   wordsFromProviderSegments,
 } from "./laborInterviews/helpers";
@@ -671,683 +700,6 @@ function RecommendationBadge({ value }) {
   return <Badge color={option.tone}>{option.label}</Badge>;
 }
 
-function humanizePdfFieldName(value = "") {
-  const raw = String(value || "").trim();
-  const aliases = {
-    candidate_name: "Candidate name",
-    interview_date: "Interview date",
-    interviewer_name: "Interviewer",
-    location: "Location",
-    scorecard_date: "Scorecard date",
-    scorecard_interviewer: "Scorecard interviewer",
-    overall_score: "Overall score",
-    strongest_area: "Strongest area",
-    biggest_concern: "Biggest concern",
-  };
-  if (aliases[raw]) return aliases[raw];
-  return raw
-    .replace(/^q(\d+)_/i, "Question $1 ")
-    .replace(/^score_notes_/i, "Score notes ")
-    .replace(/^score_/i, "Score ")
-    .replace(/^decision_/i, "Decision ")
-    .replace(/_/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function fieldValueRows(value = "") {
-  const length = String(value || "").length;
-  if (length < 80) return 3;
-  if (length < 220) return 5;
-  if (length < 520) return 7;
-  return 9;
-}
-
-function getPdfQuestionGroup(fieldName = "") {
-  const match = String(fieldName || "").match(/^q(\d{2})_(situation|task|action|result|notes)(?:_(\d+))?$/i);
-  if (!match) return null;
-  const rawPart = match[2].toLowerCase();
-  const part = rawPart === "notes" ? "result" : rawPart;
-  return {
-    key: `q${match[1]}_${part}`,
-    questionKey: `q${match[1]}`,
-    number: Number(match[1]),
-    part,
-    line: rawPart === "notes" ? Number(match[3] || 0) + 1 : Number(match[3] || 0),
-    sourcePart: rawPart,
-  };
-}
-
-function questionPartLabel(item) {
-  if (!item || item.type !== "question_part") return "";
-  return `Question ${String(item.number).padStart(2, "0")} ${item.partLabel}`;
-}
-
-function questionPartShortLabel(item) {
-  if (!item || item.type !== "question_part") return "";
-  const letter = item.part === "situation" ? "S" : item.part === "task" ? "T" : item.part === "action" ? "A" : "R";
-  return `${item.number}${letter}`;
-}
-
-function approximatePdfFieldCharLimit(field = {}) {
-  const width = Number(field?.rect?.width || 0);
-  if (!Number.isFinite(width) || width <= 0) return 95;
-  return Math.max(40, Math.min(120, Math.floor(width / 4.75)));
-}
-
-function splitTextAcrossPdfFields(value = "", fields = []) {
-  const targets = fields || [];
-  const text = String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
-  if (!targets.length) return [];
-  if (targets.length === 1) return [text];
-  const chunks = [];
-  let remaining = text.replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
-  targets.forEach((field, index) => {
-    if (!remaining) {
-      chunks.push("");
-      return;
-    }
-    if (index === targets.length - 1) {
-      chunks.push(remaining);
-      remaining = "";
-      return;
-    }
-    const limit = approximatePdfFieldCharLimit(field);
-    if (remaining.length <= limit) {
-      chunks.push(remaining);
-      remaining = "";
-      return;
-    }
-    const breakpoint = Math.max(
-      remaining.lastIndexOf(" ", limit),
-      remaining.lastIndexOf(".", limit),
-      remaining.lastIndexOf(";", limit),
-      remaining.lastIndexOf(",", limit),
-    );
-    const cutAt = breakpoint >= Math.floor(limit * 0.55) ? breakpoint : limit;
-    chunks.push(remaining.slice(0, cutAt).trim());
-    remaining = remaining.slice(cutAt).trim();
-  });
-  return chunks;
-}
-
-function getPdfFieldFitLimit(field = {}) {
-  const rect = getInterviewPdfFieldDisplayRect(field) || {};
-  const width = Number(rect.width || 0);
-  const height = Number(rect.height || 0);
-  if (!Number.isFinite(width) || width <= 0) return 80;
-  const lines = height > 22 ? Math.max(1, Math.floor(height / 9.5)) : 1;
-  const charsPerLine = Math.max(16, Math.floor(width / 7.4));
-  return Math.max(16, Math.min(220, charsPerLine * lines));
-}
-
-function fitPdfFieldValueForSlot(value = "", field = {}) {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
-  if (!text) return "";
-  if (field.type && field.type !== "text") return text;
-  const limit = getPdfFieldFitLimit(field);
-  if (text.length <= limit) return text;
-  return `${text.slice(0, Math.max(0, limit - 3)).trim()}...`;
-}
-
-function getPdfExportFieldCharLimit(field = {}) {
-  const rect = getInterviewPdfFieldDisplayRect(field) || {};
-  const width = Number(rect.width || 0);
-  if (!Number.isFinite(width) || width <= 0) return 120;
-  return Math.max(60, Math.min(180, Math.floor(width / 3.55)));
-}
-
-function splitTextAcrossPdfFieldsForExport(value = "", fields = []) {
-  const targets = fields || [];
-  const text = String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
-  if (!targets.length) return [];
-  if (targets.length === 1) return [text.replace(/\n+/g, " ").replace(/\s+/g, " ").trim()];
-  const chunks = [];
-  let remaining = text.replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
-  targets.forEach((field, index) => {
-    if (!remaining) {
-      chunks.push("");
-      return;
-    }
-    if (index === targets.length - 1) {
-      chunks.push(remaining);
-      remaining = "";
-      return;
-    }
-    const limit = getPdfExportFieldCharLimit(field);
-    if (remaining.length <= limit) {
-      chunks.push(remaining);
-      remaining = "";
-      return;
-    }
-    const breakpoint = Math.max(
-      remaining.lastIndexOf(" ", limit),
-      remaining.lastIndexOf(".", limit),
-      remaining.lastIndexOf(";", limit),
-      remaining.lastIndexOf(",", limit),
-    );
-    const cutAt = breakpoint >= Math.floor(limit * 0.45) ? breakpoint : limit;
-    chunks.push(remaining.slice(0, cutAt).trim());
-    remaining = remaining.slice(cutAt).trim();
-  });
-  return chunks;
-}
-
-function buildReadablePdfFieldMap(map = {}, fields = []) {
-  const fieldByName = new Map((fields || []).map((field) => [field.name, field]));
-  return Object.entries(map || {}).reduce((next, [name, value]) => {
-    next[name] = fitPdfFieldValueForSlot(value, fieldByName.get(name) || { name });
-    return next;
-  }, {});
-}
-
-function buildExportPdfFieldMap(map = {}, fields = []) {
-  const fieldByName = new Map((fields || []).map((field) => [field.name, field]));
-  const next = {};
-  const handled = new Set();
-  buildPdfReviewItems(fields)
-    .filter((item) => item.type === "question_part")
-    .forEach((item) => {
-      const fullValue = composePdfReviewItemValue(item, (field) => map[field.name] || "");
-      const chunks = splitTextAcrossPdfFieldsForExport(fullValue, item.fields || []);
-      (item.fields || []).forEach((field, index) => {
-        next[field.name] = chunks[index] || "";
-        handled.add(field.name);
-      });
-  });
-  Object.entries(map || {}).forEach(([name, value]) => {
-    if (handled.has(name)) return;
-    const field = fieldByName.get(name) || { name };
-    next[name] = field.type && field.type !== "text" ? value : String(value || "").replace(/\s+/g, " ").trim();
-  });
-  return next;
-}
-
-function buildPdfReviewItems(fields = []) {
-  const groups = new Map();
-  const items = [];
-  fields.forEach((field, index) => {
-    const group = getPdfQuestionGroup(field.name);
-    if (!group) {
-      items.push({ type: "field", key: responseKeyForPdfField(field), field, fields: [field], index });
-      return;
-    }
-    if (!groups.has(group.key)) {
-      groups.set(group.key, {
-        type: "question_part",
-        key: `pdf_group:${group.key}`,
-        groupKey: group.questionKey,
-        number: group.number,
-        part: group.part,
-        partLabel: group.part.replace(/\b\w/g, (char) => char.toUpperCase()),
-        fields: [],
-        index,
-      });
-    }
-    groups.get(group.key).fields.push({ ...field, groupPart: group.part, sourcePart: group.sourcePart, line: group.line });
-  });
-  return [...items, ...groups.values()]
-    .map((item) => {
-      if (item.type !== "question_part") return item;
-      return {
-        ...item,
-        fields: item.fields.sort((a, b) => {
-          const aLine = Number(a.line || 0);
-          const bLine = Number(b.line || 0);
-          if (aLine !== bLine) return aLine - bLine;
-          return String(a.name).localeCompare(String(b.name));
-        }),
-      };
-    })
-    .sort((a, b) => a.index - b.index);
-}
-
-function cleanPdfQuestionPrompt(value = "") {
-  return String(value || "")
-    .replace(/\s+/g, " ")
-    .replace(/\bPage\s+\d+\s*\|.*$/i, "")
-    .replace(/\b(Situation|Task|Action|Result|Follow-Up Probes)\s*:.*$/i, "")
-    .trim()
-    .slice(0, 900);
-}
-
-function extractNumberedPdfQuestionPrompts(fullText = "") {
-  const text = String(fullText || "")
-    .replace(/\r/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{2,}/g, "\n");
-  const prompts = {};
-  const regex = /(?:^|\n)\s*Q\s*(\d{1,2})\.\s*([\s\S]*?)(?=\n\s*(?:Situation\s*:|Task\s*:|Action\s*:|Result\s*:|Follow-Up Probes\s*:|Q\s*\d{1,2}\.|[A-Z][A-Za-z ]+\s+—\s+Scorecard|Rate each competency)|$)/gi;
-  let match = regex.exec(text);
-  while (match) {
-    const key = String(match[1] || "").padStart(2, "0");
-    const prompt = cleanPdfQuestionPrompt(match[2]);
-    if (key && prompt) prompts[key] = prompt;
-    match = regex.exec(text);
-  }
-  return prompts;
-}
-
-function linesFromPdfTextItems(items = []) {
-  const positioned = items
-    .map((item) => ({
-      text: String(item?.str || "").trim(),
-      x: Number(item?.transform?.[4] || 0),
-      y: Number(item?.transform?.[5] || 0),
-    }))
-    .filter((item) => item.text);
-  positioned.sort((a, b) => Math.abs(b.y - a.y) > 3 ? b.y - a.y : a.x - b.x);
-  const lines = [];
-  positioned.forEach((item) => {
-    const line = lines.find((entry) => Math.abs(entry.y - item.y) <= 3);
-    if (line) {
-      line.items.push(item);
-      line.y = (line.y + item.y) / 2;
-    } else {
-      lines.push({ y: item.y, items: [item] });
-    }
-  });
-  return lines
-    .sort((a, b) => b.y - a.y)
-    .map((line) => line.items.sort((a, b) => a.x - b.x).map((item) => item.text).join(" "))
-    .filter(Boolean);
-}
-
-async function extractPdfQuestionPromptMap(pdfBytes) {
-  const pdfjsLib = await import("pdfjs-dist");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-  const data = pdfBytes instanceof ArrayBuffer ? new Uint8Array(pdfBytes.slice(0)) : pdfBytes;
-  const loadingTask = pdfjsLib.getDocument({ data });
-  const pageTexts = [];
-  try {
-    const pdf = await loadingTask.promise;
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-      const page = await pdf.getPage(pageNumber);
-      const content = await page.getTextContent();
-      pageTexts.push(linesFromPdfTextItems(content.items).join("\n"));
-    }
-    await pdf.destroy?.();
-  } finally {
-    try { loadingTask.destroy?.(); } catch (_) {}
-  }
-  return extractNumberedPdfQuestionPrompts(pageTexts.join("\n"));
-}
-
-function composePdfReviewItemValue(item, getFieldValue) {
-  if (!item) return "";
-  if (item.type !== "question_part") return getFieldValue(item.field);
-  return (item.fields || [])
-    .map((field) => String(getFieldValue(field) || ""))
-    .filter((value) => value.length > 0)
-    .join(" ");
-}
-
-function splitPdfReviewItemValue(item, value) {
-  if (!item) return [];
-  if (item.type !== "question_part") return item?.field ? [{ field: item.field, value }] : [];
-  const chunks = splitTextAcrossPdfFields(value, item.fields || []);
-  return (item.fields || []).map((field, index) => ({ field, value: chunks[index] || "" }));
-}
-
-function computeOverallScoreFromPdfMap(map = {}, fields = []) {
-  const scoreFieldNames = (fields || [])
-    .map((field) => field.name)
-    .filter((name) => /^score_/i.test(String(name || ""))
-      && !/^score_notes_/i.test(String(name || ""))
-      && !/overall/i.test(String(name || "")));
-  const scores = scoreFieldNames
-    .map((name) => Number(String(map[name] || "").match(/[1-4](?:\.\d+)?/)?.[0]))
-    .filter((value) => Number.isFinite(value) && value >= 1 && value <= 4);
-  if (!scores.length) return "";
-  const average = scores.reduce((sum, value) => sum + value, 0) / scores.length;
-  return Number.isInteger(average) ? String(average) : average.toFixed(1);
-}
-
-function conciseBullet(value = "", maxLength = 190) {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
-  if (!text) return "";
-  return text.length > maxLength ? `${text.slice(0, maxLength - 3).trim()}...` : text;
-}
-
-function normalizeSummaryBulletText(value = "") {
-  return String(value || "")
-    .replace(/^(\s*[-*•]\s*)+/, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function summaryTextToBullets(value = "") {
-  return String(value || "")
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .split("\n")
-    .map((line) => normalizeSummaryBulletText(line))
-    .filter(Boolean);
-}
-
-function summaryBulletsToText(bullets = []) {
-  return (Array.isArray(bullets) ? bullets : [])
-    .map((bullet) => normalizeSummaryBulletText(bullet))
-    .filter(Boolean)
-    .map((bullet) => `- ${bullet}`)
-    .join("\n");
-}
-
-function summarySectionKey(value = "") {
-  const key = String(value || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return key || "summary";
-}
-
-
-function normalizeCustomSummaryPageId(value = "") {
-  const key = summarySectionKey(String(value || "").replace(new RegExp(`^${CUSTOM_SUMMARY_SECTION_PREFIX}`), ""));
-  return key === "summary" ? "" : key;
-}
-
-function createCustomSummaryPageId() {
-  return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function customSummarySectionKey(pageId = "", index = 0) {
-  const id = normalizeCustomSummaryPageId(pageId) || `page_${index + 1}`;
-  return `${CUSTOM_SUMMARY_SECTION_PREFIX}${id}`;
-}
-
-function isCustomSummarySectionKey(value = "") {
-  return String(value || "").startsWith(CUSTOM_SUMMARY_SECTION_PREFIX);
-}
-
-
-function isSummarySectionKey(value = "") {
-  return SUMMARY_SECTION_KEYS.has(String(value || ""));
-}
-
-function isEditableSummarySectionKey(value = "") {
-  return isSummarySectionKey(value) || isCustomSummarySectionKey(value);
-}
-
-function getInterviewSummaryEditSource(recordOrEdits) {
-  return recordOrEdits?.metadata?.interview_summary_edits || recordOrEdits || {};
-}
-
-function getStoredSummaryEdits(recordOrEdits) {
-  const source = getInterviewSummaryEditSource(recordOrEdits);
-  const sections = source.sections || source;
-  if (!sections || typeof sections !== "object" || Array.isArray(sections)) return {};
-  return Object.entries(sections).reduce((next, [key, value]) => {
-    if (!isEditableSummarySectionKey(key)) return next;
-    const bullets = Array.isArray(value) ? value : summaryTextToBullets(value);
-    next[key] = bullets.map((bullet) => normalizeSummaryBulletText(bullet)).filter(Boolean);
-    return next;
-  }, {});
-}
-
-function getStoredCustomSummaryPages(recordOrEdits) {
-  const source = getInterviewSummaryEditSource(recordOrEdits);
-  const sections = source.sections && typeof source.sections === "object" && !Array.isArray(source.sections) ? source.sections : {};
-  const pages = Array.isArray(source.custom_pages) ? source.custom_pages : [];
-  return pages.map((page, index) => {
-    const rawSectionKey = page?.section_key || page?.sectionKey || "";
-    const id = normalizeCustomSummaryPageId(page?.id || page?.key || rawSectionKey) || `page_${index + 1}`;
-    const sectionKey = isCustomSummarySectionKey(rawSectionKey) ? rawSectionKey : customSummarySectionKey(id, index);
-    const title = String(page?.title || page?.heading || `Custom Summary Page ${index + 1}`).trim() || `Custom Summary Page ${index + 1}`;
-    const sectionValue = Object.prototype.hasOwnProperty.call(sections, sectionKey)
-      ? sections[sectionKey]
-      : (page?.bullets || page?.body || page?.text || "");
-    const bullets = (Array.isArray(sectionValue) ? sectionValue : summaryTextToBullets(sectionValue))
-      .map((bullet) => normalizeSummaryBulletText(bullet))
-      .filter(Boolean);
-    return {
-      id,
-      sectionKey,
-      title,
-      heading: page?.heading || "Notes",
-      bullets,
-    };
-  });
-}
-
-function applySummarySectionEdits(sections = [], summaryEdits = {}) {
-  const edits = getStoredSummaryEdits(summaryEdits);
-  return (sections || [])
-    .map((section) => {
-      const key = section.key || summarySectionKey(section.heading);
-      if (!Object.prototype.hasOwnProperty.call(edits, key)) return { ...section, key };
-      return { ...section, key, bullets: edits[key] || [] };
-    })
-    .filter((section) => Array.isArray(section.bullets) && section.bullets.length > 0);
-}
-
-function getStoredTranscriptSummaryBullets(record) {
-  const metadata = record?.metadata || {};
-  const source = metadata.interview_summary || metadata.transcript_summary || {};
-  const rawBullets = Array.isArray(source) ? source : source.bullets;
-  return (Array.isArray(rawBullets) ? rawBullets : [])
-    .map((bullet) => normalizeSummaryBulletText(bullet))
-    .filter(Boolean)
-    .slice(0, 12);
-}
-
-function splitTranscriptIntoSummarySentences(record) {
-  const text = String(record?.transcript_text || "")
-    .replace(/\[[^\]]{0,80}\]/g, " ")
-    .replace(/\b(?:Speaker|Person)\s+\d+\s*:/gi, " ")
-    .replace(/\b(?:Skyler|Interviewer|Candidate|Alexis)\s*:/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!text) return [];
-  return text
-    .split(/(?<=[.!?])\s+/)
-    .map((sentence) => sentence.replace(/^[-*\s]+/, "").trim())
-    .filter((sentence) => sentence.length >= 32 && sentence.length <= 260)
-    .filter((sentence) => !/^(yeah|yes|no|okay|right|mhm|um|uh)[\s,.]/i.test(sentence))
-    .slice(0, 220);
-}
-
-function buildFallbackTranscriptSummaryBullets(record) {
-  const sentences = splitTranscriptIntoSummarySentences(record);
-  if (!sentences.length) return [];
-  const categories = [
-    { label: "Role fit / background", terms: ["role", "supervisor", "experience", "manager", "background", "team", "resort", "position"] },
-    { label: "Safety / accountability", terms: ["safety", "accountable", "correct", "warning", "policy", "phone", "radio", "leash", "reactive"] },
-    { label: "Team motivation / recognition", terms: ["motivat", "burn", "disengaged", "recogn", "praise", "reward", "encourag", "team"] },
-    { label: "Customer / conflict handling", terms: ["customer", "client", "owner", "upset", "complaint", "conflict", "escalat"] },
-    { label: "Operations / standards", terms: ["clean", "daycare", "groom", "standard", "procedure", "training", "task"] },
-    { label: "Follow-up context", terms: ["availability", "schedule", "start", "next", "question", "concern"] },
-  ];
-  const used = new Set();
-  const bullets = categories.map((category) => {
-    const sentenceIndex = sentences.findIndex((sentence, index) => {
-      if (used.has(index)) return false;
-      const lower = sentence.toLowerCase();
-      return category.terms.some((term) => lower.includes(term));
-    });
-    if (sentenceIndex === -1) return "";
-    used.add(sentenceIndex);
-    return `${category.label}: ${normalizeSummaryBulletText(sentences[sentenceIndex])}`;
-  }).filter(Boolean);
-
-  if (bullets.length >= 4) return bullets.slice(0, 8);
-  sentences.forEach((sentence, index) => {
-    if (bullets.length >= 6 || used.has(index)) return;
-    used.add(index);
-    bullets.push(normalizeSummaryBulletText(sentence));
-  });
-  return bullets.slice(0, 8);
-}
-
-function getTranscriptSummaryBullets(record) {
-  const stored = getStoredTranscriptSummaryBullets(record);
-  return stored.length ? stored : buildFallbackTranscriptSummaryBullets(record);
-}
-
-function buildInterviewSummaryPages({ record, guide, fields, questions, responsesByTarget, finalMap, summaryEdits = null }) {
-  const transcriptBullets = getTranscriptSummaryBullets(record);
-  const guideBullets = buildPdfReviewItems(fields)
-    .filter((item) => item.type === "question_part")
-    .map((item) => {
-      const value = composePdfReviewItemValue(item, (field) => finalMap[field.name] || "");
-      if (!String(value || "").trim()) return "";
-      const label = item.type === "question_part" ? questionPartLabel(item) : humanizePdfFieldName(item.field.name);
-      return `${label}: ${normalizeSummaryBulletText(value)}`;
-    })
-    .filter(Boolean);
-
-  const customBullets = (questions || [])
-    .map((question) => {
-      const response = responsesByTarget[responseKeyForQuestion(question)] || {};
-      const value = getInterviewOfficialResponseText(response);
-      if (!value) return "";
-      return `${question.prompt}: ${normalizeSummaryBulletText(value)}`;
-    })
-    .filter(Boolean);
-
-  const scoreBullets = [];
-  const overallScore = finalMap.overall_score || computeOverallScoreFromPdfMap(finalMap, fields);
-  if (overallScore) scoreBullets.push(`Overall score: ${overallScore}`);
-  if (finalMap.strongest_area) scoreBullets.push(`Strongest area: ${normalizeSummaryBulletText(finalMap.strongest_area)}`);
-  if (finalMap.biggest_concern) scoreBullets.push(`Biggest concern: ${normalizeSummaryBulletText(finalMap.biggest_concern)}`);
-  (fields || [])
-    .filter((field) => /^score_notes_/i.test(String(field?.name || "")))
-    .map((field) => {
-      const value = String(finalMap[field.name] || "").trim();
-      if (!value) return "";
-      return `${humanizePdfFieldName(field.name).replace(/^Score Notes\s*/i, "")}: ${normalizeSummaryBulletText(value)}`;
-    })
-    .filter(Boolean)
-    .forEach((bullet) => scoreBullets.push(bullet));
-
-  const sections = applySummarySectionEdits([
-    transcriptBullets.length ? { key: "call_summary", heading: "Call Summary", bullets: transcriptBullets } : null,
-    scoreBullets.length ? { key: "scorecard", heading: "Scorecard", bullets: scoreBullets } : null,
-    guideBullets.length ? { key: "reviewed_guide_responses", heading: "Reviewed Guide Responses", bullets: guideBullets } : null,
-    customBullets.length ? { key: "reviewed_custom_questions", heading: "Reviewed Custom Questions", bullets: customBullets } : null,
-  ].filter(Boolean), summaryEdits || record);
-
-  const subtitle = `${record?.candidate_full_name || "Candidate"} - ${guide?.guide_label || guide?.role_label || record?.candidate_position || "Interview"}`;
-  const callSummarySections = sections.filter((section) => (section.key || summarySectionKey(section.heading)) === "call_summary");
-  const detailSections = sections.filter((section) => (section.key || summarySectionKey(section.heading)) !== "call_summary");
-  const pages = [];
-  if (callSummarySections.length) {
-    pages.push({
-      title: "Interview Summary",
-      subtitle,
-      sections: callSummarySections,
-    });
-  }
-  if (detailSections.length) {
-    pages.push({
-      title: callSummarySections.length ? "Interview Summary (continued)" : "Interview Summary",
-      subtitle,
-      sections: detailSections,
-    });
-  }
-  getStoredCustomSummaryPages(summaryEdits || record).forEach((customPage) => {
-    pages.push({
-      title: customPage.title,
-      subtitle,
-      custom: true,
-      sections: [{
-        key: customPage.sectionKey,
-        heading: customPage.heading || "Notes",
-        bullets: customPage.bullets || [],
-      }],
-    });
-  });
-  if (!pages.length) return [];
-  return pages;
-}
-
-function estimateSummaryBulletLines(text = "") {
-  const clean = String(text || "").replace(/\s+/g, " ").trim();
-  return Math.max(1, Math.ceil(clean.length / 92));
-}
-
-function chunkSummaryBulletForPreview(text = "", maxLines = 8) {
-  const clean = normalizeSummaryBulletText(text);
-  if (!clean) return [];
-  const maxChars = Math.max(120, 92 * maxLines);
-  if (clean.length <= maxChars) return [clean];
-  const chunks = [];
-  let remaining = clean;
-  while (remaining.length > maxChars) {
-    const breakpoint = Math.max(
-      remaining.lastIndexOf(" ", maxChars),
-      remaining.lastIndexOf(".", maxChars),
-      remaining.lastIndexOf(";", maxChars),
-      remaining.lastIndexOf(",", maxChars),
-    );
-    const cutAt = breakpoint >= Math.floor(maxChars * 0.6) ? breakpoint : maxChars;
-    chunks.push(remaining.slice(0, cutAt).trim());
-    remaining = remaining.slice(cutAt).trim();
-  }
-  if (remaining) chunks.push(remaining);
-  return chunks;
-}
-
-function paginateInterviewSummaryPreview(summaryPages = []) {
-  const sourcePages = Array.isArray(summaryPages) ? summaryPages.filter(Boolean) : [];
-  const previewPages = [];
-  const maxLines = 45;
-
-  sourcePages.forEach((summary) => {
-    const title = String(summary.title || "Interview Summary");
-    const subtitle = String(summary.subtitle || "");
-    const keepEmptySections = !!summary.custom;
-    let page = { title, subtitle, sections: [] };
-    let lineCount = 5;
-
-    const pushPage = () => {
-      if (page.sections.some((section) => section.bullets?.length || (keepEmptySections && section.heading))) previewPages.push(page);
-      const continuedTitle = /\(continued\)/i.test(title) ? title : `${title} (continued)`;
-      page = { title: continuedTitle, subtitle, sections: [] };
-      lineCount = 5;
-    };
-
-    (summary.sections || []).forEach((section) => {
-      const heading = String(section.heading || "").trim();
-      const bullets = (Array.isArray(section.bullets) ? section.bullets : [])
-        .map((item) => String(item || "").trim())
-        .filter(Boolean);
-      if (!bullets.length && keepEmptySections && heading) {
-        if (lineCount + 3 > maxLines && page.sections.some((row) => row.bullets?.length || row.heading)) pushPage();
-        page.sections.push({ heading, bullets: [] });
-        lineCount += 3;
-        return;
-      }
-      if (!bullets.length) return;
-
-      let activeSection = null;
-      const ensureSection = () => {
-        if (!activeSection) {
-          activeSection = { heading, bullets: [] };
-          page.sections.push(activeSection);
-          lineCount += heading ? 2 : 1;
-        }
-      };
-
-      bullets.flatMap((bullet) => chunkSummaryBulletForPreview(bullet)).forEach((bullet) => {
-        const needed = estimateSummaryBulletLines(bullet) + 1;
-        if (lineCount + needed > maxLines && page.sections.some((row) => row.bullets?.length)) {
-          pushPage();
-          activeSection = null;
-        }
-        ensureSection();
-        activeSection.bullets.push(bullet);
-        lineCount += needed;
-      });
-      lineCount += 1;
-    });
-
-    pushPage();
-  });
-
-  return previewPages;
-}
 
 function InterviewSummaryPreviewPage({ page, width }) {
   if (!page) return null;
@@ -1628,11 +980,6 @@ function RestrictedInterviewDetail({ record }) {
   );
 }
 
-function isPdfResumeArtifact(artifact) {
-  const mime = String(artifact?.mime_type || "").toLowerCase();
-  const fileName = String(artifact?.file_name || artifact?.metadata?.original_file_name || "").toLowerCase();
-  return mime.includes("pdf") || fileName.endsWith(".pdf");
-}
 
 function ResumePanel({ resumeArtifact, resumeCount = 0, uploading, onUploadClick, onOpen, onDownload, canUpload = true }) {
   const metadata = resumeArtifact?.metadata && typeof resumeArtifact.metadata === "object" ? resumeArtifact.metadata : {};
@@ -2552,70 +1899,6 @@ function TranscriptModal({ turns, currentTime, segmentationSource = "", onClose 
 }
 
 
-function getPdfFieldPageSize(field, pageFields = []) {
-  const sources = [field, ...pageFields];
-  for (const source of sources) {
-    const size = source?.page_size || source?.pageSize || {};
-    const width = Number(source?.page_width || size.width || size.w);
-    const height = Number(source?.page_height || size.height || size.h);
-    if (width > 0 && height > 0) return { width, height };
-  }
-  return { width: 612, height: 792 };
-}
-
-function getPdfPageOverlayBox(containerSize, pageSize) {
-  const width = Number(containerSize?.width || 0);
-  const height = Number(containerSize?.height || 0);
-  if (!width || !height || !pageSize?.width || !pageSize?.height) return null;
-  if (containerSize?.pageAligned) {
-    return {
-      left: 0,
-      top: 0,
-      scale: width / pageSize.width,
-    };
-  }
-  const scale = Math.min(PDF_POINT_TO_CSS_PX, Math.max(0.2, (width - 28) / pageSize.width));
-  return {
-    left: Math.max(0, (width - pageSize.width * scale) / 2),
-    top: 0,
-    scale,
-  };
-}
-
-function getPdfFieldOverlayStyle(field, pageBox, pageSize) {
-  const rect = getInterviewPdfFieldDisplayRect(field) || {};
-  const x = Number(rect.x);
-  const y = Number(rect.y);
-  const width = Number(rect.width);
-  const height = Number(rect.height);
-  if (!pageBox || !pageSize?.height || !Number.isFinite(x) || !Number.isFinite(y) || !width || !height) return null;
-  const isSmallField = width <= 14 && height <= 14;
-  const pad = isSmallField ? 1.5 : 5;
-  const scaledWidth = width * pageBox.scale + pad * 2;
-  const scaledHeight = height * pageBox.scale + pad * 2;
-  return {
-    left: pageBox.left + (x * pageBox.scale) - pad,
-    top: pageBox.top + ((pageSize.height - y - height) * pageBox.scale) - pad,
-    width: isSmallField ? Math.max(12, scaledWidth) : Math.max(24, scaledWidth),
-    height: isSmallField ? Math.max(12, scaledHeight) : Math.max(18, scaledHeight),
-  };
-}
-
-function getPdfFieldValueOverlayStyle(field, pageBox, pageSize) {
-  const rect = getInterviewPdfFieldDisplayRect(field) || {};
-  const x = Number(rect.x);
-  const y = Number(rect.y);
-  const width = Number(rect.width);
-  const height = Number(rect.height);
-  if (!pageBox || !pageSize?.height || !Number.isFinite(x) || !Number.isFinite(y) || !width || !height) return null;
-  const isSmallField = width <= 14 && height <= 14;
-  return {
-    left: pageBox.left + (x * pageBox.scale) + (isSmallField ? 0 : 1),
-    top: pageBox.top + ((pageSize.height - y - height) * pageBox.scale) + (isSmallField ? 0 : -1),
-    width: Math.max(isSmallField ? 10 : 20, width * pageBox.scale),
-    height: Math.max(isSmallField ? 10 : 9, height * pageBox.scale),
-  };
-}
 
 function PdfFieldClickLayer({ fields, activePageNumber, activeKey, containerSize, pageSize: explicitPageSize = null, onSelectField }) {
   const pageFields = fields.filter((field) => Number(field.page_number || 1) === Number(activePageNumber || 1));
@@ -2983,18 +2266,6 @@ function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, summaryPages
 }
 
 
-function buildGuideAiCompletionBullets(result, totalFields) {
-  const saved = Number(result?.saved_count || 0);
-  const populated = Number(result?.populated_count ?? saved);
-  const skipped = Number(result?.skipped_count || 0);
-  const reused = result?.reused ? 1 : 0;
-  return [
-    `Reviewed ${totalFields || 0} PDF fields against the transcript and instruction.`,
-    `Wrote text into ${populated} field${populated === 1 ? "" : "s"} and saved ${saved} response row${saved === 1 ? "" : "s"}.`,
-    skipped ? `Skipped ${skipped} malformed AI response${skipped === 1 ? "" : "s"} before saving.` : "No malformed AI responses were skipped.",
-    reused ? "Resumed the existing AI draft job instead of starting a duplicate." : "Saved the new guide draft responses for review.",
-  ];
-}
 
 function GuideAiAssistantPanel({
   open,
