@@ -3,6 +3,9 @@
 
 import { TEAM_READINESS_TEMPLATE_OPTIONS, getPctReadinessStatusPresentation, normalizePctReadinessStatus, readLaborEmployeeContactValue, readLaborEmploymentCommitment } from "../../trainingData";
 import { HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT, HOUR_ANALYSIS_FRONTLINE_GROUP_KEYS, HOUR_ANALYSIS_GROUPS, HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT, HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT, HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT, HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT, LABOR_CAPACITY_MODEL_DEFAULT_NAME, LABOR_CAPACITY_MODEL_TABLE_MISSING_CODES, LABOR_MODEL_DAY_KEYS, LABOR_ROSTER_PRINT_DATE_FORMATTER, REVIEW_CYCLE_SORT_KEY_PREFIX } from "./constants";
+import { PERFORMANCE_REVIEW_TEMPLATE_METADATA_KEY, normalizePerformanceReviewTemplateRoleKey } from "../../performanceReviewData";
+import { PCT_READINESS_TEMPLATE_SLUG, getLaborRosterPositionGroup, getTeamReadinessTemplateOption, normalizeLaborShirtSize } from "../../trainingData";
+import { DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON, HOUR_ANALYSIS_GROUP_LABELS, HOUR_ANALYSIS_MIN_TOLERANCE_HOURS, HOUR_ANALYSIS_RANGE_KEYS, LABOR_MODEL_ROLE_COVERAGE_ALIAS_MAP, RESTARTED_REVIEW_METADATA_KEYS, REVIEW_RESPONSE_FIELDS } from "./constants";
 
 export function buildPerformanceReviewSortKey(cycle = {}) {
   return `${REVIEW_CYCLE_SORT_KEY_PREFIX}${cycle.id || cycle.slug || cycle.requirementId || cycle.policyKey || "review"}`;
@@ -642,4 +645,582 @@ export function getComplianceStateLabel(value = "") {
   if (["not_started", "not-started", "scheduled"].includes(normalized)) return "Not Started";
   if (normalized === "overdue") return "Overdue";
   return normalized ? normalized.replace(/[_-]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : "";
+}
+
+export function reviewCycleMatchesKey(cycle = {}, value = "") {
+  const target = normalizeLocalReviewCycleKey(value);
+  if (!target) return false;
+  return [cycle.id, cycle.slug, cycle.baseKey, cycle.requirementId, cycle.policyKey, cycle.requirement?.slug]
+    .filter(Boolean)
+    .some((candidate) => normalizeLocalReviewCycleKey(candidate) === target);
+}
+
+export function getReviewCyclePolicyCell(reviewCycle = {}) {
+  return isObjectRow(reviewCycle?.policyCell)
+    ? reviewCycle.policyCell
+    : isObjectRow(reviewCycle?.requirementStatus)
+      ? reviewCycle.requirementStatus
+      : {};
+}
+
+export function getReviewDraftValue(response, draft, field) {
+  if (hasOwnReviewDraftField(draft, field)) return draft[field] ?? "";
+  return response?.[field] ?? "";
+}
+
+export function isReviewItemDraftDirty(response, draft = {}) {
+  return REVIEW_RESPONSE_FIELDS.some((field) => (
+    hasOwnReviewDraftField(draft, field)
+    && normalizeReviewResponseValue(draft[field]) !== normalizeReviewResponseValue(response?.[field])
+  ));
+}
+
+export function formatLaborPositionTitle(value = "") {
+  const raw = String(value || "").trim().replace(/\s+/g, " ");
+  const normalized = normalizePositionTitle(raw);
+  if (!normalized) return "";
+  if (normalized === "general manager") return "General Manager";
+  if (normalized === "assistant manager") return "Assistant Manager";
+  if (normalized === "supervisor") return "Supervisor";
+  if (normalized === "customer service representative") return "Customer Service Representative";
+  if (normalized === "pet care technician") return "Pet Care Technician";
+  return raw;
+}
+
+export function getLaborPositionSortIndex(positionTitle, positionHierarchyIndex = {}) {
+  return positionHierarchyIndex[normalizePositionTitle(positionTitle)] ?? Number.MAX_SAFE_INTEGER;
+}
+
+export function getDefaultPositionWeight(value = "") {
+  const title = normalizePositionTitle(value);
+  if (!title) return -1;
+  if (/(director|regional)/.test(title)) return 100;
+  if (/(general manager|\bgm\b)/.test(title)) return 90;
+  if (/(assistant manager|\bagm\b)/.test(title)) return 80;
+  if (/manager/.test(title)) return 70;
+  if (/(supervisor|lead)/.test(title)) return 60;
+  if (/(customer service representative|\bcsr\b)/.test(title)) return 40;
+  if (/(pet care technician|\bpct\b|technician)/.test(title)) return 30;
+  return 0;
+}
+
+export function formatRosterLocationTitle(value = "") {
+  return `${formatRosterLocationName(value)} - Team Roster`;
+}
+
+export function formatRosterPdfFilename(locationName = "", value = new Date()) {
+  return `${formatRosterLocationName(locationName)} Roster - ${formatRosterPdfDate(value)}.pdf`;
+}
+
+export function buildUpdatedLaborMetadata(existingMetadata = {}, updates = {}) {
+  const nextMetadata = { ...(existingMetadata || {}) };
+  const hasEmail = Object.prototype.hasOwnProperty.call(updates, "email");
+  const hasPhone = Object.prototype.hasOwnProperty.call(updates, "phone");
+  const hasShirtSize = Object.prototype.hasOwnProperty.call(updates, "shirtSize");
+  const hasPerformanceReviewTemplateRole = Object.prototype.hasOwnProperty.call(updates, "performanceReviewTemplateRole");
+
+  if (hasEmail) {
+    const normalizedEmail = normalizeLaborContactEmail(updates.email);
+    if (normalizedEmail) nextMetadata.contact_email = normalizedEmail;
+    else delete nextMetadata.contact_email;
+  }
+
+  if (hasPhone) {
+    const normalizedPhone = normalizeLaborContactPhone(updates.phone);
+    if (normalizedPhone) nextMetadata.contact_phone = normalizedPhone;
+    else delete nextMetadata.contact_phone;
+  }
+
+  if (hasShirtSize) {
+    const normalizedShirtSize = normalizeLaborShirtSize(updates.shirtSize);
+    if (normalizedShirtSize) nextMetadata.shirt_size = normalizedShirtSize;
+    else delete nextMetadata.shirt_size;
+  }
+
+  if (hasPerformanceReviewTemplateRole) {
+    const roleKey = normalizePerformanceReviewTemplateRoleKey(updates.performanceReviewTemplateRole);
+    if (roleKey) nextMetadata[PERFORMANCE_REVIEW_TEMPLATE_METADATA_KEY] = roleKey;
+    else delete nextMetadata[PERFORMANCE_REVIEW_TEMPLATE_METADATA_KEY];
+  }
+
+  return nextMetadata;
+}
+
+export function clearRestartedReviewMetadata(existingMetadata = {}, restartDetails = {}) {
+  const nextMetadata = isObjectRow(existingMetadata) ? { ...existingMetadata } : {};
+  RESTARTED_REVIEW_METADATA_KEYS.forEach((key) => {
+    delete nextMetadata[key];
+  });
+  return {
+    ...nextMetadata,
+    performance_review_restart: {
+      ...(isObjectRow(nextMetadata.performance_review_restart) ? nextMetadata.performance_review_restart : {}),
+      ...restartDetails,
+    },
+  };
+}
+
+export function getTrainingResultReadinessStatus(result = {}) {
+  const metadata = isObjectRow(result?.metadata) ? result.metadata : {};
+  const metadataStatus = metadata.pct_readiness_status
+    || result.pct_readiness_status
+    || result.readiness_status
+    || "";
+  const normalizedMetadataStatus = normalizePctReadinessStatus(metadataStatus);
+  if (normalizedMetadataStatus && normalizedMetadataStatus !== "not_started") return normalizedMetadataStatus;
+
+  const rawStatus = String(result?.status || "").trim().toLowerCase();
+  if (rawStatus === "complete" || rawStatus === "completed" || rawStatus === "passed") return "verified";
+  if (rawStatus === "waived") return "waived";
+  if (rawStatus === "in_progress") return "demonstrated";
+  return normalizePctReadinessStatus(rawStatus);
+}
+
+export function isReadinessDemonstratedStatus(status = "") {
+  const normalized = normalizePctReadinessStatus(status);
+  return normalized === "demonstrated" || isReadinessVerifiedStatus(normalized);
+}
+
+export function toObjectRows(rows = []) {
+  return Array.isArray(rows) ? rows.filter(isObjectRow) : [];
+}
+
+export function trainingRequirementEvidencePolicy(requirementRow = {}) {
+  return normalizeComplianceEvidencePolicy(
+    requirementRow.evidencePolicy
+    || requirementRow.evidence_policy
+    || requirementRow.requirement?.evidence_policy
+    || requirementRow.policyRequirement?.evidence_policy
+    || requirementRow.metadata?.evidence_policy
+    || requirementRow.requirement?.metadata?.evidence_policy
+    || requirementRow.evidenceMode
+    || requirementRow.evidence_mode
+  );
+}
+
+export function getTrainingRequirementRenewalIntervalDays(requirementRow = {}) {
+  const dueRule = readTrainingRequirementDueRule(requirementRow);
+  const rawValue = requirementRow.renewalIntervalDays
+    ?? requirementRow.renewal_interval_days
+    ?? requirementRow.requirement?.renewal_interval_days
+    ?? requirementRow.policyRequirement?.renewal_interval_days
+    ?? requirementRow.metadata?.renewal_interval_days
+    ?? requirementRow.requirement?.metadata?.renewal_interval_days
+    ?? dueRule.renewal_interval_days
+    ?? dueRule.renewalIntervalDays;
+  const days = Number(rawValue);
+  return Number.isFinite(days) && days > 0 ? days : null;
+}
+
+export function isCustomComplianceRequirement(row = {}) {
+  if (!isObjectRow(row) || row.is_active === false) return false;
+  const metadata = isObjectRow(row.metadata) ? row.metadata : {};
+  return String(row.scope_type || "") === "location"
+    && String(row.requirement_kind || "") === "review_checkpoint"
+    && (
+      String(row.display_group || "") === "custom"
+      || metadata.ui_kind === "custom_yes_no"
+      || String(row.slug || "").startsWith("custom_")
+    );
+}
+
+export function getOffsetDaysForRequirement(row = {}) {
+  const dueRule = isObjectRow(row.due_rule) ? row.due_rule : (isObjectRow(row.dueRule) ? row.dueRule : {});
+  const candidates = [
+    row.offset_days,
+    row.offsetDays,
+    dueRule.offset_days,
+    dueRule.offsetDays,
+    row.metadata && isObjectRow(row.metadata) ? row.metadata.offset_days : null,
+    row.metadata && isObjectRow(row.metadata) ? row.metadata.offsetDays : null,
+  ];
+  for (const v of candidates) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
+export function formatComplianceRequirementDueRule(row = {}) {
+  const dueRule = isObjectRow(row.due_rule) ? row.due_rule : {};
+  const offsetDays = Number(dueRule.offset_days);
+  if (dueRule.anchor === "start_date" && Number.isFinite(offsetDays) && offsetDays > 0) {
+    return `Start date + ${offsetDays} days`;
+  }
+  const renewalDays = Number(dueRule.renewal_interval_days);
+  if (Number.isFinite(renewalDays) && renewalDays > 0) return `Renews every ${renewalDays} days`;
+  return row.renewal_due_date_required ? "Renewal date required" : "One time";
+}
+
+export function normalizeLegacyPctReadinessBoard(boardData = null) {
+  if (!isObjectRow(boardData)) return buildEmptyReadinessBoard(getTeamReadinessTemplateOption(PCT_READINESS_TEMPLATE_SLUG));
+  const summary = isObjectRow(boardData.summary) ? boardData.summary : {};
+  const totalActiveTrainees = Number(summary.total_active_trainees ?? summary.total_active_pct_trainees ?? 0);
+  const averageReadiness = Number(summary.average_readiness ?? summary.average_completion ?? 0);
+  return {
+    ...boardData,
+    summary: {
+      ...summary,
+      template_slug: PCT_READINESS_TEMPLATE_SLUG,
+      total_active_trainees: totalActiveTrainees,
+      total_active_pct_trainees: Number(summary.total_active_pct_trainees ?? totalActiveTrainees),
+      average_demonstrated: Number(summary.average_demonstrated ?? averageReadiness),
+      average_completion: Number(summary.average_completion ?? averageReadiness),
+      average_readiness: averageReadiness,
+    },
+  };
+}
+
+export function getLaborEmployeeRowId(row = {}) {
+  if (!isObjectRow(row)) return null;
+  return row.labor_employee_id || row.employee_id || row.id || null;
+}
+
+export function getTrainingRecordEmployeeId(record = {}) {
+  if (!isObjectRow(record)) return null;
+  return record.labor_employee_id || record.employee_id || null;
+}
+
+export function formatHourAnalysisHours(value) {
+  const normalized = normalizeHourAnalysisNumber(value, 0);
+  if (Number.isInteger(normalized)) return String(normalized);
+  return normalized.toFixed(1).replace(/\.0$/, "");
+}
+
+export function normalizeHourAnalysisGroupKey(value, row = {}) {
+  const key = String(value || "").trim().replace(/\s+/g, "_").replace(/-/g, "_").toLowerCase();
+  if (HOUR_ANALYSIS_GROUP_LABELS[key]) return key;
+  const title = normalizePositionTitle(row.position_title || row.position || "");
+  const managementKey = title.includes("assistant") ? "assistant_manager" : "general_manager";
+  if (key === "manager" || key === "managers" || key === "management") return managementKey;
+  if (key === "supervisors") return "supervisor";
+  if (key === "csrs") return "csr";
+  if (key === "pcts") return "pct";
+  if (key === "leadership") {
+    const titleGroup = getLaborRosterPositionGroup(row.position_title || row.position || "");
+    if (titleGroup === "supervisor") return "supervisor";
+    return managementKey;
+  }
+  return "other";
+}
+
+export function getHourAnalysisGroupLabel(value) {
+  return HOUR_ANALYSIS_GROUP_LABELS[value] || HOUR_ANALYSIS_GROUP_LABELS.other;
+}
+
+export function getLaborModelCoverageRoleOption(value = "") {
+  const alias = normalizeLaborModelCoverageAlias(value);
+  if (!alias) return null;
+  return LABOR_MODEL_ROLE_COVERAGE_ALIAS_MAP.get(alias) || LABOR_MODEL_ROLE_COVERAGE_ALIAS_MAP.get(alias.replace(/\s+/g, "")) || null;
+}
+
+export function mixLaborModelHexColor(base = "#334155", mix = "#ffffff", mixWeight = 0.5) {
+  const normalizedBase = normalizeLaborModelHexColor(base, "#334155").slice(1);
+  const normalizedMix = normalizeLaborModelHexColor(mix, "#ffffff").slice(1);
+  const clampedWeight = Math.max(0, Math.min(1, Number(mixWeight) || 0));
+  const channels = [0, 2, 4].map((index) => {
+    const baseValue = parseInt(normalizedBase.slice(index, index + 2), 16);
+    const mixValue = parseInt(normalizedMix.slice(index, index + 2), 16);
+    return Math.round(baseValue * (1 - clampedWeight) + mixValue * clampedWeight)
+      .toString(16)
+      .padStart(2, "0");
+  });
+  return `#${channels.join("")}`;
+}
+
+export function parseLaborModelTimeRange(label = "") {
+  const raw = String(label || "").trim();
+  const parts = raw.split(/\s*[-–—]\s*/).filter(Boolean);
+  if (parts.length !== 2) return { valid: false, label: raw, hours: 0, error: "Use a range like 5:30a-6a." };
+  const suffixes = parts.map((part) => {
+    const match = String(part || "").trim().toLowerCase().match(/(a|am|p|pm)$/);
+    if (!match) return "";
+    return match[1].startsWith("p") ? "p" : "a";
+  });
+  const start = parseLaborModelTimePoint(parts[0], suffixes[0] || suffixes[1]);
+  const endRaw = parseLaborModelTimePoint(parts[1], suffixes[1] || suffixes[0] || start?.suffix);
+  if (!start || !endRaw) return { valid: false, label: raw, hours: 0, error: "Use a range like 5:30a-6a." };
+  let endMinutes = endRaw.minutes;
+  if (endMinutes <= start.minutes) endMinutes += 24 * 60;
+  const durationMinutes = endMinutes - start.minutes;
+  if (durationMinutes <= 0 || durationMinutes > 12 * 60) {
+    return { valid: false, label: raw, hours: 0, error: "Time slot duration must be positive and less than 12 hours." };
+  }
+  return {
+    valid: true,
+    label: raw,
+    start: start.minutes,
+    end: endMinutes,
+    hours: normalizeHourAnalysisNumber(durationMinutes / 60, 0),
+  };
+}
+
+export function formatLaborModelTimeRange(start = 0, end = 0) {
+  return `${formatLaborModelTimePoint(start)}-${formatLaborModelTimePoint(end)}`;
+}
+
+export function normalizeLaborModelBreakerMinute(value) {
+  const rawValue = isObjectRow(value)
+    ? (value.minutes ?? value.minute ?? value.time_minutes ?? value.timeMinutes ?? value.time ?? value.label)
+    : value;
+  if (typeof rawValue === "string") {
+    const parsed = parseLaborModelTimePoint(rawValue);
+    if (parsed) return parsed.minutes;
+    const numeric = Number(rawValue);
+    if (Number.isFinite(numeric)) return ((Math.round(numeric) % 1440) + 1440) % 1440;
+    return null;
+  }
+  const numeric = Number(rawValue);
+  if (!Number.isFinite(numeric)) return null;
+  return ((Math.round(numeric) % 1440) + 1440) % 1440;
+}
+
+export function normalizeHourAnalysisRangeOrder(range = {}) {
+  const rawExpected = normalizeHourAnalysisNumber(range.expected ?? range.preferred ?? range.hours, 0);
+  const rawMin = normalizeHourAnalysisNumber(range.min ?? range.minimum ?? range.min_hours, rawExpected);
+  const rawMax = normalizeHourAnalysisNumber(range.max ?? range.maximum ?? range.max_hours, Math.max(rawExpected, rawMin));
+  const min = Math.min(rawMin, rawExpected, rawMax);
+  const max = Math.max(rawMin, rawExpected, rawMax);
+  const expected = Math.max(min, Math.min(max, rawExpected));
+  return { min, expected, max };
+}
+
+export function readHourAnalysisGroupInput(input = {}, groupKey = "other") {
+  const source = isObjectRow(input) ? input : {};
+  if (isObjectRow(source[groupKey])) return source[groupKey];
+  if (groupKey === "general_manager" || groupKey === "assistant_manager") {
+    if (isObjectRow(source.management)) return source.management;
+    if (isObjectRow(source.manager)) return source.manager;
+    if (isObjectRow(source.managers)) return source.managers;
+    if (isObjectRow(source.leadership)) return source.leadership;
+  }
+  if (groupKey === "supervisor") {
+    if (isObjectRow(source.supervisors)) return source.supervisors;
+    if (isObjectRow(source.leadership)) return source.leadership;
+  }
+  return {};
+}
+
+export function normalizeHourAnalysisOverrideRange(value = {}) {
+  if (!isObjectRow(value)) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? { expected: normalizeHourAnalysisNumber(parsed, 0) } : {};
+  }
+  return Object.fromEntries(HOUR_ANALYSIS_RANGE_KEYS.flatMap((key) => {
+    const rawValue = key === "min"
+      ? value.min ?? value.minimum ?? value.min_hours
+      : key === "expected"
+        ? value.expected ?? value.preferred ?? value.hours ?? value.preferred_hours ?? value.expected_hours
+        : value.max ?? value.maximum ?? value.max_hours;
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed) || parsed < 0) return [];
+    return [[key, normalizeHourAnalysisNumber(parsed, 0)]];
+  }));
+}
+
+export function normalizeHourAnalysisNotes(input = {}) {
+  if (!isObjectRow(input)) return {};
+  return Object.fromEntries(Object.entries(input).flatMap(([key, value]) => {
+    const employeeKey = String(key || "").trim();
+    const note = String(value || "").trim();
+    if (!employeeKey || !note) return [];
+    return [[employeeKey, note]];
+  }));
+}
+
+export function normalizeHourAnalysisSkeletonMap(input = {}) {
+  const source = isObjectRow(input) ? input : {};
+  const defaultAdminDaily = DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.general_manager + DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.assistant_manager;
+  const hasLegacyLeadership = source.leadership != null && source.management == null && source.manager == null && source.supervisor == null;
+  const legacyLeadership = normalizeHourAnalysisNumber(source.leadership, defaultAdminDaily + DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.supervisor);
+  const rawManagement = source.management ?? source.manager;
+  const splitManagement = rawManagement != null ? normalizeHourAnalysisNumber(rawManagement / 2, defaultAdminDaily / 2) : null;
+  return Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => {
+    let rawValue = source[group.key];
+    if (group.key === "general_manager") rawValue = source.general_manager ?? source.generalManager ?? splitManagement ?? (hasLegacyLeadership ? normalizeHourAnalysisNumber(legacyLeadership / 4, DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.general_manager) : rawValue);
+    if (group.key === "assistant_manager") rawValue = source.assistant_manager ?? source.assistantManager ?? splitManagement ?? (hasLegacyLeadership ? normalizeHourAnalysisNumber(legacyLeadership / 4, DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.assistant_manager) : rawValue);
+    if (group.key === "supervisor") rawValue = source.supervisor ?? source.supervisors ?? (hasLegacyLeadership ? normalizeHourAnalysisNumber(legacyLeadership / 2, DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON.supervisor) : rawValue);
+    return [
+      group.key,
+      normalizeHourAnalysisNumber(rawValue, DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON[group.key] ?? 0),
+    ];
+  }));
+}
+
+export function readStaffingCapacityPercent(source = {}, keys = [], fallback = 0) {
+  const matchedKey = keys.find((key) => source[key] != null && source[key] !== "");
+  return clampHourAnalysisPercent(matchedKey ? source[matchedKey] : fallback, 0, 90);
+}
+
+export function calculateLaborShiftHours(startValue, endValue, fallbackHours = null) {
+  const explicit = Number(fallbackHours);
+  const start = parseLaborShiftMinutes(startValue);
+  const end = parseLaborShiftMinutes(endValue);
+  if (start == null || end == null) {
+    return Number.isFinite(explicit) && explicit > 0 ? normalizeHourAnalysisNumber(explicit, 0) : 0;
+  }
+  const adjustedEnd = end <= start ? end + (24 * 60) : end;
+  return normalizeHourAnalysisNumber((adjustedEnd - start) / 60, 0);
+}
+
+export function addHourAnalysisRangeDelta(target, range = {}, delta = 1) {
+  const multiplier = Number(delta);
+  const normalizedDelta = Number.isFinite(multiplier) ? multiplier : 1;
+  HOUR_ANALYSIS_RANGE_KEYS.forEach((key) => {
+    target[key] = normalizeHourAnalysisDelta(target[key] + (readHourAnalysisRangeNumber(range[key]) * normalizedDelta));
+  });
+}
+
+export function getHourAnalysisDefaultCoverageSplit(row = {}, groupKey = "other") {
+  const title = normalizePositionTitle(row.position_title || row.position || "");
+  if (groupKey === "supervisor" && title.includes("csr") && title.includes("supervisor")) {
+    return { floor_group: "csr", admin_hours: 8 };
+  }
+  if (groupKey === "supervisor" && title.includes("pct") && title.includes("supervisor")) {
+    return { floor_group: "pct", admin_hours: 8 };
+  }
+  return { floor_group: "", admin_hours: null };
+}
+
+export function buildHourAnalysisRangeFromHours(hours = 0) {
+  const expected = normalizeHourAnalysisNumber(hours, 0);
+  return { min: expected, expected, max: expected };
+}
+
+export function calculateHourAnalysisRecommendedTarget(requiredWeekly = 0, reservePercent = HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT) {
+  const required = normalizeHourAnalysisNumber(requiredWeekly, 0);
+  const reserve = Math.max(0, Math.min(90, normalizeHourAnalysisNumber(reservePercent, HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT)));
+  if (required <= 0) return 0;
+  if (reserve <= 0) return required;
+  return normalizeHourAnalysisNumber(required * (1 + (reserve / 100)), 0);
+}
+
+export function getHourAnalysisToleranceHours(boundaryValue = 0, tolerancePercent = HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT) {
+  const boundary = normalizeHourAnalysisNumber(Math.abs(Number(boundaryValue) || 0), 0);
+  const tolerance = clampHourAnalysisPercent(tolerancePercent, 0, 90);
+  if (boundary <= 0 || tolerance <= 0) return 0;
+  return normalizeHourAnalysisDelta(Math.max(HOUR_ANALYSIS_MIN_TOLERANCE_HOURS, boundary * (tolerance / 100)));
+}
+
+export function getNiceStaffingCapacityChartMax(maxValue = 0) {
+  const paddedMax = Math.max(10, normalizeHourAnalysisNumber(maxValue, 0) * 1.12);
+  const magnitude = 10 ** Math.floor(Math.log10(paddedMax));
+  const normalized = paddedMax / magnitude;
+  const niceNormalized = normalized <= 1
+    ? 1
+    : normalized <= 2
+      ? 2
+      : normalized <= 2.5
+        ? 2.5
+        : normalized <= 5
+          ? 5
+          : normalized <= 6
+            ? 6
+            : 10;
+  return normalizeHourAnalysisNumber(niceNormalized * magnitude, 0);
+}
+
+export function getStaffingCapacityChartPct(value = 0, chartMax = 0) {
+  const max = normalizeHourAnalysisNumber(chartMax, 0);
+  if (max <= 0) return 0;
+  return clampHourAnalysisPercent((normalizeHourAnalysisNumber(value, 0) / max) * 100, 0, 100);
+}
+
+export function openPdfBlob(filename, bytes, { print = false } = {}) {
+  const blob = new Blob([bytes], { type: "application/pdf" });
+  const url = window.URL.createObjectURL(blob);
+  const previewWindow = window.open(url, "_blank");
+  if (!previewWindow) {
+    window.URL.revokeObjectURL(url);
+    downloadBinaryFile(filename, bytes, "application/pdf");
+    return false;
+  }
+  if (print) {
+    window.setTimeout(() => {
+      try {
+        previewWindow.focus();
+        previewWindow.print();
+      } catch {
+        // The generated PDF is already open if Chrome blocks scripted print.
+      }
+    }, 900);
+  }
+  window.setTimeout(() => window.URL.revokeObjectURL(url), 120000);
+  return true;
+}
+
+export function normalizeActorLookupEmail(value = "") {
+  const email = String(value || "").trim().toLowerCase();
+  return isEmailLike(email) ? email : "";
+}
+
+export function getNormalizedNameTokens(value = "") {
+  return normalizeEmployeeName(value)
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+export function resolveVerifiedActorDisplayName(row = {}, fallback = "Staff") {
+  const candidates = [
+    row.actor_full_name,
+    row.actorFullName,
+    row.verified_actor_name,
+    row.verifiedActorName,
+    row.created_by_full_name,
+    row.createdByFullName,
+    row.updated_by_full_name,
+    row.updatedByFullName,
+    row.actor_name,
+    row.actorName,
+    row.created_by_name,
+    row.createdByName,
+    row.updated_by_name,
+    row.updatedByName,
+    row.email,
+    row.actor_email,
+    row.created_by_email,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  const fullName = candidates.find((value) => !isEmailLike(value));
+  return fullName || candidates[0] || fallback;
+}
+
+export function getTrainingHistoryStateStatus(state = {}) {
+  if (!isObjectRow(state)) return "";
+  const metadata = isObjectRow(state.metadata) ? state.metadata : {};
+  return normalizePctReadinessStatus(
+    metadata.pct_readiness_status
+    || state.pct_readiness_status
+    || state.readiness_status
+    || state.status
+    || state.item_status
+    || state.training_item_status
+    || ""
+  );
+}
+
+export function resolveTrainingHistoryRecord(row = {}, recordMap = {}) {
+  return recordMap[row.record_id] || (isObjectRow(row.training_records) ? row.training_records : {}) || {};
+}
+
+export function getTrainingHistoryRowDate(row = {}) {
+  return getLocalDateKey(row.created_at || row.occurred_at || row.updated_at);
+}
+
+export function readComplianceHistoryState(event = {}, key = "new") {
+  const preferred = key === "old"
+    ? (event.old_values || event.before_state)
+    : (event.new_values || event.after_state);
+  return isObjectRow(preferred) ? preferred : {};
+}
+
+export function readComplianceHistoryMetadata(row = {}) {
+  return isObjectRow(row.metadata) ? row.metadata : {};
+}
+
+export function readComplianceAuditSnapshot(event = {}, key = "after_snapshot") {
+  return isObjectRow(event?.[key]) ? event[key] : {};
 }
