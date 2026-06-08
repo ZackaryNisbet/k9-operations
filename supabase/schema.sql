@@ -80,4 +80,4 @@ CREATE TRIGGER on_auth_user_created
 -- 6. Create default location and assign first user
 -- Run this AFTER creating your first account:
 -- INSERT INTO locations (name) VALUES ('K9 Resorts Cherry Hill');
--- UPDATE profiles SET location_id = (SELECT id FROM locations LIMIT 1), role = 'owner' WHERE email = 'zacknisbet@gmail.com';
+-- UPDATE profiles SET location_id = (SELECT id FROM locations LIMIT 1), role = 'owner' WHERE email = 'zack.nisbet@k9operations.com';

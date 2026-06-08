@@ -223,7 +223,7 @@ You are a senior full-stack developer working on the K9 Operations dashboard. Yo
 - Branch: main (pull latest first — git pull origin main)
 - GitHub: ZackaryNisbet/k9-operations
 - GitHub PAT: [REDACTED GITHUB PAT]
-- Git config: email=zacknisbet@gmail.com, name="Zack Nisbet"
+- Git config: email=zack.nisbet@k9operations.com, name="Zack Nisbet"
 - Product name: "K9 Operations" (never K-9 or k9)
 
 ## Key Files
@@ -281,7 +281,7 @@ You are a senior full-stack developer working on the K9 Operations dashboard. Yo
 - Branch: main (pull latest first — git pull origin main)
 - GitHub: ZackaryNisbet/k9-operations
 - GitHub PAT: [REDACTED GITHUB PAT]
-- Git config: email=zacknisbet@gmail.com, name="Zack Nisbet"
+- Git config: email=zack.nisbet@k9operations.com, name="Zack Nisbet"
 - Product name: "K9 Operations" (never K-9 or k9)
 
 ## Key Files
@@ -344,7 +344,7 @@ You are a senior full-stack developer working on the K9 Operations dashboard. Yo
 - Branch: main (pull latest first — git pull origin main)
 - GitHub: ZackaryNisbet/k9-operations
 - GitHub PAT: [REDACTED GITHUB PAT]
-- Git config: email=zacknisbet@gmail.com, name="Zack Nisbet"
+- Git config: email=zack.nisbet@k9operations.com, name="Zack Nisbet"
 - Supabase project ref: YOUR_SUPABASE_PROJECT_REF
 - Supabase service_role key: [REDACTED SUPABASE SERVICE_ROLE JWT]
 - location_id: 11111111-1111-1111-1111-111111111111
@@ -426,7 +426,7 @@ You are a senior full-stack developer working on K9 Operations. Your task is to 
 - Branch: main (pull latest first — git pull origin main)
 - GitHub: ZackaryNisbet/k9-operations
 - GitHub PAT: [REDACTED GITHUB PAT]
-- Git config: email=zacknisbet@gmail.com, name="Zack Nisbet"
+- Git config: email=zack.nisbet@k9operations.com, name="Zack Nisbet"
 - Supabase project ref: YOUR_SUPABASE_PROJECT_REF
 - Supabase service_role key: [REDACTED SUPABASE SERVICE_ROLE JWT]
 - location_id: 11111111-1111-1111-1111-111111111111
@@ -499,7 +499,7 @@ You are a senior full-stack developer working on K9 Operations. Your task is to 
 - Branch: main (pull latest first — git pull origin main)
 - GitHub: ZackaryNisbet/k9-operations
 - GitHub PAT: [REDACTED GITHUB PAT]
-- Git config: email=zacknisbet@gmail.com, name="Zack Nisbet"
+- Git config: email=zack.nisbet@k9operations.com, name="Zack Nisbet"
 - Supabase project ref: YOUR_SUPABASE_PROJECT_REF
 - Supabase service_role key: [REDACTED SUPABASE SERVICE_ROLE JWT]
 - location_id: 11111111-1111-1111-1111-111111111111
