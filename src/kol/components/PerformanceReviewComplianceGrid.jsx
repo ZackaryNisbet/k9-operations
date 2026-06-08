@@ -6,22 +6,9 @@ import { LABOR_INTRO_DEFAULTS } from "../laborIntros";
 import { isWaivedLaborComplianceState, getLaborComplianceCellState } from "../performanceReviewData";
 import { FILTER_OP_LABELS, REQUIREMENT_STATUS_OPTIONS } from "./performanceReviewGrid/constants";
 import { defaultFormatter, identity, formatCellDate } from "./performanceReviewGrid/formatters";
+import { joinClassNames, normalizeText, normalizeDateText } from "./performanceReviewGrid/textHelpers";
 
 const DEFAULT_COMPLIANCE_FILTERS = { employment_status: { op: "is", val: "active" } };
-
-function joinClassNames(...values) {
-  return values.filter(Boolean).join(" ");
-}
-
-function normalizeText(value = "") {
-  return String(value || "").trim().toLowerCase();
-}
-
-function normalizeDateText(value = "") {
-  const text = String(value || "").trim();
-  if (!text) return "";
-  return text.includes("T") ? text.split("T")[0] : text;
-}
 
 function filterNeedsValue(op = "") {
   return !["empty", "notEmpty"].includes(op);
