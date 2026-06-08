@@ -196,9 +196,13 @@ bootstrap), **#87** (marketing site), **#89** (AI assistant ops manual),
 | [app-base.md](docs/architecture/app-base.md) | The base (Lite/KOL) edition architecture |
 | [app-analytics.md](docs/architecture/app-analytics.md) | The Analytics edition (`?mode=analytics`) |
 | [app-pos.md](docs/architecture/app-pos.md) | The POS edition (`/pos/*`) |
+| [FLOWCHARTS.md](docs/architecture/FLOWCHARTS.md) | Mermaid diagrams: system, editions, auth, data flow, sync |
+| [PAGE_DATA_LOGIC.md](docs/architecture/PAGE_DATA_LOGIC.md) | Per‑page data sources & how screens interconnect |
 | [FILE_ORGANIZATION.md](docs/architecture/FILE_ORGANIZATION.md) | Current & target file structure, conventions |
 | [BACKEND.md](docs/architecture/BACKEND.md) | Supabase functions, RPCs, migrations, realtime |
 | [INDUSTRY_STANDARDS.md](docs/architecture/INDUSTRY_STANDARDS.md) | Standards adherence & gaps |
+| [MOBILE.md](docs/architecture/MOBILE.md) | K9 Operations Mobile (companion app) — placeholder |
 | [../docs/OPEN_SOURCE_PROPOSAL.md](docs/OPEN_SOURCE_PROPOSAL.md) | Proposed public repo |
 | [../docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md) | Secret/PII audit & remediation |
+| [../docs/DEMO_VIDEO_SCRIPT.md](docs/DEMO_VIDEO_SCRIPT.md) | Demo video script & storyboard |
 | [DESIGN.md](DESIGN.md) | Design system (pre‑existing) |
