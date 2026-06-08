@@ -103,6 +103,7 @@ import PerformanceReviewComplianceGrid, {
   PerformanceReviewComplianceGridStyles,
   ReviewCycleCell,
 } from "../components/PerformanceReviewComplianceGrid";
+import { CapacitySectionHeader } from "./training/components/CapacitySectionHeader";
 import { LaborRosterCopyValue } from "./training/components/LaborRosterCopyValue";
 import { EmptyState } from "./training/components/EmptyState";
 import { TrainingHistoryStatusChange } from "./training/components/TrainingHistoryStatusChange";
@@ -1325,25 +1326,6 @@ function getReadinessCellActorLine(cell = {}, status = "") {
 
 
 
-function CapacitySectionHeader({ title, subtitle, summary, collapsed, onToggle }) {
-  return (
-    <button
-      type="button"
-      className={`capacity-section-header${collapsed ? " is-collapsed" : ""}`}
-      onClick={onToggle}
-      aria-expanded={!collapsed}
-    >
-      <span className="capacity-section-title-block">
-        <span className="hour-analysis-card-title">{title}</span>
-        {subtitle ? <span className="hour-analysis-card-subtitle">{subtitle}</span> : null}
-      </span>
-      <span className="capacity-section-summary">
-        {summary}
-        <span className="capacity-section-chevron" aria-hidden="true"><I.ChevronDown /></span>
-      </span>
-    </button>
-  );
-}
 
 function SectionHeader({ title, count, children }) {
   return (
