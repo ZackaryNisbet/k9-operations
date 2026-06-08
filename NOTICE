@@ -1,0 +1,34 @@
+K9 Operations
+Copyright (c) 2026 K9 Operations LLC. All Rights Reserved.
+
+This product is licensed under the terms in LICENSE (a source-available,
+evaluation-only license — NOT open source).
+
+------------------------------------------------------------------------------
+Third-Party Components
+------------------------------------------------------------------------------
+This software depends on third-party open-source packages and assets, each of
+which is the property of its respective owner and is licensed under its own
+terms. Those licenses are NOT superseded by this project's LICENSE. The
+authoritative list of runtime and development dependencies is in package.json /
+package-lock.json; their license texts ship in each package under node_modules.
+
+Notable components include (non-exhaustive):
+  - React, React DOM (MIT) — Meta Platforms, Inc.
+  - Vite, @vitejs/plugin-react (MIT)
+  - Vitest (MIT)
+  - @supabase/supabase-js (MIT)
+  - pdf-lib, pdfjs-dist, @pdf-lib/fontkit (MIT / Apache-2.0)
+  - docx (MIT)
+  - jszip (MIT / GPL dual)
+  - ffmpeg-static (binary distribution; FFmpeg under LGPL/GPL — see its license)
+  - heic2any (MIT)
+  - highlight.run (Apache-2.0)
+
+Vendored / bundled assets:
+  - Balkan OrgChartJS (public/vendor/balkan-orgchart) — proprietary, licensed
+    separately by BALKAN App Ltd. Redistribution rights must be confirmed with
+    the vendor before any public release of this repository.
+
+Before making this repository public, verify the redistribution terms of every
+bundled/vendored asset above and add any required attributions here.
