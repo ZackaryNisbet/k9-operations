@@ -67,6 +67,9 @@ import { fmtDateTime, fmtDate, fmtUpdateStamp } from "./marketingDirectory/forma
 import { clientUuid, normalizeUploadFile } from "./marketingDirectory/upload";
 import { Glyph } from "./marketingDirectory/Glyph";
 import { AttachmentChip, AttachmentPreviewModal, StagedFilePreview } from "./marketingDirectory/attachments";
+import { ImportModal } from "./marketingDirectory/ImportModal";
+import { DirectoryExpansion } from "./marketingDirectory/DirectoryExpansion";
+import { UpdatesExpansion } from "./marketingDirectory/UpdatesExpansion";
 
 // ─── org / contact editor ───────────────────────────────────────────────────
 function DirectoryEditorModal({
@@ -233,143 +236,6 @@ function DirectoryEditorModal({
         </div>
       </div>
     </Modal>
-  );
-}
-
-// ─── import-from-tracker dialog ─────────────────────────────────────────────
-function ImportCandidateRow({ candidate, label, checked, onToggle }) {
-  return (
-    <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 10, background: checked ? C.priLt : C.surfaceHover, cursor: "pointer", border: `1px solid ${checked ? C.priL : "transparent"}` }}>
-      <input type="checkbox" checked={checked} onChange={() => onToggle(candidate.key)} style={{ width: 16, height: 16, accentColor: C.pri }} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{candidate.kind === "org" ? candidate.name : candidate.displayName}</div>
-        <div style={{ fontSize: 11.5, color: C.textMut }}>{candidate.sourceLabel}{candidate.kind === "org" && candidate.contact ? ` · contact: ${candidate.contact.first_name} ${candidate.contact.last_name}` : ""}</div>
-      </div>
-      <StatusPill tone={candidate.kind === "org" ? "primary" : "info"}>{label}</StatusPill>
-    </label>
-  );
-}
-
-function ImportModal({ candidates, saving, onClose, onImport }) {
-  const [selected, setSelected] = useState(() => new Set([...candidates.orgs, ...candidates.individuals].map((c) => c.key)));
-  const total = candidates.orgs.length + candidates.individuals.length;
-  const toggle = (key) => setSelected((prev) => {
-    const next = new Set(prev);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    return next;
-  });
-
-  return (
-    <Modal title="Import from marketing tracker" onClose={onClose} wide>
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <p style={{ margin: 0, fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
-          These organizers and businesses come from the marketing tracker and aren’t in the directory yet. Imported records stay linked to their tracker entry.
-        </p>
-        {total === 0 ? (
-          <div style={{ padding: "28px 16px", textAlign: "center", color: C.textMut, fontSize: 13 }}>Nothing new to import — the directory is in sync with the tracker.</div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16, maxHeight: "52vh", overflowY: "auto" }}>
-            {candidates.orgs.length ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <span style={LABEL_STYLE}>Organizations ({candidates.orgs.length})</span>
-                {candidates.orgs.map((c) => <ImportCandidateRow key={c.key} candidate={c} label={c.org_type || "Business"} checked={selected.has(c.key)} onToggle={toggle} />)}
-              </div>
-            ) : null}
-            {candidates.individuals.length ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <span style={LABEL_STYLE}>Individuals ({candidates.individuals.length})</span>
-                {candidates.individuals.map((c) => <ImportCandidateRow key={c.key} candidate={c} label="Individual" checked={selected.has(c.key)} onToggle={toggle} />)}
-              </div>
-            ) : null}
-          </div>
-        )}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, borderTop: `1px solid ${C.borderLight}`, paddingTop: 16 }}>
-          <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancel</Btn>
-          <Btn variant="primary" onClick={() => onImport([...candidates.orgs, ...candidates.individuals].filter((c) => selected.has(c.key)))} disabled={saving || selected.size === 0} icon={<Glyph icon={I.Download} size={15} />}>
-            {saving ? "Importing…" : `Import ${selected.size}`}
-          </Btn>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-// Affiliated-contact + attachment block shown beneath an expanded directory row.
-function DirectoryExpansion({ entry, canManage, onAddContact, onEditContact, onDeleteContact, onPreviewAttachment }) {
-  const stop = (fn) => (ev) => { ev.stopPropagation(); fn(); };
-  if (entry.kind === "org") {
-    return (
-      <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={LABEL_STYLE}>Affiliated contacts</span>
-          {canManage ? <RowActionButton tone="primary" onClick={stop(() => onAddContact(entry.org))}>Add contact</RowActionButton> : null}
-        </div>
-        {entry.contacts.length === 0 ? (
-          <div style={{ fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No contacts yet.</div>
-        ) : (
-          <div style={{ display: "grid", gap: 0 }}>
-            {entry.contacts.map((cnt) => (
-              <div key={cnt.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(0, 1.2fr) minmax(0, 0.9fr) auto", gap: 10, alignItems: "center", fontSize: 12, padding: "8px 0", borderTop: `1px solid ${C.borderLight}` }}>
-                <div style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  <span style={{ fontWeight: 700, color: C.text }}>{getDirectoryContactName(cnt)}</span>
-                  {cnt.title ? <span style={{ color: C.textMut }}>{` · ${cnt.title}`}</span> : null}
-                </div>
-                <div style={{ color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cnt.email || ""}</div>
-                <div style={{ color: C.textMut, whiteSpace: "nowrap" }}>{cnt.phone || ""}</div>
-                {canManage ? (
-                  <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                    <RowActionButton onClick={stop(() => onEditContact(cnt))}>Edit</RowActionButton>
-                    <IconButton tone="danger" title="Remove contact" icon={<Glyph icon={I.Trash} size={12} />} onClick={stop(() => onDeleteContact(cnt))} />
-                  </div>
-                ) : <div />}
-              </div>
-            ))}
-          </div>
-        )}
-        {entry.org.notes ? <div style={{ fontSize: 12, color: C.textSec, whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{entry.org.notes}</div> : null}
-        {entry.attachments.length ? (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {entry.attachments.map((att) => <AttachmentChip key={att.id} attachment={att} onPreview={onPreviewAttachment} onDelete={() => {}} busy canManage={false} />)}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-  return (
-    <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-      {entry.contact.notes
-        ? <div style={{ fontSize: 12, color: C.textSec, whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{entry.contact.notes}</div>
-        : <div style={{ fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No notes.</div>}
-      {entry.attachments.length ? (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {entry.attachments.map((att) => <AttachmentChip key={att.id} attachment={att} onPreview={onPreviewAttachment} onDelete={() => {}} busy canManage={false} />)}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-// Inline updates area beneath an org row — a verbatim copy of the marketing
-// tracker's Updates expansion: every historical update (actor — date · time /
-// text), newest first. The Log composer itself now lives in the shared
-// LogEntryModal (opened from the row's Log button), not inline here.
-function UpdatesExpansion({ feed }) {
-  return (
-    <div style={{ background: C.bg, borderLeft: `3px solid ${C.pri}` }}>
-      {feed.length > 0 ? (
-        <div style={{ padding: "8px 14px 4px" }}>
-          {feed.map((row, idx, arr) => (
-            <div key={row.id} style={{ marginBottom: idx === arr.length - 1 ? 0 : 6, paddingBottom: idx === arr.length - 1 ? 0 : 6, borderBottom: idx === arr.length - 1 ? "none" : `1px solid ${C.borderLight}` }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: C.pri, marginBottom: 1 }}>{row.by} — {fmtUpdateStamp(row.at)}</div>
-              <div style={{ fontSize: 11, color: C.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{row.text || "—"}</div>
-              {row.next ? <div style={{ fontSize: 9, color: C.textSec, marginTop: 1 }}>Follow-up: {fmtDate(row.next)}</div> : null}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div style={{ padding: "10px 14px", fontSize: 11, color: C.textMut }}>No updates yet — click Log to add one.</div>
-      )}
-    </div>
   );
 }
 
