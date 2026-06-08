@@ -15,6 +15,7 @@ import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
 import { K9Check } from "./dailyOps/K9Check";
 import { formatTime, ppNowTime } from "./dailyOps/timeHelpers";
+import { getSvcNames, hasSvcIncludes } from "./dailyOps/serviceHelpers";
 
 function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params }) {
   const td = todayStr();
@@ -1246,15 +1247,6 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     // Fallback: return the whole room name
     return { display: r, roomType: null };
   };
-
-  // ─── Service Helper: extract service names from _services (handles both formats) ──
-  const getSvcNames = (svcs) => {
-    if (!svcs) return [];
-    const arr = Array.isArray(svcs) ? svcs : [];
-    return arr.map(s => typeof s === "string" ? s : (s && s.name ? s.name : "")).filter(Boolean);
-  };
-  const hasSvc = (svcs, name) => getSvcNames(svcs).some(n => n.toLowerCase() === name.toLowerCase());
-  const hasSvcIncludes = (svcs, partial) => getSvcNames(svcs).some(n => n.toLowerCase().includes(partial.toLowerCase()));
 
   // ─── Bathing Report (server-computed via ops-compute) ────────────────────────
   const [bathCompleted, setBathCompleted] = useState({});
