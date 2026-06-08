@@ -3,7 +3,7 @@ import { C } from "../constants/colors";
 import { CreatePackageWizard } from "./CreatePackageWizard";
 import { I } from "../icons";
 import { PackageReportsTab } from "./PackageReportsTab";
-import { React, useState } from "react";
+import React, { useState } from "react";
 import { SellPackageModal } from "./SellPackageModal";
 
 function PackagesSection({ data, save, nav, profile }) {

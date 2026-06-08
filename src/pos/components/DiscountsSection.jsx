@@ -2,7 +2,7 @@ import { Btn, Card, Modal } from "./ui";
 import { C } from "../constants/colors";
 import { DiscountForm } from "./DiscountForm";
 import { I } from "../icons";
-import { React, useState } from "react";
+import React, { useState } from "react";
 import { gid, todayStr } from "../lib/format";
 
 function DiscountsSection({ data, save }) {
