@@ -5,9 +5,8 @@ import { LaborSearchBar, LaborIntro } from "../../shared/ui";
 import { LABOR_INTRO_DEFAULTS } from "../laborIntros";
 import { isWaivedLaborComplianceState, getLaborComplianceCellState } from "../performanceReviewData";
 import { FILTER_OP_LABELS, REQUIREMENT_STATUS_OPTIONS } from "./performanceReviewGrid/constants";
+import { defaultFormatter, identity, formatCellDate } from "./performanceReviewGrid/formatters";
 
-const defaultFormatter = (value) => value || "-";
-const identity = (value) => value;
 const DEFAULT_COMPLIANCE_FILTERS = { employment_status: { op: "is", val: "active" } };
 
 function joinClassNames(...values) {
@@ -64,11 +63,6 @@ export function getCompletionEvidence(cycle = {}) {
 
 function getCycleDueDate(cycle = {}) {
   return cycle.dueDate || cycle.instance?.due_date || cycle.policyDueDate || "";
-}
-
-function formatCellDate(value, formatDate = defaultFormatter) {
-  const text = String(value || "").trim();
-  return text ? formatDate(text.slice(0, 10)) : "-";
 }
 
 /**
