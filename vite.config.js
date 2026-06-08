@@ -35,6 +35,15 @@ export default defineConfig(({ mode }) => {
     test: {
       globals: true,
       environment: 'node',
+      // Harmless defaults so modules that build the Supabase client at import time
+      // (src/supabaseClient.js) can load in a bare checkout / CI with no .env present.
+      // Tests never hit a real backend (they mock Supabase or test pure logic), so
+      // these dummy values only stop createClient() from throwing "supabaseUrl is
+      // required" and breaking unrelated test files at import time.
+      env: {
+        VITE_SUPABASE_URL: 'http://localhost:54321',
+        VITE_SUPABASE_ANON_KEY: 'test-anon-key',
+      },
     },
     build: {
       outDir: 'dist',
