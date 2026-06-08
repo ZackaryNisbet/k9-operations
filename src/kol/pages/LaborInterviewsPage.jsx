@@ -54,6 +54,16 @@ import {
   validateInterviewResumeFile,
 } from "../interviewData";
 import { normalizeOptionalUuid, resolveTrainingLocationId } from "../trainingData";
+import {
+  CUSTOM_SUMMARY_SECTION_PREFIX,
+  DOCUMENT_PDF_INSTRUCTION_KEY,
+  GUIDE_AI_WORK_STEPS,
+  INTERVIEW_WAVEFORM_BAR_COUNT,
+  INTERVIEW_WAVEFORM_DECODE_MAX_BYTES,
+  INTERVIEW_WAVEFORM_DECODE_MAX_SECONDS,
+  PDF_POINT_TO_CSS_PX,
+  SUMMARY_SECTION_KEYS,
+} from "./laborInterviews/constants";
 
 function defaultInterviewDate() {
   try {
@@ -1023,9 +1033,6 @@ function seededWaveBars(seed = "", count = 72) {
   });
 }
 
-const INTERVIEW_WAVEFORM_BAR_COUNT = 72;
-const INTERVIEW_WAVEFORM_DECODE_MAX_SECONDS = 8 * 60;
-const INTERVIEW_WAVEFORM_DECODE_MAX_BYTES = 8 * 1024 * 1024;
 
 function shouldDecodeAudioWaveform({ durationSeconds = 0, fileSizeBytes = 0 } = {}) {
   const duration = Number(durationSeconds || 0);
@@ -1666,7 +1673,6 @@ function summarySectionKey(value = "") {
   return key || "summary";
 }
 
-const CUSTOM_SUMMARY_SECTION_PREFIX = "custom_page_";
 
 function normalizeCustomSummaryPageId(value = "") {
   const key = summarySectionKey(String(value || "").replace(new RegExp(`^${CUSTOM_SUMMARY_SECTION_PREFIX}`), ""));
@@ -1686,12 +1692,6 @@ function isCustomSummarySectionKey(value = "") {
   return String(value || "").startsWith(CUSTOM_SUMMARY_SECTION_PREFIX);
 }
 
-const SUMMARY_SECTION_KEYS = new Set([
-  "call_summary",
-  "scorecard",
-  "reviewed_guide_responses",
-  "reviewed_custom_questions",
-]);
 
 function isSummarySectionKey(value = "") {
   return SUMMARY_SECTION_KEYS.has(String(value || ""));
@@ -3182,8 +3182,6 @@ function TranscriptModal({ turns, currentTime, segmentationSource = "", onClose 
   );
 }
 
-const DOCUMENT_PDF_INSTRUCTION_KEY = "__document";
-const PDF_POINT_TO_CSS_PX = 96 / 72;
 
 function getPdfFieldPageSize(field, pageFields = []) {
   const sources = [field, ...pageFields];
@@ -3615,12 +3613,6 @@ function PdfGuidePreview({ pdfUrl, loadingPdf, fields, fieldValues, summaryPages
   );
 }
 
-const GUIDE_AI_WORK_STEPS = [
-  "Reading the transcript",
-  "Checking PDF fields",
-  "Mapping evidence",
-  "Saving guide updates",
-];
 
 function buildGuideAiCompletionBullets(result, totalFields) {
   const saved = Number(result?.saved_count || 0);
