@@ -103,6 +103,7 @@ import PerformanceReviewComplianceGrid, {
   PerformanceReviewComplianceGridStyles,
   ReviewCycleCell,
 } from "../components/PerformanceReviewComplianceGrid";
+import { CAPACITY_PLANNING_VIEW_IDS, HOUR_ANALYSIS_FRONTLINE_TARGET_RANGE_LABEL, HOUR_ANALYSIS_GROUP_LABELS, LABOR_MODEL_DEFAULT_BREAKERS_BY_DAY, LABOR_MODEL_GROUP_OPTIONS, LABOR_MODEL_ROLE_COVERAGE_ALIAS_MAP, LABOR_MODEL_SHIFT_TYPE_LABELS } from "./training/constants";
 import { actorFirstNameMatches, addDaysToDateString, buildEmptyReadinessBoard, buildPerformanceReviewSortKey, clampHourAnalysisPercent, compareLaborSortValues, compareTemplateVersionRecency, copyTextToClipboard, downloadBinaryFile, downloadTextFile, formatLaborModelTimePoint, formatReviewWorkflowLabel, formatRosterLocationName, formatRosterPdfDate, formatRosterPrintDate, formatTrainingHistoryStatusLabel, getCommitmentBadgeTone, getComplianceHistoryStatusLabel, getComplianceStateLabel, getDefaultStaffingCapacityRoleSettings, getLaborCapacityModelLoadMissing, getLaborCapacityModelVersionLoadMissing, getLocalDateKey, getOutOfPositionCompareKey, getTrainingHistoryActionLabel, hasOwnReviewDraftField, isComplianceHistoryEvent, isEmailLike, isLaborModelCoverageActive, isMissingTeamReadinessRpcError, isObjectRow, isPersistedLaborPositionRowTrusted, isReadinessVerifiedStatus, makeHourAnalysisRangeTotals, makeLaborCapacityModelTempId, makeLaborModelCellKey, makeLaborModelRoleHoursBucket, normalizeComplianceEvidencePolicy, normalizeComplianceHistoryActionLabel, normalizeComplianceHistoryCycleLabel, normalizeComplianceRequirementLabel, normalizeEmployeeName, normalizeHourAnalysisDelta, normalizeHourAnalysisNumber, normalizeHourAnalysisScenarioType, normalizeLaborCapacityModelName, normalizeLaborContactEmail, normalizeLaborContactPhone, normalizeLaborModelBreakMinutes, normalizeLaborModelCoverageAlias, normalizeLaborModelHexColor, normalizeLaborModelShiftType, normalizeLocalReviewCycleKey, normalizePositionTitle, normalizeReviewResponseValue, normalizeTemplateRequiredTextInput, noteMatchesSearch, parseLaborModelCoverage, parseLaborModelTimePoint, parseLaborShiftMinutes, readHourAnalysisRangeNumber, readLaborEmployeeContact, readTrainingRequirementDueRule, resolveActorProfileDisplayName, safeTrainingProgress, slugifyLaborModelId, slugifyTemplateName, splitEmployeeName } from "./training/helpers";
 export { copyTextToClipboard, makeLaborModelCellKey, normalizeTemplateRequiredTextInput, noteMatchesSearch, safeTrainingProgress };
 export { formatComplianceRequirementEvidence } from "./training/helpers";
@@ -159,7 +160,6 @@ export const COMPLIANCE_VIEW_OPTIONS = [
 ];
 const COMPLIANCE_VIEW_IDS = new Set(COMPLIANCE_VIEW_OPTIONS.map((view) => view.id));
 const normalizeComplianceView = (value) => COMPLIANCE_VIEW_IDS.has(value) ? value : "employees";
-const CAPACITY_PLANNING_VIEW_IDS = new Set(CAPACITY_PLANNING_VIEWS.map((view) => view.id));
 export const normalizeCapacityPlanningView = (value) => CAPACITY_PLANNING_VIEW_IDS.has(value) ? value : "staffing-capacity";
 
 export function buildLaborModulePanelKey({ tab, interviewView, attendanceView, capacityPlanningView, complianceView } = {}) {
@@ -523,7 +523,6 @@ function LaborSortControl({ sort, columns = [], defaultSort, onChange }) {
   );
 }
 
-const HOUR_ANALYSIS_GROUP_LABELS = Object.fromEntries(HOUR_ANALYSIS_GROUPS.map((group) => [group.key, group.label]));
 const LABOR_PERFORMANCE_REVIEW_BASE_SORT_COLUMNS = [
   { key: "hierarchy", label: "Position Order" },
   { key: "employee", label: "Employee" },
@@ -764,24 +763,7 @@ function getReviewCycleDueDateForSort(row = {}, sortKey = "") {
   const cycle = findReviewCycleRowBySortKey(row, sortKey);
   return cycle?.dueDate || cycle?.due_date || "";
 }
-const HOUR_ANALYSIS_FRONTLINE_TARGET_RANGE_LABEL = `${HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT}-${HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT}% frontline target range`;
 const HOUR_ANALYSIS_RESEARCH_TARGET_LABEL = HOUR_ANALYSIS_FRONTLINE_TARGET_RANGE_LABEL;
-const LABOR_MODEL_SHIFT_TYPE_LABELS = Object.fromEntries(LABOR_MODEL_SHIFT_TYPE_OPTIONS.map((option) => [option.value, option.label]));
-const LABOR_MODEL_GROUP_OPTIONS = HOUR_ANALYSIS_GROUPS
-  .filter((group) => group.key !== "other")
-  .map((group) => ({ value: group.key, label: HOUR_ANALYSIS_GROUP_SHORT_LABELS[group.key] || group.label }));
-const LABOR_MODEL_ROLE_COVERAGE_ALIAS_MAP = new Map(
-  LABOR_MODEL_ROLE_COVERAGE_OPTIONS.flatMap((option) => (
-    [option.label, option.groupKey, ...option.aliases].map((alias) => [
-      String(alias || "").trim().toLowerCase().replace(/[._-]+/g, " ").replace(/\s+/g, " "),
-      option,
-    ])
-  ))
-);
-const LABOR_MODEL_DEFAULT_BREAKERS_BY_DAY = Object.fromEntries(LABOR_MODEL_DAY_KEYS.map((dayKey) => [
-  dayKey,
-  ["saturday", "sunday"].includes(dayKey) ? LABOR_MODEL_WEEKEND_BREAKERS : LABOR_MODEL_WEEKDAY_BREAKERS,
-]));
 const DEFAULT_HOUR_ANALYSIS_LABOR_MODEL = {
   version: 1,
   source: "CH Labor Model Revisited - Clean Daily Pages FIXED.xlsx",
