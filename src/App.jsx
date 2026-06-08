@@ -226,30 +226,7 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
 // ─── Utilities ──────────────────────────────────────────────────────────────
 import { gid, formatDogNames, titleCase, fmtPhone, _toDateStr, fmtDate, fmtDateFull, fmtDateShort, fmtTime, fmtInstr, summarizeFeeding, summarizeMeds, todayStr, getSimulatedNow, formatTime12hr, addDays, getMonday, getWeekDays, shortDay, dayNum } from "./pos/lib/format";
 
-// Vaccine status: returns {ok:bool, expired:[], missing:[], expiringSoon:[], graceperiod:[]}
-const getVaxStatus = (dog, requiredVaccines, policies) => {
-  const rv = requiredVaccines || DEF_REQUIRED_VACCINES;
-  const pol = policies || {};
-  const graceDays = pol.vaccineGraceDays ?? 7;
-  const warningDays = pol.vaccineWarningDays ?? 30;
-  const now = getSimulatedNow(); // Time Travel aware
-  const expired = [], missing = [], expiringSoon = [], graceperiod = [];
-  for (const vId of rv) {
-    const val = dog.fields[vId];
-    if (!val) { missing.push(vId); continue; }
-    const d = new Date(val + "T00:00:00");
-    const diffMs = d - now;
-    const diffDays = diffMs / 86400000;
-    if (diffDays < 0) {
-      // Expired — check if within grace period
-      if (graceDays > 0 && Math.abs(diffDays) <= graceDays) graceperiod.push(vId);
-      else expired.push(vId);
-    } else if (diffDays < warningDays) {
-      expiringSoon.push(vId);
-    }
-  }
-  return { ok: expired.length === 0 && missing.length === 0, expired, missing, expiringSoon, graceperiod };
-};
+import { getVaxStatus } from "./pos/lib/vaccines";
 
 // === Vaccine Reminder Engine ===
 // Scans all dogs, matches expiring vaccines to configured tiers, deduplicates against log,
