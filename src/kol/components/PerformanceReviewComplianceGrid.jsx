@@ -7,6 +7,7 @@ import { isWaivedLaborComplianceState, getLaborComplianceCellState } from "../pe
 import { FILTER_OP_LABELS, REQUIREMENT_STATUS_OPTIONS } from "./performanceReviewGrid/constants";
 import { defaultFormatter, identity, formatCellDate } from "./performanceReviewGrid/formatters";
 import { joinClassNames, normalizeText, normalizeDateText } from "./performanceReviewGrid/textHelpers";
+import { getCycleKey, getCellKey, getCycleDueDate, toCycleRows, getCycleByFilterKey } from "./performanceReviewGrid/cycleHelpers";
 
 const DEFAULT_COMPLIANCE_FILTERS = { employment_status: { op: "is", val: "active" } };
 
@@ -20,14 +21,6 @@ function getOptionValue(option) {
 
 function getOptionLabel(option) {
   return typeof option === "object" ? option.label : option;
-}
-
-function getCycleKey(cycle = {}) {
-  return String(cycle.id || cycle.slug || cycle.requirementId || cycle.policyKey || cycle.label || "review");
-}
-
-function getCellKey(employeeId, cycle = {}) {
-  return `${employeeId || "employee"}:${getCycleKey(cycle)}`;
 }
 
 export function getCompletionEvidence(cycle = {}) {
@@ -46,10 +39,6 @@ export function getCompletionEvidence(cycle = {}) {
     url: metadataEvidence.external_url || evidence.url || "",
     completedOn: cycle.completedDate || metadataEvidence.completed_on || "",
   };
-}
-
-function getCycleDueDate(cycle = {}) {
-  return cycle.dueDate || cycle.instance?.due_date || cycle.policyDueDate || "";
 }
 
 /**
@@ -182,15 +171,6 @@ function isCompliantRow(row = {}) {
 
 function getOpenCheckpointCount(row = {}) {
   return toCycleRows(row).filter((cycle) => !isCompliantCycleState(getCycleState(cycle).key)).length;
-}
-
-function toCycleRows(row = {}) {
-  return Array.isArray(row.cycles) ? row.cycles : [];
-}
-
-function getCycleByFilterKey(row = {}, filterKey = "") {
-  const targetKey = String(filterKey || "").replace("requirement:", "");
-  return toCycleRows(row).find((cycle) => getCycleKey(cycle) === targetKey);
 }
 
 function matchTextFilter(source, op, value) {
