@@ -103,6 +103,7 @@ import PerformanceReviewComplianceGrid, {
   PerformanceReviewComplianceGridStyles,
   ReviewCycleCell,
 } from "../components/PerformanceReviewComplianceGrid";
+import { PctReadinessDualProgress } from "./training/components/PctReadinessDualProgress";
 import { HourAnalysisSplitControl } from "./training/components/HourAnalysisSplitControl";
 import { LaborModelTimeControl } from "./training/components/LaborModelTimeControl";
 import { applyLaborRosterFilters, buildTrainingHistoryDayMetrics, calculateLaborModelRowHours, formatLaborDate, getDaysSince, getLaborCapacityWeekStart, getLaborModelCoverageDisplay, getLaborModelDefaultCoverageValueForRow, getLaborModelRolePalette, getRestartedReviewStatus, getReviewCycleEvidenceDocument, removeLaborModelColumnFromDay, setLaborModelCoverageDuration, setLaborModelCoveragePosition } from "./training/helpers";
@@ -842,23 +843,6 @@ function StatusBadge({ status }) {
 
 
 
-function PctReadinessDualProgress({ demonstratedPercent = 0, verifiedPercent = 0 }) {
-  const rows = [
-    { key: "D", title: "Demonstrated", percent: demonstratedPercent, color: "#0ea5e9" },
-    { key: "V", title: "Verified / Qualified", percent: verifiedPercent, color: C.suc },
-  ];
-  return (
-    <div style={{ display: "grid", gap: 4 }}>
-      {rows.map((row) => (
-        <div key={row.key} title={row.title} style={{ display: "grid", gridTemplateColumns: "12px 1fr 28px", alignItems: "center", gap: 5 }}>
-          <span style={{ fontSize: 9.5, fontWeight: 950, color: C.textMut, lineHeight: 1 }}>{row.key}</span>
-          <CompactProgressBar percent={row.percent} color={row.color} />
-          <span style={{ fontSize: 9.5, fontWeight: 900, color: C.textMut, textAlign: "right", lineHeight: 1 }}>{Math.round(safeTrainingProgress(row.percent))}%</span>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function PctReadinessDualCountSummary({
   demonstratedCount = 0,
