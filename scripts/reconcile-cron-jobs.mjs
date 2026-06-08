@@ -56,16 +56,19 @@ function validateJob(job) {
   }
 }
 
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
+const LOCATION_ID = process.env.LOCATION_ID || "";
+
 function buildCommand(job) {
   validateJob(job);
   const headers = authHeadersSql();
   if (job.payloadMode === "current_week") {
     return [
       "select net.http_post(",
-      `url := ${quoteLiteral(`https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/${job.function}`)},`,
+      `url := ${quoteLiteral(`${SUPABASE_URL}/functions/v1/${job.function}`)},`,
       `headers := ${headers},`,
       "body := jsonb_build_object(",
-      "'location_id', '11111111-1111-1111-1111-111111111111',",
+      `'location_id', '${LOCATION_ID}',`,
       "'date_from', (now() at time zone 'America/New_York')::date::text,",
       "'date_to', (((now() at time zone 'America/New_York')::date) + 6)::text",
       "),",
@@ -77,7 +80,7 @@ function buildCommand(job) {
   if (job.payloadMode === "single_day") {
     const targetDateSql = `(((now() at time zone 'America/New_York')::date) + ${job.dayOffset})`;
     const bodyFields = [
-      "'location_id', '11111111-1111-1111-1111-111111111111'",
+      `'location_id', '${LOCATION_ID}'`,
       `'date_from', ${targetDateSql}::text`,
       `'date_to', ${targetDateSql}::text`,
     ];
@@ -91,7 +94,7 @@ function buildCommand(job) {
 
     return [
       "select net.http_post(",
-      `url := ${quoteLiteral(`https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/${job.function}`)},`,
+      `url := ${quoteLiteral(`${SUPABASE_URL}/functions/v1/${job.function}`)},`,
       `headers := ${headers},`,
       "body := jsonb_build_object(",
       bodyFields.join(","),
@@ -103,7 +106,7 @@ function buildCommand(job) {
 
   return [
     "select net.http_post(",
-    `url := ${quoteLiteral(`https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/${job.function}`)},`,
+    `url := ${quoteLiteral(`${SUPABASE_URL}/functions/v1/${job.function}`)},`,
     `headers := ${headers},`,
     `body := ${quoteLiteral(JSON.stringify(job.payload))}::jsonb,`,
     "timeout_milliseconds := 120000",

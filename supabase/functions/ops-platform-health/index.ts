@@ -1,10 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const CHERRY_HILL_LOCATION_ID = "11111111-1111-1111-1111-111111111111";
+const CHERRY_HILL_LOCATION_ID = Deno.env.get("DEFAULT_LOCATION_ID") ?? "";
 
 const LOCATION_ALIASES: Record<string, string> = {
   "cherry-hill": CHERRY_HILL_LOCATION_ID,
-  your-gingr-subdomain: CHERRY_HILL_LOCATION_ID,
+  [Deno.env.get("DEFAULT_GINGR_SUBDOMAIN") ?? "_default"]: CHERRY_HILL_LOCATION_ID,
 };
 
 const corsHeaders = {

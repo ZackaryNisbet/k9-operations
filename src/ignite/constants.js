@@ -33,8 +33,9 @@ export const MATCH_TYPES = {
   PHONE_NAME: 'phone_name', // phone + partial name combo
 };
 
-/** Adair Forsythe flagship location */
-export const CHERRY_HILL_LOCATION_ID = '11111111-1111-1111-1111-111111111111';
+/** Default location id — configure per deployment via VITE_DEFAULT_LOCATION_ID
+ *  (left blank when unset; the app normally uses the signed-in profile's location). */
+export const CHERRY_HILL_LOCATION_ID = import.meta.env.VITE_DEFAULT_LOCATION_ID || '';
 
 /** Minimum confidence threshold to auto-match (no review needed) */
 export const AUTO_MATCH_THRESHOLD = 0.85;
