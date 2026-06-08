@@ -59,8 +59,11 @@ manifest.
 
 ## Architecture
 
-Start with **[ARCHITECTURE.md](ARCHITECTURE.md)** (the master overview), then:
+Start with the **[Engineering Wiki](docs/wiki/Home.md)** (the navigable guide — every
+page's purpose, backend, and files) or **[ARCHITECTURE.md](ARCHITECTURE.md)** (the
+master overview), then:
 
+- [Engineering Wiki](docs/wiki/Home.md) — per‑page references, directory map, demo mode
 - [Editions](docs/architecture/EDITIONS.md) — base vs analytics vs POS
 - [File organization](docs/architecture/FILE_ORGANIZATION.md) — structure & conventions
 - [Backend](docs/architecture/BACKEND.md) — Supabase functions, RPCs, migrations

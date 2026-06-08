@@ -192,6 +192,7 @@ bootstrap), **#87** (marketing site), **#89** (AI assistant ops manual),
 
 | Document | What it covers |
 | --- | --- |
+| **[Engineering Wiki](docs/wiki/Home.md)** | **Navigable guide: per‑page references (purpose + backend + files), master directory, backend & data, demo mode** |
 | [EDITIONS.md](docs/architecture/EDITIONS.md) | Base vs Analytics vs POS — selection, routing, feature sets |
 | [app-base.md](docs/architecture/app-base.md) | The base (Lite/KOL) edition architecture |
 | [app-analytics.md](docs/architecture/app-analytics.md) | The Analytics edition (`?mode=analytics`) |
