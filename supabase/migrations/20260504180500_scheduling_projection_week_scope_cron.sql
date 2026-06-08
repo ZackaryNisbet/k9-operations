@@ -17,10 +17,10 @@ begin
     cron_sql := format(
       $cmd$
         select net.http_post(
-          url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/compute-scheduling-matrix',
+          url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/compute-scheduling-matrix',
           headers := %1$s,
           body := jsonb_build_object(
-            'location_id', '8ea382b0-63f7-44ac-b6f8-83243c03d946',
+            'location_id', '11111111-1111-1111-1111-111111111111',
             'date_from', (((now() at time zone 'America/New_York')::date) + %2$s)::text,
             'date_to', (((now() at time zone 'America/New_York')::date) + %2$s)::text,
             'projection_scope_date_from', date_trunc('week', (((now() at time zone 'America/New_York')::date) + %2$s)::timestamp)::date::text,
@@ -44,10 +44,10 @@ begin
     select generate_series('2026-05-11'::date, '2026-05-17'::date, interval '1 day')::date
   loop
     perform net.http_post(
-      url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/compute-scheduling-matrix',
+      url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/compute-scheduling-matrix',
       headers := auth_headers,
       body := jsonb_build_object(
-        'location_id', '8ea382b0-63f7-44ac-b6f8-83243c03d946',
+        'location_id', '11111111-1111-1111-1111-111111111111',
         'date_from', backfill_date::text,
         'date_to', backfill_date::text,
         'projection_scope_date_from', '2026-05-11',

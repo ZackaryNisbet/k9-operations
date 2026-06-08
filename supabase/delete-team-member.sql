@@ -13,7 +13,7 @@ CREATE OR REPLACE FUNCTION delete_team_member(target_user_id UUID)
 RETURNS JSONB AS $$
 DECLARE
   service_key TEXT := 'YOUR_SERVICE_ROLE_KEY';
-  project_url TEXT := 'https://xuzvqcpthqikyroqhypw.supabase.co';
+  project_url TEXT := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co';
   caller_location UUID;
   target_location UUID;
   resp extensions.http_response;

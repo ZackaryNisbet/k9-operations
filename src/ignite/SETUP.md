@@ -28,7 +28,7 @@ Insert a row for each location that uses Ignite:
 ```sql
 INSERT INTO ignite_config (location_id, ignite_profile_id, forwarding_email, is_active)
 VALUES (
-  '8ea382b0-63f7-44ac-b6f8-83243c03d946',  -- Cherry Hill
+  '11111111-1111-1111-1111-111111111111',  -- Cherry Hill
   'IGN-7842',                                 -- Ignite profile ID (from emails)
   'cherrhill-ignite@k9operations.app',        -- Forwarding address
   true
@@ -59,7 +59,7 @@ Choose one of these options:
 1. Set up an inbound domain in Resend (resend.com/inbound)
 2. Configure the webhook URL to point to your edge function:
    ```
-   https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/ignite-webhook
+   https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/ignite-webhook
    ```
 3. Resend will POST the parsed email (from, to, subject, html) to your webhook
 
@@ -74,7 +74,7 @@ Choose one of these options:
 1. Create a new Pipedream workflow with an Email trigger
 2. Add a step that POSTs to your edge function:
    ```javascript
-   await axios.post('https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/ignite-webhook', {
+   await axios.post('https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/ignite-webhook', {
      from: steps.trigger.event.from,
      subject: steps.trigger.event.subject,
      html: steps.trigger.event.html,
@@ -93,7 +93,7 @@ Choose one of these options:
 4. Inline the parser/matcher code or bundle it (Supabase Edge Functions are single-file)
 5. Deploy:
    ```bash
-   supabase functions deploy ignite-webhook --project-ref xuzvqcpthqikyroqhypw
+   supabase functions deploy ignite-webhook --project-ref YOUR_SUPABASE_PROJECT_REF
    ```
 6. Set the service role key as a secret:
    ```bash
@@ -107,7 +107,7 @@ Choose one of these options:
 ```bash
 # Test the webhook with a sample web form email
 curl -X POST \
-  https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/ignite-webhook \
+  https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/ignite-webhook \
   -H "Content-Type: application/json" \
   -d '{
     "from": "noreply@leads.idigitalstrategies.com",
@@ -119,7 +119,7 @@ curl -X POST \
 ```bash
 # Test with a phone call email
 curl -X POST \
-  https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/ignite-webhook \
+  https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/ignite-webhook \
   -H "Content-Type: application/json" \
   -d '{
     "from": "noreply@leads.idigitalstrategies.com",

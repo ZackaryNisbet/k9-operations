@@ -33,8 +33,9 @@ export const MATCH_TYPES = {
   PHONE_NAME: 'phone_name', // phone + partial name combo
 };
 
-/** Cherry Hill flagship location */
-export const CHERRY_HILL_LOCATION_ID = '8ea382b0-63f7-44ac-b6f8-83243c03d946';
+/** Default location id — configure per deployment via VITE_DEFAULT_LOCATION_ID
+ *  (left blank when unset; the app normally uses the signed-in profile's location). */
+export const CHERRY_HILL_LOCATION_ID = import.meta.env.VITE_DEFAULT_LOCATION_ID || '';
 
 /** Minimum confidence threshold to auto-match (no review needed) */
 export const AUTO_MATCH_THRESHOLD = 0.85;

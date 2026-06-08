@@ -7,7 +7,7 @@
 
 CREATE TABLE IF NOT EXISTS cash_tips (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  location_id   TEXT NOT NULL,                       -- e.g. '8ea382b0-63f7-44ac-b6f8-83243c03d946'
+  location_id   TEXT NOT NULL,                       -- e.g. '11111111-1111-1111-1111-111111111111'
   employee_name TEXT NOT NULL,
   amount        NUMERIC NOT NULL,
   tip_date      DATE NOT NULL,

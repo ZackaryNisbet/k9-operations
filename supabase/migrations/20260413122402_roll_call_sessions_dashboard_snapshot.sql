@@ -3,7 +3,7 @@ SET
   task_id = 'wf_roll_call_closing',
   task_label = 'Closing Roll Call',
   updated_at = NOW()
-WHERE location_id = '8ea382b0-63f7-44ac-b6f8-83243c03d946'
+WHERE location_id = '11111111-1111-1111-1111-111111111111'
   AND role = 'supervisor'
   AND task_id = 'wf_roll_call';
 
@@ -25,7 +25,7 @@ INSERT INTO role_page_config (
 )
 SELECT
   gen_random_uuid(),
-  '8ea382b0-63f7-44ac-b6f8-83243c03d946',
+  '11111111-1111-1111-1111-111111111111',
   'supervisor',
   'opening',
   'wf_roll_call_opening',
@@ -41,7 +41,7 @@ SELECT
 WHERE NOT EXISTS (
   SELECT 1
   FROM role_page_config
-  WHERE location_id = '8ea382b0-63f7-44ac-b6f8-83243c03d946'
+  WHERE location_id = '11111111-1111-1111-1111-111111111111'
     AND role = 'supervisor'
     AND task_id = 'wf_roll_call_opening'
 );

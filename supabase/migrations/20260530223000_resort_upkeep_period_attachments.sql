@@ -4,7 +4,7 @@
 -- attachment RLS policies; both functions do explicit auth + editable-period
 -- checks, so they stay safe. Additive and non-destructive.
 --
--- Applied live to project xuzvqcpthqikyroqhypw on 2026-05-30; this file mirrors
+-- Applied live to project YOUR_SUPABASE_PROJECT_REF on 2026-05-30; this file mirrors
 -- that change for the repo history.
 
 ALTER TABLE public.resort_upkeep_attachments

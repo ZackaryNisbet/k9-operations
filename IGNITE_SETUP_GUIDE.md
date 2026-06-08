@@ -24,7 +24,7 @@ The edge function is located at `supabase/functions/ignite-webhook/index.ts`.
 ### Deploy via Supabase CLI
 
 ```bash
-supabase functions deploy ignite-webhook --project-ref xuzvqcpthqikyroqhypw
+supabase functions deploy ignite-webhook --project-ref YOUR_SUPABASE_PROJECT_REF
 ```
 
 ### Deploy via Management API
@@ -34,7 +34,7 @@ Use the Supabase Management API to deploy the function if the CLI is not availab
 ### Set Required Secrets
 
 ```bash
-supabase secrets set RESEND_API_KEY=re_xxxxxxxxxxxx --project-ref xuzvqcpthqikyroqhypw
+supabase secrets set RESEND_API_KEY=re_xxxxxxxxxxxx --project-ref YOUR_SUPABASE_PROJECT_REF
 ```
 
 The edge function also uses `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, which are already available as default environment variables in Supabase Edge Functions.
@@ -64,7 +64,7 @@ If you prefer a custom domain (e.g., `inbound.k9operations.com`):
 1. In Resend dashboard, go to **Webhooks** → **Add Webhook**
 2. Set the endpoint URL:
    ```
-   https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/ignite-webhook
+   https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/ignite-webhook
    ```
 3. Select the **`email.received`** event type
 4. Save the webhook
@@ -90,7 +90,7 @@ Once you have the Ignite profile ID for the location, insert the configuration:
 ```sql
 INSERT INTO ignite_config (location_id, ignite_profile_id, inbound_email)
 VALUES (
-  '8ea382b0-63f7-44ac-b6f8-83243c03d946',  -- Cherry Hill location ID
+  '11111111-1111-1111-1111-111111111111',  -- Cherry Hill location ID
   '<PROFILE_ID>',                             -- e.g. 'IGN-7842'
   'leads@<id>.resend.app'                     -- Your Resend inbound address
 );
@@ -113,7 +113,7 @@ The `is_active` column defaults to `true`. Set it to `false` to pause lead inges
 Send a test email directly to the webhook:
 
 ```bash
-curl -X POST https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/ignite-webhook \
+curl -X POST https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/ignite-webhook \
   -H "Content-Type: application/json" \
   -d '{
     "from": "noreply@leads.idigitalstrategies.com",

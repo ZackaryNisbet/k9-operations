@@ -289,7 +289,7 @@ function deriveRole(roleProp, locationRoleDefs, currentLocation, profileRole) {
 
 describe("RolePage role derivation (production schema)", () => {
   // Cherry Hill production: all 7 role definitions present
-  const CHERRY_HILL = "8ea382b0-63f7-44ac-b6f8-83243c03d946";
+  const CHERRY_HILL = "11111111-1111-1111-1111-111111111111";
   const CH_ROLE_DEFS = [
     { location_id: CHERRY_HILL, role_code: "pct" },
     { location_id: CHERRY_HILL, role_code: "csr" },

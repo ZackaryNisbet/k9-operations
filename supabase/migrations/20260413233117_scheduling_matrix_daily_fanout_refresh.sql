@@ -29,9 +29,9 @@ begin
     cron_sql := format(
       $cmd$
         select net.http_post(
-          url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/compute-scheduling-matrix',
+          url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/compute-scheduling-matrix',
           body := jsonb_build_object(
-            'location_id', '8ea382b0-63f7-44ac-b6f8-83243c03d946',
+            'location_id', '11111111-1111-1111-1111-111111111111',
             'date_from', (((now() at time zone 'America/New_York')::date) + %1$s)::text,
             'date_to', (((now() at time zone 'America/New_York')::date) + %1$s)::text
           ),

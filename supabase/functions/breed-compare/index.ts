@@ -12,7 +12,7 @@ const corsHeaders = {
 };
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || '';
-const SUPABASE_URL = 'https://xuzvqcpthqikyroqhypw.supabase.co';
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const PET_PHOTOS_BUCKET = 'pet-photos';
 
 function encodeStoragePath(path: string): string {

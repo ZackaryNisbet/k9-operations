@@ -18,7 +18,7 @@ import { SAMPLE_WEB_FORM_EMAIL, SAMPLE_PHONE_CALL_EMAIL, SAMPLE_AD_CLICK_EMAIL }
 import IgniteOnboardingWizard from "../onboarding/IgniteOnboardingWizard";
 import { canManageIgnite } from "../onboarding/igniteOnboarding";
 
-const WEBHOOK_URL = "https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/ignite-webhook";
+const WEBHOOK_URL = `${import.meta.env.VITE_SUPABASE_URL || ""}/functions/v1/ignite-webhook`;
 
 function IgniteSettingsTab() {
   const { profile } = useAuth();

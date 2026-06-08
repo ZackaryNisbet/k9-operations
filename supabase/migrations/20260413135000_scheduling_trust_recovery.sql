@@ -394,7 +394,7 @@ INSERT INTO lite_settings (
   setting_value
 )
 VALUES (
-  '8ea382b0-63f7-44ac-b6f8-83243c03d946',
+  '11111111-1111-1111-1111-111111111111',
   'schedule_config',
   '{
     "weekday_am_open_window": ["06:00", "07:00"],

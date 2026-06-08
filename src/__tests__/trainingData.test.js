@@ -394,33 +394,33 @@ describe("trainingData helpers", () => {
   });
 
   it("returns UUID location refs unchanged", async () => {
-    const uuid = "8ea382b0-63f7-44ac-b6f8-83243c03d946";
+    const uuid = "11111111-1111-1111-1111-111111111111";
     await expect(resolveTrainingLocationId(createMockSupabase({}), uuid, null)).resolves.toBe(uuid);
   });
 
   it("resolves location slugs through the locations table", async () => {
     const client = createMockSupabase({
-      locationRow: { id: "8ea382b0-63f7-44ac-b6f8-83243c03d946" },
+      locationRow: { id: "11111111-1111-1111-1111-111111111111" },
     });
 
     await expect(resolveTrainingLocationId(client, "cherry-hill", null)).resolves.toBe(
-      "8ea382b0-63f7-44ac-b6f8-83243c03d946"
+      "11111111-1111-1111-1111-111111111111"
     );
   });
 
   it("falls back to the actor's profile location when slug lookup misses", async () => {
     const client = createMockSupabase({
-      profileLocationRow: { location_id: "8ea382b0-63f7-44ac-b6f8-83243c03d946" },
+      profileLocationRow: { location_id: "11111111-1111-1111-1111-111111111111" },
     });
 
     await expect(resolveTrainingLocationId(client, "unknown-location", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")).resolves.toBe(
-      "8ea382b0-63f7-44ac-b6f8-83243c03d946"
+      "11111111-1111-1111-1111-111111111111"
     );
   });
 
   it("ignores non-UUID actor ids during fallback location resolution", async () => {
     const client = createMockSupabase({
-      profileLocationRow: { location_id: "8ea382b0-63f7-44ac-b6f8-83243c03d946" },
+      profileLocationRow: { location_id: "11111111-1111-1111-1111-111111111111" },
     });
 
     await expect(resolveTrainingLocationId(client, "unknown-location", "mock-user")).resolves.toBe(null);

@@ -5,11 +5,11 @@
 -- This script does NOT modify the original blob — it stays intact as backup.
 -- Run this in Supabase SQL Editor.
 --
--- Target location: 8ea382b0-63f7-44ac-b6f8-83243c03d946
+-- Target location: 11111111-1111-1111-1111-111111111111
 
 DO $$
 DECLARE
-  loc_id UUID := '8ea382b0-63f7-44ac-b6f8-83243c03d946';
+  loc_id UUID := '11111111-1111-1111-1111-111111111111';
   loc_data JSONB;
   elem JSONB;
   elem_id TEXT;
@@ -173,10 +173,10 @@ END $$;
 -- ============================================================
 -- Verification queries — run these after migration to confirm counts
 -- ============================================================
--- SELECT 'k9_clients' AS tbl, COUNT(*) FROM k9_clients WHERE location_id = '8ea382b0-63f7-44ac-b6f8-83243c03d946'
--- UNION ALL SELECT 'k9_dogs', COUNT(*) FROM k9_dogs WHERE location_id = '8ea382b0-63f7-44ac-b6f8-83243c03d946'
--- UNION ALL SELECT 'k9_reservations', COUNT(*) FROM k9_reservations WHERE location_id = '8ea382b0-63f7-44ac-b6f8-83243c03d946'
--- UNION ALL SELECT 'k9_packages', COUNT(*) FROM k9_packages WHERE location_id = '8ea382b0-63f7-44ac-b6f8-83243c03d946'
--- UNION ALL SELECT 'k9_messages', COUNT(*) FROM k9_messages WHERE location_id = '8ea382b0-63f7-44ac-b6f8-83243c03d946'
--- UNION ALL SELECT 'k9_eod_entries', COUNT(*) FROM k9_eod_entries WHERE location_id = '8ea382b0-63f7-44ac-b6f8-83243c03d946'
--- UNION ALL SELECT 'k9_reminder_log', COUNT(*) FROM k9_reminder_log WHERE location_id = '8ea382b0-63f7-44ac-b6f8-83243c03d946';
+-- SELECT 'k9_clients' AS tbl, COUNT(*) FROM k9_clients WHERE location_id = '11111111-1111-1111-1111-111111111111'
+-- UNION ALL SELECT 'k9_dogs', COUNT(*) FROM k9_dogs WHERE location_id = '11111111-1111-1111-1111-111111111111'
+-- UNION ALL SELECT 'k9_reservations', COUNT(*) FROM k9_reservations WHERE location_id = '11111111-1111-1111-1111-111111111111'
+-- UNION ALL SELECT 'k9_packages', COUNT(*) FROM k9_packages WHERE location_id = '11111111-1111-1111-1111-111111111111'
+-- UNION ALL SELECT 'k9_messages', COUNT(*) FROM k9_messages WHERE location_id = '11111111-1111-1111-1111-111111111111'
+-- UNION ALL SELECT 'k9_eod_entries', COUNT(*) FROM k9_eod_entries WHERE location_id = '11111111-1111-1111-1111-111111111111'
+-- UNION ALL SELECT 'k9_reminder_log', COUNT(*) FROM k9_reminder_log WHERE location_id = '11111111-1111-1111-1111-111111111111';

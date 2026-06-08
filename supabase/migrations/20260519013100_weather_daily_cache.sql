@@ -192,7 +192,7 @@ INSERT INTO public.weather_location_settings (
   metadata
 ) VALUES
   (
-    '8ea382b0-63f7-44ac-b6f8-83243c03d946',
+    '11111111-1111-1111-1111-111111111111',
     'Cherry Hill',
     39.903360,
     -74.975440,
@@ -207,7 +207,7 @@ INSERT INTO public.weather_location_settings (
     -74.975440,
     'America/New_York',
     'openweather',
-    '{"address":"1149 Marlkress Rd, Cherry Hill, NJ 08003","seed_source":"public_address_lookup","alias_for":"8ea382b0-63f7-44ac-b6f8-83243c03d946"}'::jsonb
+    '{"address":"1149 Marlkress Rd, Cherry Hill, NJ 08003","seed_source":"public_address_lookup","alias_for":"11111111-1111-1111-1111-111111111111"}'::jsonb
   ),
   (
     'demo',

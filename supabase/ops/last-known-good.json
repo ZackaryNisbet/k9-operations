@@ -1,5 +1,5 @@
 {
-  "projectRef": "xuzvqcpthqikyroqhypw",
+  "projectRef": "YOUR_SUPABASE_PROJECT_REF",
   "functions": {
     "gingr-sync": {
       "commit": "d01fe9866a113cdb07c5c510eae549885527d3f0",

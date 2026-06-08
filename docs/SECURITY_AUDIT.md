@@ -48,9 +48,16 @@ succeeds.
   **preserving the commit count** (`--prune-empty=never`). Validated via dry‑run on a
   mirror: **1838 → 1838 commits**, sensitive files confirmed gone. **To publish:**
   `bash scripts/purge-git-history.sh --push`, then **rotate credentials** defensively.
-- ⏳ **Deferred (non‑PII / lower‑risk, tracked below):** parameterizing the ~30
-  hardcoded infra identifiers (Supabase project ref, Cherry Hill UUID, Gingr subdomain)
-  and replacing the deleted Ignite samples with synthetic fixtures.
+- **Hardcoded infra identifiers parameterized** — the Supabase project ref, default
+  location UUID, and Gingr subdomain are removed from **all source**: the frontend derives
+  URLs from `VITE_SUPABASE_URL`, edge functions read `Deno.env`, and scripts read
+  `process.env`; remaining references in migrations/ops/docs/tests are replaced with
+  consistent placeholders. New env vars documented in `.env.example`
+  (`VITE_DEFAULT_LOCATION_ID`, function `DEFAULT_LOCATION_ID` / `DEFAULT_GINGR_SUBDOMAIN`).
+  Verified: **0** occurrences of the project ref / location UUID / Gingr subdomain remain
+  repo‑wide.
+- ⏳ **Still deferred (low‑risk, dev‑only):** replacing the deleted Ignite parser samples
+  with synthetic fixtures.
 
 ### Critical
 1. **Purge git history.** The items above were removed from the tree but still
@@ -60,8 +67,8 @@ succeeds.
    DB) defensively.
 
 ### High — hardcoded production identifiers (parameterize before publish)
-The production Supabase project ref `xuzvqcpthqikyroqhypw`, the Cherry Hill
-location UUID `8ea382b0‑…`, and the Gingr subdomain `k9cherryhill` appear in ~30
+The production Supabase project ref `YOUR_SUPABASE_PROJECT_REF`, the Cherry Hill
+location UUID `11111111‑…`, and the Gingr subdomain `your-gingr-subdomain` appear in ~30
 files. These are not secrets but they leak infrastructure and tie the OSS code to
 one tenant. Fix:
 - `src/kol/settings/IgniteSettingsTab.jsx` — derive the webhook URL from

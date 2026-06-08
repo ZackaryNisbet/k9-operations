@@ -144,7 +144,7 @@ CREATE OR REPLACE FUNCTION send_lite_invite(
 RETURNS JSONB AS $$
 DECLARE
   service_key   TEXT;
-  project_url   TEXT := 'https://xuzvqcpthqikyroqhypw.supabase.co';
+  project_url   TEXT := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co';
   temp_pass     TEXT;
   request_id    BIGINT;
   v_user_id     UUID;

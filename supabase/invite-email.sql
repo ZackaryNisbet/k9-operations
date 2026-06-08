@@ -31,7 +31,7 @@ CREATE OR REPLACE FUNCTION send_team_invite(invite_email TEXT, invite_name TEXT 
 RETURNS JSONB AS $$
 DECLARE
   service_key TEXT;
-  project_url TEXT := 'https://xuzvqcpthqikyroqhypw.supabase.co';
+  project_url TEXT := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co';
   resend_key  TEXT;
   temp_pass TEXT;
   request_id BIGINT;

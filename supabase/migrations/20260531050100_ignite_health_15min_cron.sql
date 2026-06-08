@@ -17,7 +17,7 @@ select cron.schedule(
   '*/15 * * * *',
   $$
     select net.http_post(
-      url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/ignite-health-check',
+      url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/ignite-health-check',
       headers := jsonb_build_object('Content-Type', 'application/json')
     );
   $$

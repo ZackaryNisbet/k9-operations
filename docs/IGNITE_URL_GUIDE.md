@@ -206,7 +206,7 @@ Every URL that appears in an Ignite lead notification email:
 | **Log In** (header) | `https://leads.idigitalstrategies.com/` | Both |
 | **Recording Play** | `https://leads.idigitalstrategies.com/recording/{HASH}/play` | Phone Call only |
 | **Recording Download** | `https://leads.idigitalstrategies.com/recording/{HASH}/download` | Phone Call only |
-| **Lead Page** | `https://k9cherryhill.portal.gingrapp.com/public/login/?utm_source={src}&utm_medium={med}&landing_page={url}` | Appointment only |
+| **Lead Page** | `https://your-gingr-subdomain.portal.gingrapp.com/public/login/?utm_source={src}&utm_medium={med}&landing_page={url}` | Appointment only |
 | **Landing Page** | `https://www.k9resorts.com/{location}/` | Appointment only |
 | **Quotable: Yes** | `https://leads.idigitalstrategies.com/profile/{PROFILE_ID}/leads?lid={LEAD_ID}&qv=MQ` | Both |
 | **Quotable: No** | `https://leads.idigitalstrategies.com/profile/{PROFILE_ID}/leads?lid={LEAD_ID}&qv=Mg` | Both |
@@ -374,7 +374,7 @@ The Lead Page href in appointment emails follows this pattern:
 ```
 https://{subdomain}.portal.gingrapp.com/public/login/?utm_source={src}&utm_medium={med}&landing_page={url}
 ```
-The subdomain (e.g., `k9cherryhill`) and UTM parameters will vary per lead.
+The subdomain (e.g., `your-gingr-subdomain`) and UTM parameters will vary per lead.
 
 ---
 

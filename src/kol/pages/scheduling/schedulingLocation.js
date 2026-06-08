@@ -3,9 +3,9 @@
 
 import { K9_LOCATIONS } from "../../../shared/theme";
 
-const KNOWN_LOCATION_DISPLAY_NAMES = new Map([
-  ["8ea382b0-63f7-44ac-b6f8-83243c03d946", "Cherry Hill"],
-]);
+// Optional UUID→display-name overrides (configure per deployment; none by default —
+// names resolve from the profile/location metadata or are humanized from the slug).
+const KNOWN_LOCATION_DISPLAY_NAMES = new Map([]);
 
 export function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim());

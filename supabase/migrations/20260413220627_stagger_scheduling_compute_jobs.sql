@@ -4,9 +4,9 @@ declare
   existing_job_id bigint;
   current_week_command text := $cmd$
     select net.http_post(
-      url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/compute-scheduling-matrix',
+      url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/compute-scheduling-matrix',
       body := jsonb_build_object(
-        'location_id', '8ea382b0-63f7-44ac-b6f8-83243c03d946',
+        'location_id', '11111111-1111-1111-1111-111111111111',
         'date_from', (now() at time zone 'America/New_York')::date::text,
         'date_to', (((now() at time zone 'America/New_York')::date) + 6)::text
       ),
@@ -19,9 +19,9 @@ declare
   $cmd$;
   next_week_command text := $cmd$
     select net.http_post(
-      url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/compute-scheduling-matrix',
+      url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/compute-scheduling-matrix',
       body := jsonb_build_object(
-        'location_id', '8ea382b0-63f7-44ac-b6f8-83243c03d946',
+        'location_id', '11111111-1111-1111-1111-111111111111',
         'date_from', (((now() at time zone 'America/New_York')::date) + 7)::text,
         'date_to', (((now() at time zone 'America/New_York')::date) + 13)::text
       ),
@@ -34,9 +34,9 @@ declare
   $cmd$;
   two_weeks_command text := $cmd$
     select net.http_post(
-      url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/compute-scheduling-matrix',
+      url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/compute-scheduling-matrix',
       body := jsonb_build_object(
-        'location_id', '8ea382b0-63f7-44ac-b6f8-83243c03d946',
+        'location_id', '11111111-1111-1111-1111-111111111111',
         'date_from', (((now() at time zone 'America/New_York')::date) + 14)::text,
         'date_to', (((now() at time zone 'America/New_York')::date) + 20)::text
       ),
@@ -49,9 +49,9 @@ declare
   $cmd$;
   three_weeks_command text := $cmd$
     select net.http_post(
-      url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/compute-scheduling-matrix',
+      url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/compute-scheduling-matrix',
       body := jsonb_build_object(
-        'location_id', '8ea382b0-63f7-44ac-b6f8-83243c03d946',
+        'location_id', '11111111-1111-1111-1111-111111111111',
         'date_from', (((now() at time zone 'America/New_York')::date) + 21)::text,
         'date_to', (((now() at time zone 'America/New_York')::date) + 27)::text
       ),

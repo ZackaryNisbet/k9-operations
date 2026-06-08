@@ -345,10 +345,10 @@ You are a senior full-stack developer working on the K9 Operations dashboard. Yo
 - GitHub: ZackaryNisbet/k9-operations
 - GitHub PAT: [REDACTED GITHUB PAT]
 - Git config: email=zacknisbet@gmail.com, name="Zack Nisbet"
-- Supabase project ref: xuzvqcpthqikyroqhypw
+- Supabase project ref: YOUR_SUPABASE_PROJECT_REF
 - Supabase service_role key: [REDACTED SUPABASE SERVICE_ROLE JWT]
-- location_id: 8ea382b0-63f7-44ac-b6f8-83243c03d946
-- Gingr API: k9cherryhill.gingrapp.com/api/v1, key=[REDACTED Gingr API KEY]
+- location_id: 11111111-1111-1111-1111-111111111111
+- Gingr API: your-gingr-subdomain.gingrapp.com/api/v1, key=[REDACTED Gingr API KEY]
 - Product name: "K9 Operations" (never K-9 or k9)
 
 ## Key Files
@@ -427,9 +427,9 @@ You are a senior full-stack developer working on K9 Operations. Your task is to 
 - GitHub: ZackaryNisbet/k9-operations
 - GitHub PAT: [REDACTED GITHUB PAT]
 - Git config: email=zacknisbet@gmail.com, name="Zack Nisbet"
-- Supabase project ref: xuzvqcpthqikyroqhypw
+- Supabase project ref: YOUR_SUPABASE_PROJECT_REF
 - Supabase service_role key: [REDACTED SUPABASE SERVICE_ROLE JWT]
-- location_id: 8ea382b0-63f7-44ac-b6f8-83243c03d946
+- location_id: 11111111-1111-1111-1111-111111111111
 - Product name: "K9 Operations" (never K-9 or k9)
 
 ## Brand
@@ -500,10 +500,10 @@ You are a senior full-stack developer working on K9 Operations. Your task is to 
 - GitHub: ZackaryNisbet/k9-operations
 - GitHub PAT: [REDACTED GITHUB PAT]
 - Git config: email=zacknisbet@gmail.com, name="Zack Nisbet"
-- Supabase project ref: xuzvqcpthqikyroqhypw
+- Supabase project ref: YOUR_SUPABASE_PROJECT_REF
 - Supabase service_role key: [REDACTED SUPABASE SERVICE_ROLE JWT]
-- location_id: 8ea382b0-63f7-44ac-b6f8-83243c03d946
-- Gingr API: k9cherryhill.gingrapp.com/api/v1, key=[REDACTED Gingr API KEY]
+- location_id: 11111111-1111-1111-1111-111111111111
+- Gingr API: your-gingr-subdomain.gingrapp.com/api/v1, key=[REDACTED Gingr API KEY]
 - Product name: "K9 Operations" (never K-9 or k9)
 
 ## Key Files

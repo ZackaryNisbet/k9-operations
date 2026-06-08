@@ -188,7 +188,7 @@ describe("Scheduling Demand Matrix export model", () => {
         expectedDates: dates,
         startDate: "2025-01-01",
         endDate: "2025-01-02",
-        locationId: "8ea382b0-63f7-44ac-b6f8-83243c03d946",
+        locationId: "11111111-1111-1111-1111-111111111111",
         locationName: "Cherry Hill",
         readiness,
         generatedAt: "2026-05-17T12:00:00.000Z",

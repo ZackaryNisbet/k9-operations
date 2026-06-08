@@ -7,7 +7,7 @@
 -- off items, submitting, and reopening all failed. The fix sets the write GUC
 -- as the first statement after BEGIN. Function bodies are otherwise unchanged.
 --
--- Applied live to project xuzvqcpthqikyroqhypw on 2026-05-30 via the Supabase
+-- Applied live to project YOUR_SUPABASE_PROJECT_REF on 2026-05-30 via the Supabase
 -- tooling; this file mirrors that change for the repo history. Additive only.
 
 CREATE OR REPLACE FUNCTION public.resort_upkeep_save_item_state(p_period_id uuid, p_item_key text, p_checked boolean, p_notes text DEFAULT ''::text, p_actor_name text DEFAULT NULL::text)

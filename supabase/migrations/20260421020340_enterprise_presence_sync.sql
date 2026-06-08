@@ -255,7 +255,7 @@ GRANT EXECUTE ON FUNCTION public.release_facility_presence_sync(TEXT, TEXT, JSON
 
 INSERT INTO public.lite_settings (location_id, setting_key, setting_value)
 VALUES (
-  '8ea382b0-63f7-44ac-b6f8-83243c03d946',
+  '11111111-1111-1111-1111-111111111111',
   'presence_sync_config_v1',
   jsonb_build_object(
     'enabled', TRUE,

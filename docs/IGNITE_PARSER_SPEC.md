@@ -549,7 +549,7 @@ interface ParsedLead {
   "bookingTitle": "Boarding | Boarding | Executive Room (All Inclusive) Request for Mercy",
   "petName": "Mercy",
   "services": [{"Name": "BATH (1)", "Quantity": "QTY", "Rate": "$217.00"}],
-  "leadPageUrl": "https://k9cherryhill.portal.gingrapp.com/public/login/?utm_source=google&utm_medium=organic&landing_page=https://www.k9resorts.com/cherry-hill/",
+  "leadPageUrl": "https://your-gingr-subdomain.portal.gingrapp.com/public/login/?utm_source=google&utm_medium=organic&landing_page=https://www.k9resorts.com/cherry-hill/",
   "landingPageUrl": "https://www.k9resorts.com/cherry-hill/",
   "sourceDetail": "google organic",
   "city": "Westampton",

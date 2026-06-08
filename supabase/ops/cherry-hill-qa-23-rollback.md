@@ -1,6 +1,6 @@
 # Cherry Hill QA 23 Rollback Notes
 
-Production project: `xuzvqcpthqikyroqhypw`
+Production project: `YOUR_SUPABASE_PROJECT_REF`
 
 This note tracks rollback paths for the backend changes introduced on
 `codex/cherry-hill-qa-23`. Review live data before running any SQL rollback.
@@ -15,7 +15,7 @@ Changed functions:
 Rollback command shape:
 
 ```bash
-npm run supabase:functions:rollback -- --project-ref xuzvqcpthqikyroqhypw --functions compute-scheduling-matrix,gingr-sync --commit <previous-good-sha> --note "Rollback Cherry Hill QA 23 scheduling changes"
+npm run supabase:functions:rollback -- --project-ref YOUR_SUPABASE_PROJECT_REF --functions compute-scheduling-matrix,gingr-sync --commit <previous-good-sha> --note "Rollback Cherry Hill QA 23 scheduling changes"
 ```
 
 The current tracked function rollback pointers live in
@@ -33,8 +33,8 @@ Rollback path:
 2. Run:
 
 ```bash
-npm run supabase:cron:reconcile -- --project-ref xuzvqcpthqikyroqhypw --apply
-npm run supabase:cron:audit -- --project-ref xuzvqcpthqikyroqhypw
+npm run supabase:cron:reconcile -- --project-ref YOUR_SUPABASE_PROJECT_REF --apply
+npm run supabase:cron:audit -- --project-ref YOUR_SUPABASE_PROJECT_REF
 ```
 
 Emergency stop for scheduling compute:

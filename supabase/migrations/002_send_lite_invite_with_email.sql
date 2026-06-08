@@ -20,7 +20,7 @@ RETURNS JSONB AS $$
 DECLARE
   service_key   TEXT;
   resend_key    TEXT;
-  project_url   TEXT := 'https://xuzvqcpthqikyroqhypw.supabase.co';
+  project_url   TEXT := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co';
   temp_pass     TEXT;
   request_id    BIGINT;
   email_request_id BIGINT;

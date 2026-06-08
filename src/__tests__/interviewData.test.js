@@ -432,10 +432,10 @@ describe("interview resume helpers", () => {
     });
     expect(getInterviewResumeContentType(file)).toBe("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
     expect(buildInterviewResumePath({
-      locationId: "8ea382b0-63f7-44ac-b6f8-83243c03d946",
+      locationId: "11111111-1111-1111-1111-111111111111",
       interviewId: "record-123",
       fileName: file.name,
-    })).toBe("8ea382b0-63f7-44ac-b6f8-83243c03d946/interviews/record-123/resume/Jane-Doe-Resume.docx");
+    })).toBe("11111111-1111-1111-1111-111111111111/interviews/record-123/resume/Jane-Doe-Resume.docx");
   });
 
   it("rejects unsupported or oversized resume files", () => {

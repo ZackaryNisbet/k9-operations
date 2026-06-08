@@ -181,7 +181,7 @@ All other pages either work with filtered subsets or use server RPCs.
 ## 6. Migration Plan
 
 1. **Deploy SQL migration**: Create `dashboard_metrics_daily` table + `compute_dashboard_metrics` RPC
-2. **Run backfill**: `SELECT compute_dashboard_metrics('8ea382b0-...', '2020-01-01', CURRENT_DATE)`
+2. **Run backfill**: `SELECT compute_dashboard_metrics('11111111-...', '2020-01-01', CURRENT_DATE)`
 3. **Update gingr-sync Edge Function**: Add RPC call after sync completes
 4. **Deploy dashboard refactor**: New `useDashboardMetrics` hook + simplified DashboardContent
 5. **Remove client-side computation**: Delete `metricsHelpers.js` compute functions used only by dashboard

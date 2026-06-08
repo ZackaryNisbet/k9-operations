@@ -46,14 +46,14 @@ begin
     format(
       $cmd$
         select net.http_post(
-          url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/gingr-boh-poll',
+          url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/gingr-boh-poll',
           headers := %1$s,
           body := %2$L::jsonb,
           timeout_milliseconds := 120000
         );
       $cmd$,
       auth_headers,
-      '{ "location_id": "8ea382b0-63f7-44ac-b6f8-83243c03d946" }'
+      '{ "location_id": "11111111-1111-1111-1111-111111111111" }'
     )
   );
 
@@ -63,14 +63,14 @@ begin
     format(
       $cmd$
         select net.http_post(
-          url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/gingr-sync',
+          url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/gingr-sync',
           headers := %1$s,
           body := %2$L::jsonb,
           timeout_milliseconds := 120000
         );
       $cmd$,
       auth_headers,
-      '{ "sync_type": "today-sync", "location_id": "8ea382b0-63f7-44ac-b6f8-83243c03d946" }'
+      '{ "sync_type": "today-sync", "location_id": "11111111-1111-1111-1111-111111111111" }'
     )
   );
 
@@ -80,14 +80,14 @@ begin
     format(
       $cmd$
         select net.http_post(
-          url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/gingr-sync',
+          url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/gingr-sync',
           headers := %1$s,
           body := %2$L::jsonb,
           timeout_milliseconds := 120000
         );
       $cmd$,
       auth_headers,
-      '{ "sync_type": "incremental", "location_id": "8ea382b0-63f7-44ac-b6f8-83243c03d946" }'
+      '{ "sync_type": "incremental", "location_id": "11111111-1111-1111-1111-111111111111" }'
     )
   );
 
@@ -97,14 +97,14 @@ begin
     format(
       $cmd$
         select net.http_post(
-          url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/gingr-sync',
+          url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/gingr-sync',
           headers := %1$s,
           body := %2$L::jsonb,
           timeout_milliseconds := 120000
         );
       $cmd$,
       auth_headers,
-      '{ "sync_type": "tv-poll", "location_id": "8ea382b0-63f7-44ac-b6f8-83243c03d946" }'
+      '{ "sync_type": "tv-poll", "location_id": "11111111-1111-1111-1111-111111111111" }'
     )
   );
 
@@ -114,14 +114,14 @@ begin
     format(
       $cmd$
         select net.http_post(
-          url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/gingr-sync',
+          url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/gingr-sync',
           headers := %1$s,
           body := %2$L::jsonb,
           timeout_milliseconds := 120000
         );
       $cmd$,
       auth_headers,
-      '{ "sync_type": "de-expansion", "location_id": "k9cherryhill" }'
+      '{ "sync_type": "de-expansion", "location_id": "your-gingr-subdomain" }'
     )
   );
 
@@ -131,14 +131,14 @@ begin
     format(
       $cmd$
         select net.http_post(
-          url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/ops-compute',
+          url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/ops-compute',
           headers := %1$s,
           body := %2$L::jsonb,
           timeout_milliseconds := 120000
         );
       $cmd$,
       auth_headers,
-      '{ "location_id": "8ea382b0-63f7-44ac-b6f8-83243c03d946" }'
+      '{ "location_id": "11111111-1111-1111-1111-111111111111" }'
     )
   );
 
@@ -148,10 +148,10 @@ begin
     format(
       $cmd$
         select net.http_post(
-          url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/compute-scheduling-matrix',
+          url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/compute-scheduling-matrix',
           headers := %1$s,
           body := jsonb_build_object(
-            'location_id', '8ea382b0-63f7-44ac-b6f8-83243c03d946',
+            'location_id', '11111111-1111-1111-1111-111111111111',
             'date_from', (now() at time zone 'America/New_York')::date::text,
             'date_to', (((now() at time zone 'America/New_York')::date) + 6)::text
           ),
@@ -166,10 +166,10 @@ begin
     cron_sql := format(
       $cmd$
         select net.http_post(
-          url := 'https://xuzvqcpthqikyroqhypw.supabase.co/functions/v1/compute-scheduling-matrix',
+          url := 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co/functions/v1/compute-scheduling-matrix',
           headers := %1$s,
           body := jsonb_build_object(
-            'location_id', '8ea382b0-63f7-44ac-b6f8-83243c03d946',
+            'location_id', '11111111-1111-1111-1111-111111111111',
             'date_from', (((now() at time zone 'America/New_York')::date) + %2$s)::text,
             'date_to', (((now() at time zone 'America/New_York')::date) + %2$s)::text
           ),

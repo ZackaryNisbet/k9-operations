@@ -2,7 +2,7 @@
 -- template_versions row with status='draft'. SECURITY DEFINER (the table does
 -- not force RLS for the owner) with an explicit can_manage check authorized by
 -- the editing location. Additive and non-destructive.
--- Applied live to project xuzvqcpthqikyroqhypw on 2026-05-30.
+-- Applied live to project YOUR_SUPABASE_PROJECT_REF on 2026-05-30.
 
 CREATE OR REPLACE FUNCTION public.resort_upkeep_save_template_draft(p_template_id uuid, p_location_id uuid, p_items jsonb, p_changelog text DEFAULT ''::text, p_actor_name text DEFAULT NULL::text)
  RETURNS public.resort_upkeep_template_versions
