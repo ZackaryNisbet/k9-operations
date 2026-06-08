@@ -14,7 +14,7 @@ import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
 import { getInventoryWorkflow } from "./inventoryStatus";
-import { POS_FE_TEMPLATE, POS_BE_TEMPLATE } from "./operations/constants";
+import { POS_FE_TEMPLATE, POS_BE_TEMPLATE, EXCLUDED_SERVICES, COLLAR_PILL_COLORS } from "./operations/constants";
 import { fmtCompletionTime } from "./operations/helpers";
 
 function OperationsHub({ data, save, nav, profile }) {
@@ -892,7 +892,6 @@ function OperationsHub({ data, save, nav, profile }) {
       {/* ─── Services Section (Dynamic from Gingr) ─────────────────────────────── */}
       {(hp("view_daily_ops")) && (() => {
         // Dynamically discover all unique services from today's in-house reservations
-        const EXCLUDED_SERVICES = ["food from home", "medication administration", "private play overnight rate"];
         const reservations = data.reservations || [];
         const dataLoaded = reservations.length > 0;
         const inHouseToday = reservations.filter(r =>
@@ -1083,15 +1082,6 @@ function OperationsHub({ data, save, nav, profile }) {
         const collarsPct = collarsTotal > 0 ? Math.round((collarsDone / collarsTotal) * 100) : 0;
         const collarsStatus = collarsTotal === 0 ? "not_started" : collarsDone >= collarsTotal ? "completed" : collarsDone > 0 ? "in_progress" : "not_started";
         const csc = statusConfig[collarsStatus];
-        const COLLAR_PILL_COLORS = [
-          { key: "pink", bg: "#FCE4EC", text: "#C2185B" },
-          { key: "red", bg: "#FFEBEE", text: "#C62828" },
-          { key: "green", bg: "#E8F5E9", text: "#2E7D32" },
-          { key: "blue", bg: "#E3F2FD", text: "#1565C0" },
-          { key: "yellow", bg: "#FFFDE7", text: "#F9A825" },
-          { key: "unclassified", label: "Unclassified", bg: "#F3F4F6", text: "#4B5563" },
-          { key: "halfAndHalf", label: "H&H", bg: "#F3E5F5", text: "#7B1FA2" },
-        ];
         return (
           <div style={{ marginBottom: 32 }}>
             <div style={{ margin: "8px 0 18px", height: 1, background: C.borderLight }} />
