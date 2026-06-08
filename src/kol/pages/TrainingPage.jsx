@@ -103,6 +103,7 @@ import PerformanceReviewComplianceGrid, {
   PerformanceReviewComplianceGridStyles,
   ReviewCycleCell,
 } from "../components/PerformanceReviewComplianceGrid";
+import { cloneDefaultHourAnalysisLaborModel } from "./training/laborModelDefaults";
 import { buildComplianceAuditDetailParts, buildComplianceHistoryDetailParts, buildOutOfPositionLaborSummary, getLaborModelCoverageRoleStyle, getLaborModelNextCoverageValue, getTrainingComplianceState } from "./training/helpers";
 export { buildOutOfPositionLaborSummary };
 import { PctReadinessDualProgress } from "./training/components/PctReadinessDualProgress";
@@ -1222,9 +1223,6 @@ export function isDefaultReviewComplianceRequirement(row = {}) {
 
 
 
-function cloneDefaultHourAnalysisLaborModel() {
-  return JSON.parse(JSON.stringify(DEFAULT_HOUR_ANALYSIS_LABOR_MODEL));
-}
 
 
 
