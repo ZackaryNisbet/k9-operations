@@ -57,6 +57,16 @@ import { createDraft, draftToEvent } from "./enrichments/eventDrafts";
 import { addMonthsPreserveDay } from "./enrichments/dateUtils";
 import { getLinkHost, getLinkedProducts, getProductHref } from "./enrichments/productLinks";
 import { buildProgramConfigDraft, stripProgramConfigDraft } from "./enrichments/programConfigDraft";
+import { buildMarketingBrief, buildMarketingCsv, downloadTextFile } from "./enrichments/marketingExport";
+import {
+  formatEnrichmentPrice,
+  formatFileSize,
+  formatHealthDuration,
+  formatPriceLabel,
+  getWorkflowExtraServiceDetail,
+  healthTone,
+} from "./enrichments/formatters";
+import { isMissingSupabaseResource } from "./enrichments/supabaseErrors";
 
 function EnrichmentsPage({ nav, profile, currentLocation, params, addGlobalToast }) {
   const locationId = profile?.location_id || currentLocation || "demo";
@@ -600,12 +610,6 @@ function EventPlanCard({ events, date, selectedDateEvents = [], nav, loading }) 
   );
 }
 
-function formatPriceLabel(event) {
-  const cents = Number(event?.price_cents || 0);
-  if (!cents) return "$15 add-on";
-  return `$${Math.round(cents / 100)} add-on`;
-}
-
 function Header({ monthDate, setMonthDate, nav, canManage, onNew }) {
   return (
     <div className="page-header">
@@ -627,13 +631,6 @@ function Header({ monthDate, setMonthDate, nav, canManage, onNew }) {
       </div>
     </div>
   );
-}
-
-function healthTone(status) {
-  if (status === "healthy") return { label: "Healthy", color: "#22C55E", bg: "rgba(34,197,94,0.13)" };
-  if (status === "stale") return { label: "Watch", color: "#EAB308", bg: "rgba(234,179,8,0.14)" };
-  if (status === "critical") return { label: "Down", color: "#EF4444", bg: "rgba(239,68,68,0.14)" };
-  return { label: "Waiting", color: "#64748B", bg: "rgba(100,116,139,0.1)" };
 }
 
 function WorkflowHealthButton({ health, refreshState, onClick, compact = false }) {
@@ -787,13 +784,6 @@ function renderWorkflowTable({ loading, workflow, visibleDogs, completions, togg
       </table>
     </div>
   );
-}
-
-function getWorkflowExtraServiceDetail(services = []) {
-  return (Array.isArray(services) ? services : [])
-    .map((service) => String(service || "").trim())
-    .filter((service) => service && !service.toLowerCase().includes("enrichment"))
-    .join(", ");
 }
 
 function WorkflowTimingCell({ dog }) {
@@ -959,14 +949,6 @@ function HealthFact({ label, value, color }) {
       <strong style={{ color }}>{value == null || value === "" ? "-" : value}</strong>
     </div>
   );
-}
-
-function formatHealthDuration(ms) {
-  if (ms == null) return "-";
-  const value = Number(ms);
-  if (!Number.isFinite(value)) return "-";
-  if (value < 1000) return `${Math.round(value)}ms`;
-  return `${(value / 1000).toFixed(1)}s`;
 }
 
 function CalendarBoard({ monthDate, events, selectedDate, selectedEventId, onSelectDate, onSelectEvent, onNew }) {
@@ -1702,77 +1684,6 @@ function GraphicUploadCard({ audience, graphic, signedUrl, loading, uploading, c
       ) : null}
     </section>
   );
-}
-
-function formatEnrichmentPrice(event) {
-  const cents = Number(event?.price_cents || 0);
-  if (!cents) return "$15 add-on";
-  return `$${Math.round(cents / 100)} add-on`;
-}
-
-function buildMarketingBrief({ monthDate, events, audience }) {
-  const lines = [
-    `K9 Resorts Enrichment Marketing Brief - ${getMonthLabel(monthDate)}`,
-    `Audience: ${ENRICHMENT_AUDIENCES.find((item) => item.id === audience)?.label || audience}`,
-    "",
-    "Notes:",
-    ...DEFAULT_ENRICHMENT_NOTES.map((note) => `- ${note}`),
-    "",
-    "Events:",
-  ];
-  events.forEach((event) => {
-    lines.push(`- ${formatEventDate(event.event_date)} | ${event.title}`);
-    if (event.summary) lines.push(`  Summary: ${event.summary}`);
-    if (event.calendar_note) lines.push(`  Calendar note: ${event.calendar_note}`);
-    if (event.products?.length) {
-      lines.push(`  Products: ${event.products.map((product) => product.name).join(", ")}`);
-    }
-  });
-  return lines.join("\n");
-}
-
-function buildMarketingCsv(events = []) {
-  const header = ["Date", "Title", "Category", "Customer Visible", "Focus", "Summary", "Products"];
-  const rows = events.map((event) => [
-    event.event_date,
-    event.title,
-    event.category,
-    event.customer_visible ? "Yes" : "No",
-    ENRICHMENT_FOCUS_LABELS[event.focus_area] || event.focus_area,
-    event.summary || event.sop_details || "",
-    (event.products || []).map((product) => product.url ? `${product.name} (${product.url})` : product.name).join("; "),
-  ]);
-  return [header, ...rows].map((row) => row.map(escapeCsvCell).join(",")).join("\n");
-}
-
-function escapeCsvCell(value) {
-  const text = String(value ?? "");
-  if (!/[",\n]/.test(text)) return text;
-  return `"${text.replace(/"/g, '""')}"`;
-}
-
-function downloadTextFile({ content, type, filename }) {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
-function formatFileSize(bytes) {
-  const value = Number(bytes || 0);
-  if (!value) return "Unknown size";
-  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function isMissingSupabaseResource(error) {
-  const message = `${error?.code || ""} ${error?.message || ""}`.toLowerCase();
-  return message.includes("42p01") || message.includes("does not exist") || message.includes("schema cache") || message.includes("bucket not found");
 }
 
 export default EnrichmentsPage;
