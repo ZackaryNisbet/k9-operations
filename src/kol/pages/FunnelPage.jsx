@@ -13,21 +13,13 @@ import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
+import { ranges } from "./clients/constants";
 
 function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
   const [range, setRange] = useState("mtd");
   const [animReady, setAnimReady] = useState(false);
   const initialMount = useRef(true);
-  useEffect(() => { if (initialMount.current) { initialMount.current = false; const t = setTimeout(() => setAnimReady(true), 50); return () => clearTimeout(t); } setAnimReady(true); }, [range]);
-
-  const ranges = [
-    { id: "wtd", label: "WTD", desc: "Week to Date" },
-    { id: "past-week", label: "Past Week", desc: "Last 7 Days" },
-    { id: "mtd", label: "MTD", desc: "Month to Date" },
-    { id: "past-30", label: "Past 30", desc: "Last 30 Days" },
-    { id: "qtd", label: "QTD", desc: "Quarter to Date" },
-    { id: "ytd", label: "YTD", desc: "Year to Date" },
-  ];
+  useEffect(() => { if (initialMount.current) { initialMount.current = false; const t = setTimeout(() => setAnimReady(true), 50); return () => clearTimeout(t); } setAnimReady(true);   }, [range]);
 
   // ── Date range computation ──
   const { startDate, endDate, rangeLabel } = useMemo(() => {
