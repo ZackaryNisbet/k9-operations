@@ -20,15 +20,7 @@ import {
   serializeLegacyResourceItem,
   serializeLegacySections,
 } from "./resources/helpers";
-
-function EmptyState({ title, subtitle }) {
-  return (
-    <Card style={{ padding: 36, textAlign: "center", color: C.textMut }}>
-      <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6 }}>{title}</div>
-      {subtitle ? <div style={{ fontSize: 13 }}>{subtitle}</div> : null}
-    </Card>
-  );
-}
+import EmptyState from "./resources/EmptyState";
 
 export default function ResourcesPage({ profile, addGlobalToast = () => {} }) {
   const locationId = profile?.location_id || "";
