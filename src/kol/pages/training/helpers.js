@@ -6,6 +6,8 @@ import { HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT, HOUR_ANALYSIS_FRONTLINE_GROUP_
 import { PERFORMANCE_REVIEW_TEMPLATE_METADATA_KEY, normalizePerformanceReviewTemplateRoleKey } from "../../performanceReviewData";
 import { PCT_READINESS_TEMPLATE_SLUG, getLaborRosterPositionGroup, getTeamReadinessTemplateOption, normalizeLaborShirtSize } from "../../trainingData";
 import { DEFAULT_HOUR_ANALYSIS_DAILY_SKELETON, HOUR_ANALYSIS_GROUP_LABELS, HOUR_ANALYSIS_MIN_TOLERANCE_HOURS, HOUR_ANALYSIS_RANGE_KEYS, LABOR_MODEL_ROLE_COVERAGE_ALIAS_MAP, RESTARTED_REVIEW_METADATA_KEYS, REVIEW_RESPONSE_FIELDS } from "./constants";
+import { normalizeOptionalUuid } from "../../trainingData";
+import { HOUR_ANALYSIS_GROUP_SHORT_LABELS, HOUR_ANALYSIS_STAFFING_CAPACITY_GROUP_KEYS, LABOR_DEFAULT_SORT, LABOR_MODEL_FULL_COVERAGE_VALUE, LABOR_MODEL_HALF_COVERAGE_VALUE, LABOR_MODEL_MARKETING_COVERAGE_VALUE, LABOR_MODEL_MARKETING_TOKENS, LEGACY_LABOR_MODEL_ACTIVE_TOKENS } from "./constants";
 
 export function buildPerformanceReviewSortKey(cycle = {}) {
   return `${REVIEW_CYCLE_SORT_KEY_PREFIX}${cycle.id || cycle.slug || cycle.requirementId || cycle.policyKey || "review"}`;
@@ -1223,4 +1225,807 @@ export function readComplianceHistoryMetadata(row = {}) {
 
 export function readComplianceAuditSnapshot(event = {}, key = "after_snapshot") {
   return isObjectRow(event?.[key]) ? event[key] : {};
+}
+
+export function findReviewCycleRowBySortKey(row = {}, sortKey = "") {
+  if (!String(sortKey || "").startsWith(REVIEW_CYCLE_SORT_KEY_PREFIX)) return null;
+  const cycleKey = String(sortKey).slice(REVIEW_CYCLE_SORT_KEY_PREFIX.length);
+  return toObjectRows(row.cycles || row.performance_review_compliance?.cycleRows)
+    .find((cycle) => reviewCycleMatchesKey(cycle, cycleKey)) || null;
+}
+
+export function getReviewCycleRequirementId(reviewCycle = {}) {
+  const policyCell = getReviewCyclePolicyCell(reviewCycle);
+  return normalizeOptionalUuid(reviewCycle?.requirementId)
+    || normalizeOptionalUuid(reviewCycle?.requirement?.id)
+    || normalizeOptionalUuid(policyCell.requirement_id)
+    || normalizeOptionalUuid(policyCell.requirementId)
+    || normalizeOptionalUuid(reviewCycle?.policyKey)
+    || normalizeOptionalUuid(reviewCycle?.requirement?.parent_requirement_id)
+    || normalizeOptionalUuid(policyCell.parent_requirement_id)
+    || normalizeOptionalUuid(policyCell.policy_key)
+    || "";
+}
+
+export function getReviewCycleLegacyReviewCycle(reviewCycle = {}) {
+  const policyCell = getReviewCyclePolicyCell(reviewCycle);
+  const compatibility = isObjectRow(policyCell.compatibility) ? policyCell.compatibility : {};
+  const requirementMetadata = isObjectRow(reviewCycle?.requirement?.metadata) ? reviewCycle.requirement.metadata : {};
+  return reviewCycle?.legacyReviewCycle
+    || policyCell.legacy_review_cycle
+    || policyCell.legacyReviewCycle
+    || compatibility.legacy_review_cycle
+    || requirementMetadata.legacy_review_cycle
+    || "";
+}
+
+export function getReviewCycleOffsetDays(reviewCycle = {}) {
+  const policyCell = getReviewCyclePolicyCell(reviewCycle);
+  const dueRule = isObjectRow(reviewCycle?.dueRule)
+    ? reviewCycle.dueRule
+    : isObjectRow(reviewCycle?.requirement?.due_rule)
+      ? reviewCycle.requirement.due_rule
+      : isObjectRow(policyCell.due_rule)
+        ? policyCell.due_rule
+        : {};
+  const numericCandidates = [
+    reviewCycle?.offsetDays,
+    reviewCycle?.offset_days,
+    reviewCycle?.requirement?.offset_days,
+    reviewCycle?.requirement?.offsetDays,
+    policyCell.offset_days,
+    policyCell.offsetDays,
+    dueRule.offset_days,
+    dueRule.offsetDays,
+    reviewCycle?.shortLabel,
+  ];
+  for (const candidate of numericCandidates) {
+    const parsed = Number(candidate);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  const labelMatch = String(reviewCycle?.label || reviewCycle?.title || reviewCycle?.slug || "").match(/(\d+)\s*-?\s*day/i);
+  return labelMatch ? Number(labelMatch[1]) : null;
+}
+
+export function getReviewCycleEvidencePolicy(reviewCycle = {}) {
+  const policyCell = getReviewCyclePolicyCell(reviewCycle);
+  return reviewCycle?.evidencePolicy
+    || reviewCycle?.requirement?.evidence_policy
+    || policyCell.evidence_policy
+    || policyCell.evidencePolicy
+    || "checkbox_only";
+}
+
+export function isReviewItemAnswered(response, draft = {}) {
+  return REVIEW_RESPONSE_FIELDS.some((field) => normalizeReviewResponseValue(getReviewDraftValue(response, draft, field)));
+}
+
+export function deriveLaborPositionInitials(title = "") {
+  const words = formatLaborPositionTitle(title)
+    .split(/\s+/)
+    .map((word) => word.replace(/[^A-Za-z0-9]/g, ""))
+    .filter(Boolean);
+  if (words.length === 0) return "";
+  return words.map((word) => word.charAt(0)).join("").toUpperCase().slice(0, 6);
+}
+
+export function sortLaborRowsByConfig(rows = [], sort = LABOR_DEFAULT_SORT, positionHierarchyIndex = {}, getSortValue = () => "") {
+  const activeSort = sort || LABOR_DEFAULT_SORT;
+  const direction = activeSort.direction === "desc" ? -1 : 1;
+  return [...rows].sort((leftRow, rightRow) => {
+    if (activeSort.key === "hierarchy") {
+      const leftPosition = getSortValue(leftRow, "position");
+      const rightPosition = getSortValue(rightRow, "position");
+      const leftIndex = getLaborPositionSortIndex(leftPosition, positionHierarchyIndex);
+      const rightIndex = getLaborPositionSortIndex(rightPosition, positionHierarchyIndex);
+      if (leftIndex !== rightIndex) return (leftIndex - rightIndex) * direction;
+      return compareLaborSortValues(getSortValue(leftRow, "name") || getSortValue(leftRow, "employee"), getSortValue(rightRow, "name") || getSortValue(rightRow, "employee"));
+    }
+    return compareLaborSortValues(getSortValue(leftRow, activeSort.key), getSortValue(rightRow, activeSort.key)) * direction;
+  });
+}
+
+export function trainingRequirementAllowsReferenceUrl(requirementRow = {}) {
+  const policy = trainingRequirementEvidencePolicy(requirementRow);
+  return ["url_or_reference", "pdf_or_url", "reference_url", "external_url"].includes(policy);
+}
+
+export function trainingRequirementRequiresFileEvidence(requirementRow = {}) {
+  const policy = trainingRequirementEvidencePolicy(requirementRow);
+  return !["checkbox_only", "none", "internal_module"].includes(policy);
+}
+
+export function trainingRequirementRequiresRenewalDueDate(requirementRow = {}) {
+  if (requirementRow.renewalDueDateRequired === true || requirementRow.renewal_due_date_required === true) return true;
+  if (requirementRow.requirement?.renewal_due_date_required === true || requirementRow.policyRequirement?.renewal_due_date_required === true) return true;
+  if (requirementRow.metadata?.renewal_due_date_required === true || requirementRow.requirement?.metadata?.renewal_due_date_required === true) return true;
+  const frequency = String(requirementRow.frequency || requirementRow.requirement?.frequency || requirementRow.metadata?.frequency || "").toLowerCase();
+  return ["annual", "annually", "renewing", "recurring"].includes(frequency) || Boolean(getTrainingRequirementRenewalIntervalDays(requirementRow));
+}
+
+export function findPolicyReviewCellForCycle(cells = [], cycle = {}) {
+  const cycleRequirementId = String(cycle.requirementId || cycle.requirement?.id || "");
+  const cycleSlug = String(cycle.requirement?.slug || cycle.id || "");
+  return toObjectRows(cells).find((cell) => {
+    const cellRequirementId = String(cell.requirement_id || cell.requirementId || "");
+    const cellParentRequirementId = String(cell.parent_requirement_id || cell.parentRequirementId || "");
+    const cellSlug = String(cell.slug || cell.requirement_slug || "");
+    return (cycleRequirementId && (cellRequirementId === cycleRequirementId || cellParentRequirementId === cycleRequirementId))
+      || (cycleSlug && (cellSlug === cycleSlug || cellSlug.replace(/_day$/, "") === cycleSlug.replace(/_day$/, "")));
+  }) || null;
+}
+
+export function getEditableTemplateDraftVersion(versions = [], templateId = "") {
+  const targetTemplateId = String(templateId || "").trim();
+  if (!targetTemplateId) return null;
+  return toObjectRows(versions)
+    .filter((version) => String(version.template_id || "") === targetTemplateId && String(version.status || "").toLowerCase() === "draft")
+    .sort(compareTemplateVersionRecency)[0] || null;
+}
+
+export function buildTemplatePreviewVersionStats({
+  kind = "training",
+  versionId = "",
+  sections = [],
+  items = [],
+  reviewSections = [],
+  reviewItems = [],
+} = {}) {
+  const targetVersionId = String(versionId || "").trim();
+  if (!targetVersionId) return { sectionCount: 0, itemCount: 0 };
+  if (kind === "review") {
+    return {
+      sectionCount: toObjectRows(reviewSections).filter((section) => section.template_version_id === targetVersionId).length,
+      itemCount: toObjectRows(reviewItems).filter((item) => item.template_version_id === targetVersionId).length,
+    };
+  }
+  return {
+    sectionCount: toObjectRows(sections).filter((section) => section.template_version_id === targetVersionId && !section.parent_section_id).length,
+    itemCount: toObjectRows(items).filter((item) => item.template_version_id === targetVersionId).length,
+  };
+}
+
+export function flattenTrainingTemplatePreviewItems(section = {}) {
+  const directItems = toObjectRows(section.directItems);
+  const childItems = toObjectRows(section.children).flatMap((child) => toObjectRows(child.items));
+  return [...directItems, ...childItems];
+}
+
+export function formatHourAnalysisHoursWithUnit(value) {
+  const normalized = normalizeHourAnalysisNumber(value, 0);
+  return `${formatHourAnalysisHours(normalized)} hr${normalized === 1 ? "" : "s"}`;
+}
+
+export function getHourAnalysisEmployeeKey(row = {}) {
+  return getLaborEmployeeRowId(row)
+    || normalizeLaborContactEmail(row.contact_email || row.email)
+    || normalizeEmployeeName(row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" "));
+}
+
+export function getHourAnalysisGroupKey(row = {}) {
+  const positionTitle = row.position_title || row.position || "";
+  const normalizedTitle = normalizePositionTitle(positionTitle);
+  if (normalizedTitle.includes("assistant manager")) return "assistant_manager";
+  if (normalizedTitle.includes("general manager") || normalizedTitle.includes("director") || normalizedTitle.includes("regional") || normalizedTitle.includes("manager")) return "general_manager";
+  const explicitGroup = row.hour_analysis_group || row.group_key || row.groupKey || row.position_group;
+  if (explicitGroup) return normalizeHourAnalysisGroupKey(explicitGroup, { position_title: positionTitle });
+  return normalizeHourAnalysisGroupKey(getLaborRosterPositionGroup(positionTitle), { position_title: positionTitle });
+}
+
+export function getHourAnalysisGroupShortLabel(value) {
+  return HOUR_ANALYSIS_GROUP_SHORT_LABELS[value] || getHourAnalysisGroupLabel(value);
+}
+
+export function getConfiguredHourAnalysisGroupLabel(value, groupDisplay = null) {
+  return groupDisplay?.[value]?.label || getHourAnalysisGroupLabel(value);
+}
+
+export function parseLaborModelCoverageCompound(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw || (!raw.includes(":") && !raw.includes("|"))) return null;
+  const parts = raw.split(/[:|]/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  let duration = "full";
+  let roleOption = null;
+  let isMarketing = false;
+  parts.forEach((part) => {
+    const normalized = part.toLowerCase();
+    if (LABOR_MODEL_MARKETING_TOKENS.has(normalized)) {
+      isMarketing = true;
+      return;
+    }
+    if (["0.5", ".5", "1/2", "1⁄2", "half", "h"].includes(normalized)) {
+      duration = "half";
+      return;
+    }
+    const nextRoleOption = getLaborModelCoverageRoleOption(part);
+    if (nextRoleOption) {
+      roleOption = nextRoleOption;
+      return;
+    }
+    if (LEGACY_LABOR_MODEL_ACTIVE_TOKENS.has(normalized) || normalized === "full") {
+      duration = "full";
+      return;
+    }
+  });
+  if (isMarketing) return LABOR_MODEL_MARKETING_COVERAGE_VALUE;
+  if (roleOption) return duration === "half" ? `${LABOR_MODEL_HALF_COVERAGE_VALUE}:${roleOption.label}` : roleOption.label;
+  return duration === "half" ? LABOR_MODEL_HALF_COVERAGE_VALUE : LABOR_MODEL_FULL_COVERAGE_VALUE;
+}
+
+export function normalizeLaborModelBreakerList(value, fallback = []) {
+  const hasExplicitList = Array.isArray(value);
+  const source = hasExplicitList ? value : fallback;
+  const seen = new Set();
+  return source
+    .map((item) => normalizeLaborModelBreakerMinute(item))
+    .filter((minutes) => {
+      if (!Number.isFinite(minutes) || seen.has(minutes)) return false;
+      seen.add(minutes);
+      return true;
+    })
+    .sort((a, b) => a - b)
+    .map((minutes, index) => ({
+      id: `breaker-${minutes}-${index + 1}`,
+      minutes,
+      label: formatLaborModelTimePoint(minutes),
+    }));
+}
+
+export function validateLaborModelColumns(columns = []) {
+  const parsed = columns.map((column) => parseLaborModelTimeRange(column.label));
+  const errors = [];
+  parsed.forEach((slot, index) => {
+    if (!slot.valid) errors.push({ index, message: slot.error || "Invalid time range." });
+    if (index > 0 && slot.valid && parsed[index - 1]?.valid && Math.abs(parsed[index - 1].end - slot.start) > 0.1) {
+      errors.push({ index, message: `${columns[index - 1]?.label || "Previous slot"} must end where ${columns[index]?.label || "this slot"} starts.` });
+    }
+  });
+  return { valid: errors.length === 0, errors, parsed };
+}
+
+export function normalizeHourAnalysisLaborModelColumn(column = {}, index = 0, dayKey = "day") {
+  const source = isObjectRow(column) ? column : {};
+  const label = String(source.label || source.time || source.window || `Slot ${index + 1}`).trim();
+  const parsedRange = parseLaborModelTimeRange(label);
+  return {
+    id: String(source.id || `${dayKey}-slot-${index + 1}`).trim(),
+    label,
+    hours: parsedRange.valid
+      ? parsedRange.hours
+      : normalizeHourAnalysisNumber(source.hours ?? source.duration ?? source.slot_hours ?? source.slotHours, 1),
+    start_minutes: parsedRange.valid ? parsedRange.start : null,
+    end_minutes: parsedRange.valid ? parsedRange.end : null,
+    is_valid: parsedRange.valid,
+    validation_error: parsedRange.valid ? "" : parsedRange.error,
+  };
+}
+
+export function buildPlannedCrossRoleCoverageRows({ modelCoverageRows = [], personRows = [] } = {}) {
+  const modelRows = toObjectRows(modelCoverageRows).map((row) => ({
+    key: `model:${row.key}`,
+    type: "model",
+    source_label: `${row.from_label} model row`,
+    home_label: row.from_label,
+    covers_label: row.to_label,
+    hours: normalizeHourAnalysisNumber(row.hours, 0),
+    detail_label: (Array.isArray(row.day_labels) ? row.day_labels : []).filter(Boolean).join(", ") || "Active model",
+    sort_key: `1:${row.from_label}:${row.to_label}`,
+  }));
+  const splitRows = toObjectRows(personRows)
+    .filter((row) => row.isSplit && row.split?.floor_group && normalizeHourAnalysisNumber(row.split?.floor_hours, 0) > 0)
+    .map((row) => {
+      const homeLabel = row.groupLabel || getHourAnalysisGroupLabel(row.groupKey);
+      const floorLabel = getHourAnalysisGroupLabel(row.split.floor_group);
+      const primaryHours = normalizeHourAnalysisNumber(row.split.primary_hours ?? row.split.admin_hours ?? row.preferredHours, 0);
+      const floorHours = normalizeHourAnalysisNumber(row.split.floor_hours, 0);
+      return {
+        key: `split:${row.employeeKey || row.id || row.full_name}`,
+        type: row.isWhatIf ? "what_if_split" : "person_split",
+        source_label: row.full_name || [row.first_name, row.last_name].filter(Boolean).join(" ") || "Unnamed employee",
+        home_label: homeLabel,
+        covers_label: floorLabel,
+        hours: floorHours,
+        detail_label: `${formatHourAnalysisHours(primaryHours)} ${homeLabel} + ${formatHourAnalysisHours(floorHours)} ${floorLabel}`,
+        sort_key: `0:${row.full_name || ""}:${floorLabel}`,
+      };
+    });
+
+  return [...splitRows, ...modelRows]
+    .filter((row) => row.hours > 0)
+    .sort((left, right) => left.sort_key.localeCompare(right.sort_key));
+}
+
+export function buildHourAnalysisRangeFromExpected(value, defaults = {}, commitment = "full_time") {
+  const defaultRange = normalizeHourAnalysisRangeOrder(defaults);
+  const expected = normalizeHourAnalysisNumber(value, defaultRange.expected);
+  if (expected <= 0) return { min: 0, expected: 0, max: 0 };
+  if (expected === defaultRange.expected) return defaultRange;
+  if (commitment === "part_time") {
+    return normalizeHourAnalysisRangeOrder({
+      min: Math.max(0, expected - 7),
+      expected,
+      max: expected + 10,
+    });
+  }
+  return normalizeHourAnalysisRangeOrder({
+    min: Math.max(0, expected >= 35 ? expected - 5 : expected - 6),
+    expected,
+    max: Math.max(expected + 5, 40),
+  });
+}
+
+export function updateHourAnalysisRangeBand(range = {}, band = "expected", value = 0) {
+  const normalizedBand = HOUR_ANALYSIS_RANGE_KEYS.includes(band) ? band : "expected";
+  return normalizeHourAnalysisRangeOrder({
+    ...normalizeHourAnalysisRangeOrder(range),
+    [normalizedBand]: normalizeHourAnalysisNumber(value, 0),
+  });
+}
+
+export function normalizeHourAnalysisOverrides(input = {}) {
+  if (!isObjectRow(input)) return {};
+  return Object.fromEntries(Object.entries(input).flatMap(([key, value]) => {
+    const employeeKey = String(key || "").trim();
+    if (!employeeKey) return [];
+    const overrides = normalizeHourAnalysisOverrideRange(value);
+    if (Object.keys(overrides).length === 0) return [];
+    return [[employeeKey, overrides]];
+  }));
+}
+
+export function normalizeHourAnalysisCoverageSplit(value = {}) {
+  const source = isObjectRow(value) ? value : {};
+  const floorGroup = normalizeHourAnalysisGroupKey(source.floor_group || source.floorGroup || source.floor_role || source.floorRole);
+  const normalizedFloorGroup = ["csr", "pct"].includes(floorGroup) ? floorGroup : "";
+  const hasAdminHours = source.admin_hours != null || source.adminHours != null || source.primary_hours != null || source.primaryHours != null;
+  return {
+    floor_group: normalizedFloorGroup,
+    admin_hours: hasAdminHours ? normalizeHourAnalysisNumber(source.admin_hours ?? source.adminHours ?? source.primary_hours ?? source.primaryHours, 0) : null,
+  };
+}
+
+export function normalizeHourAnalysisAuditLog(input = []) {
+  return toObjectRows(input)
+    .map((entry, index) => ({
+      id: String(entry.id || `hour-analysis-audit-${index}`).trim(),
+      occurred_at: entry.occurred_at || entry.occurredAt || entry.timestamp || new Date(0).toISOString(),
+      action: String(entry.action || "changed").trim(),
+      entity_id: String(entry.entity_id || entry.entityId || "").trim(),
+      entity_label: String(entry.entity_label || entry.entityLabel || "").trim(),
+      summary: String(entry.summary || "").trim(),
+      before: entry.before ?? entry.old_value ?? entry.oldValue ?? null,
+      after: entry.after ?? entry.new_value ?? entry.newValue ?? null,
+      note: String(entry.note || "").trim(),
+      actor_id: entry.actor_id || entry.actorId || null,
+      actor_name: String(entry.actor_name || entry.actorName || "Staff").trim(),
+    }))
+    .filter((entry) => entry.id && entry.action)
+    .sort((left, right) => String(right.occurred_at || "").localeCompare(String(left.occurred_at || "")))
+    .slice(0, 300);
+}
+
+export function normalizeStaffingCapacitySettings(value = {}) {
+  const source = isObjectRow(value) ? value : {};
+  const roleSource = source.roles || source.role_settings || source.roleSettings || source.groups || source.position_groups || {};
+  const normalizedRoles = Object.fromEntries(HOUR_ANALYSIS_STAFFING_CAPACITY_GROUP_KEYS.map((groupKey) => {
+    const rawRole = isObjectRow(roleSource[groupKey]) ? roleSource[groupKey] : {};
+    const defaults = getDefaultStaffingCapacityRoleSettings(groupKey);
+    const tolerancePercent = readStaffingCapacityPercent(rawRole, ["tolerancePercent", "tolerance_percent", "varianceTolerancePercent", "variance_tolerance_percent"], defaults.tolerancePercent);
+    const rawLower = readStaffingCapacityPercent(rawRole, ["lowerBufferPercent", "lower_buffer_percent", "healthyMinPercent", "healthy_min_percent"], defaults.lowerBufferPercent);
+    const rawTarget = readStaffingCapacityPercent(rawRole, ["targetBufferPercent", "target_buffer_percent", "reservePercent", "reserve_percent"], defaults.targetBufferPercent);
+    const rawUpper = readStaffingCapacityPercent(rawRole, ["upperBufferPercent", "upper_buffer_percent", "healthyMaxPercent", "healthy_max_percent"], defaults.upperBufferPercent);
+    const lowerBufferPercent = Math.min(rawLower, rawUpper);
+    const upperBufferPercent = Math.max(rawLower, rawUpper);
+    const targetBufferPercent = clampHourAnalysisPercent(rawTarget, lowerBufferPercent, upperBufferPercent);
+    const overRosteredBufferPercent = Math.max(
+      upperBufferPercent,
+      readStaffingCapacityPercent(rawRole, ["overRosteredBufferPercent", "over_rostered_buffer_percent", "overRosteredPercent", "over_rostered_percent"], defaults.overRosteredBufferPercent),
+    );
+    return [groupKey, {
+      tolerancePercent,
+      lowerBufferPercent,
+      targetBufferPercent,
+      upperBufferPercent,
+      overRosteredBufferPercent,
+    }];
+  }));
+  return { roles: normalizedRoles };
+}
+
+export function normalizeStaffingRoleKey(value = "", row = {}) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const normalized = raw.toLowerCase().replace(/[._-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (["pct", "pet care technician", "pet care tech", "kennel technician"].includes(normalized)) return "pct";
+  if (["csr", "customer service representative", "guest service representative", "front desk"].includes(normalized)) return "csr";
+  if (["sup", "supervisor", "shift supervisor", "shift lead"].includes(normalized)) return "supervisor";
+  if (["gm", "general manager"].includes(normalized)) return "general_manager";
+  if (["am", "agm", "assistant manager", "assistant general manager"].includes(normalized)) return "assistant_manager";
+  if (["mod", "manager on duty", "manager"].includes(normalized)) return "management";
+  const hourGroup = normalizeHourAnalysisGroupKey(raw, row);
+  return hourGroup === "other" ? "" : hourGroup;
+}
+
+export function getStaffPlanEntries(plan = {}) {
+  const entries = Array.isArray(plan.shift_entries)
+    ? plan.shift_entries
+    : Array.isArray(plan.staff_names)
+      ? plan.staff_names
+      : [];
+  return entries.map((entry, index) => {
+    if (typeof entry === "string") {
+      return {
+        id: `${plan.id || plan.plan_date || "plan"}-${index}`,
+        labor_employee_id: "",
+        name: entry,
+        position: "",
+        shift_start: "",
+        shift_end: "",
+        hours: 0,
+      };
+    }
+    const source = isObjectRow(entry) ? entry : {};
+    const start = source.shift_start || source.start_time || source.startTime || source.start || "";
+    const end = source.shift_end || source.end_time || source.endTime || source.end || "";
+    const hours = calculateLaborShiftHours(start, end, source.hours ?? source.duration_hours ?? source.durationHours);
+    return {
+      id: String(source.id || `${plan.id || plan.plan_date || "plan"}-${index}`).trim(),
+      labor_employee_id: String(source.labor_employee_id || source.laborEmployeeId || source.employee_id || source.employeeId || "").trim(),
+      name: String(source.name || source.full_name || source.employee_name || source.employeeName || "").trim(),
+      position: String(source.position || source.role || source.shift_position || source.shiftPosition || "").trim(),
+      shift_start: String(start || "").trim(),
+      shift_end: String(end || "").trim(),
+      hours,
+    };
+  });
+}
+
+export function addHourAnalysisRange(target, range = {}) {
+  addHourAnalysisRangeDelta(target, range, 1);
+}
+
+export function mergeHourAnalysisRange(inheritedRange = {}, overrideRange = {}) {
+  const inherited = normalizeHourAnalysisRangeOrder(inheritedRange);
+  const overrides = normalizeHourAnalysisOverrideRange(overrideRange);
+  return normalizeHourAnalysisRangeOrder(Object.fromEntries(HOUR_ANALYSIS_RANGE_KEYS.map((key) => [
+    key,
+    Object.prototype.hasOwnProperty.call(overrides, key) ? overrides[key] : inherited[key],
+  ])));
+}
+
+export function buildHourAnalysisCapacityStandard(requiredWeekly = 0, reliefPercent = HOUR_ANALYSIS_RECOMMENDED_RESERVE_PERCENT, settings = {}) {
+  const floor = normalizeHourAnalysisNumber(requiredWeekly, 0);
+  const source = isObjectRow(settings) ? settings : {};
+  const relief = Math.max(0, Math.min(90, normalizeHourAnalysisNumber(source.targetBufferPercent ?? source.target_buffer_percent ?? reliefPercent, 0)));
+  const healthyMinPercent = relief > 0
+    ? readStaffingCapacityPercent(source, ["lowerBufferPercent", "lower_buffer_percent", "healthyMinPercent", "healthy_min_percent"], HOUR_ANALYSIS_HEALTHY_BUFFER_MIN_PERCENT)
+    : 0;
+  const healthyMaxPercent = relief > 0
+    ? Math.max(
+      healthyMinPercent,
+      readStaffingCapacityPercent(source, ["upperBufferPercent", "upper_buffer_percent", "healthyMaxPercent", "healthy_max_percent"], HOUR_ANALYSIS_HEALTHY_BUFFER_MAX_PERCENT),
+    )
+    : 0;
+  const overRosteredPercent = relief > 0
+    ? Math.max(
+      healthyMaxPercent,
+      readStaffingCapacityPercent(source, ["overRosteredBufferPercent", "over_rostered_buffer_percent", "overRosteredPercent", "over_rostered_percent"], HOUR_ANALYSIS_OVER_ROSTERED_BUFFER_PERCENT),
+    )
+    : 0;
+  const tolerancePercent = readStaffingCapacityPercent(source, ["tolerancePercent", "tolerance_percent", "varianceTolerancePercent", "variance_tolerance_percent"], HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT);
+  const targetWeekly = calculateHourAnalysisRecommendedTarget(floor, relief);
+  const healthyLowWeekly = calculateHourAnalysisRecommendedTarget(floor, healthyMinPercent);
+  const healthyHighWeekly = calculateHourAnalysisRecommendedTarget(floor, healthyMaxPercent);
+  const overRosteredWeekly = calculateHourAnalysisRecommendedTarget(floor, overRosteredPercent);
+  return {
+    floor,
+    healthyLowWeekly,
+    targetWeekly,
+    healthyHighWeekly,
+    overRosteredWeekly,
+    healthyLowSurplus: normalizeHourAnalysisDelta(healthyLowWeekly - floor),
+    targetSurplus: normalizeHourAnalysisDelta(targetWeekly - floor),
+    healthyHighSurplus: normalizeHourAnalysisDelta(healthyHighWeekly - floor),
+    overRosteredSurplus: normalizeHourAnalysisDelta(overRosteredWeekly - floor),
+    targetBufferPercent: relief,
+    healthyMinPercent,
+    healthyMaxPercent,
+    overRosteredPercent,
+    tolerancePercent,
+    targetUtilization: targetWeekly > 0 ? normalizeHourAnalysisNumber((floor / targetWeekly) * 100, 0) : 0,
+  };
+}
+
+export function formatHourAnalysisCapacityDelta(value = 0) {
+  const delta = normalizeHourAnalysisDelta(value);
+  if (delta > 0) {
+    return {
+      value: `+${formatHourAnalysisHours(delta)} hrs`,
+      tone: "surplus",
+      label: "Surplus capacity",
+    };
+  }
+  if (delta < 0) {
+    return {
+      value: `-${formatHourAnalysisHours(Math.abs(delta))} hrs`,
+      tone: "short",
+      label: "Short to target",
+    };
+  }
+  return {
+    value: "0 hrs",
+    tone: "even",
+    label: "Aligned",
+  };
+}
+
+export function formatHourAnalysisSignedDelta(value = 0) {
+  const delta = normalizeHourAnalysisDelta(value);
+  if (delta === 0) return "0 hrs";
+  const sign = delta > 0 ? "+" : "-";
+  return `${sign}${formatHourAnalysisHours(Math.abs(delta))} hrs`;
+}
+
+export function buildHourAnalysisCapacityToleranceState({
+  expected = 0,
+  floor = 0,
+  targetLow = 0,
+  targetHigh = 0,
+  target = 0,
+  hasTargetRange = false,
+  tolerancePercent = HOUR_ANALYSIS_DEFAULT_TOLERANCE_PERCENT,
+} = {}) {
+  const value = normalizeHourAnalysisNumber(expected, 0);
+  const targetFloor = normalizeHourAnalysisNumber(floor, 0);
+  const targetMid = normalizeHourAnalysisNumber(target, targetFloor);
+  const lower = normalizeHourAnalysisNumber(targetLow, targetMid);
+  const upper = normalizeHourAnalysisNumber(targetHigh, lower);
+  if (hasTargetRange && value < lower) {
+    const delta = normalizeHourAnalysisDelta(value - lower);
+    const toleranceHours = getHourAnalysisToleranceHours(lower, tolerancePercent);
+    return {
+      relation: "below-range",
+      delta,
+      boundary: lower,
+      boundaryLabel: "lower range",
+      toleranceHours,
+      withinTolerance: Math.abs(delta) <= toleranceHours,
+    };
+  }
+  if (hasTargetRange && value > upper) {
+    const delta = normalizeHourAnalysisDelta(value - upper);
+    const toleranceHours = getHourAnalysisToleranceHours(upper, tolerancePercent);
+    return {
+      relation: "above-range",
+      delta,
+      boundary: upper,
+      boundaryLabel: "upper range",
+      toleranceHours,
+      withinTolerance: Math.abs(delta) <= toleranceHours,
+    };
+  }
+  if (hasTargetRange) {
+    return {
+      relation: "in-range",
+      delta: 0,
+      boundary: targetMid,
+      boundaryLabel: "target range",
+      toleranceHours: getHourAnalysisToleranceHours(targetMid, tolerancePercent),
+      withinTolerance: true,
+    };
+  }
+  const delta = normalizeHourAnalysisDelta(value - targetMid);
+  const toleranceHours = getHourAnalysisToleranceHours(targetMid || targetFloor, tolerancePercent);
+  return {
+    relation: delta < 0 ? "below-target" : delta > 0 ? "above-target" : "aligned",
+    delta,
+    boundary: targetMid,
+    boundaryLabel: targetMid === targetFloor ? "floor / target" : "target",
+    toleranceHours,
+    withinTolerance: Math.abs(delta) <= toleranceHours,
+  };
+}
+
+export function formatStaffingCapacityBarHours(value = 0) {
+  return `${formatHourAnalysisHours(value)}h`;
+}
+
+export function isTrainingRecordForEmployee(record = {}, employee = {}) {
+  const employeeId = getLaborEmployeeRowId(employee);
+  const recordEmployeeId = getTrainingRecordEmployeeId(record);
+  if (employeeId && recordEmployeeId) return employeeId === recordEmployeeId;
+
+  const employeeName = normalizeEmployeeName(employee.full_name);
+  const recordName = normalizeEmployeeName(record.employee_full_name);
+  return Boolean(employeeName && recordName && employeeName === recordName);
+}
+
+export function getActorEmailNameParts(value = "") {
+  const email = normalizeActorLookupEmail(value);
+  if (!email) return null;
+  const tokens = email
+    .split("@")[0]
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (tokens.length < 2) return null;
+  return {
+    firstName: tokens[0],
+    lastName: tokens[tokens.length - 1],
+  };
+}
+
+export function collectTrainingActorLookupEmails(...rowGroups) {
+  return Array.from(new Set(rowGroups
+    .flatMap((rows) => toObjectRows(rows))
+    .flatMap((row) => [
+      row.actor_email,
+      row.created_by_email,
+      row.updated_by_email,
+      row.deleted_by_email,
+      row.uploaded_by_email,
+      row.reviewer_email,
+      row.actor_name,
+      row.actorName,
+      row.created_by_name,
+      row.createdByName,
+      row.updated_by_name,
+      row.updatedByName,
+      row.deleted_by_name,
+      row.uploaded_by_name,
+      row.email,
+    ])
+    .map(normalizeActorLookupEmail)
+    .filter(Boolean)));
+}
+
+export function getTrainingHistoryStatusChange(event = {}) {
+  const nextStatus = getTrainingHistoryStateStatus(event.after_state);
+  if (!nextStatus || nextStatus === "not_started") return null;
+  const previousStatus = getTrainingHistoryStateStatus(event.before_state);
+  if (previousStatus && previousStatus !== nextStatus) {
+    return {
+      previousStatus,
+      previousLabel: formatTrainingHistoryStatusLabel(previousStatus),
+      nextStatus,
+      nextLabel: formatTrainingHistoryStatusLabel(nextStatus),
+    };
+  }
+  return {
+    previousStatus: "",
+    previousLabel: "",
+    nextStatus,
+    nextLabel: formatTrainingHistoryStatusLabel(nextStatus),
+  };
+}
+
+export function buildUniqueHistoryOptions(rows = [], accessor = () => "") {
+  const seen = new Set();
+  return toObjectRows(rows)
+    .map((row) => String(accessor(row) || "").trim())
+    .filter(Boolean)
+    .filter((label) => {
+      const key = label.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+    .map((label) => ({ value: label, label }));
+}
+
+export function applyTrainingHistoryFilters(rows = [], filters = {}) {
+  const targetDate = String(filters.date || "").trim();
+  const employee = String(filters.employee || "").trim().toLowerCase();
+  const actor = String(filters.actor || "").trim().toLowerCase();
+  const categoryTask = String(filters.categoryTask || "").trim().toLowerCase();
+  return toObjectRows(rows).filter((row) => {
+    if (targetDate && getTrainingHistoryRowDate(row) !== targetDate) return false;
+    if (employee && String(row.employeeName || "").trim().toLowerCase() !== employee) return false;
+    if (actor && String(row.actorDisplayName || "").trim().toLowerCase() !== actor) return false;
+    if (categoryTask) {
+      const haystack = [
+        row.categoryTaskLabel,
+        row.summary,
+        row.item?.label,
+        row.section?.title,
+        row.record?.template_name_snapshot,
+      ].map((value) => String(value || "").trim().toLowerCase());
+      if (!haystack.some((value) => value === categoryTask || value.includes(categoryTask))) return false;
+    }
+    return true;
+  });
+}
+
+export function findComplianceHistoryReviewInstance(event = {}, reviewInstanceMap = {}) {
+  const sourceId = String(event.source_id || "").trim();
+  if (sourceId && reviewInstanceMap[sourceId]) return reviewInstanceMap[sourceId];
+  const nextState = readComplianceHistoryState(event, "new");
+  const previousState = readComplianceHistoryState(event, "old");
+  const reviewInstanceId = nextState.review_instance_id || previousState.review_instance_id || readComplianceHistoryMetadata(event).review_instance_id;
+  return reviewInstanceId ? (reviewInstanceMap[reviewInstanceId] || null) : null;
+}
+
+export function findComplianceHistoryCycle(reviewCycle = "", reviewCycles = []) {
+  return toObjectRows(reviewCycles).find((cycle) => reviewCycleMatchesKey(cycle, reviewCycle)) || null;
+}
+
+export function findComplianceHistoryRequirement(reviewCycle = "", requirementId = "", requirements = []) {
+  const normalizedCycle = normalizeLocalReviewCycleKey(reviewCycle);
+  const normalizedRequirementId = String(requirementId || "");
+  return toObjectRows(requirements).find((requirement) => {
+    if (normalizedRequirementId && String(requirement.id || "") === normalizedRequirementId) return true;
+    const metadata = readComplianceHistoryMetadata(requirement);
+    const legacyCycle = metadata.legacy_review_cycle || requirement.review_cycle || requirement.cycle_id || requirement.slug || "";
+    return normalizedCycle && normalizeLocalReviewCycleKey(legacyCycle) === normalizedCycle;
+  }) || null;
+}
+
+export function getComplianceHistoryStatusChange(event = {}) {
+  const previousState = readComplianceHistoryState(event, "old");
+  const nextState = readComplianceHistoryState(event, "new");
+  const previousStatus = String(previousState.status || previousState.compliance_status || "").trim().toLowerCase();
+  const nextStatus = String(nextState.status || nextState.compliance_status || "").trim().toLowerCase();
+  if (!nextStatus || previousStatus === nextStatus) return null;
+  return {
+    previousStatus,
+    previousLabel: getComplianceHistoryStatusLabel(previousStatus),
+    nextStatus,
+    nextLabel: getComplianceHistoryStatusLabel(nextStatus),
+  };
+}
+
+export function getComplianceHistoryActor(event = {}, reviewInstance = {}) {
+  return resolveVerifiedActorDisplayName({
+    ...reviewInstance,
+    ...event,
+    actor_full_name: event.actor_full_name || event.actor_name || reviewInstance.reviewer_name,
+    actor_name: event.actor_name || reviewInstance.reviewer_name,
+    actor_user_id: event.actor_user_id || reviewInstance.reviewer_user_id,
+  });
+}
+
+export function getComplianceAuditRequirementId(event = {}) {
+  const before = readComplianceAuditSnapshot(event, "before_snapshot");
+  const after = readComplianceAuditSnapshot(event, "after_snapshot");
+  return normalizeOptionalUuid(event.requirement_id)
+    || normalizeOptionalUuid(after.requirement_id)
+    || normalizeOptionalUuid(before.requirement_id)
+    || "";
+}
+
+export function getComplianceAuditEmployeeId(event = {}) {
+  const before = readComplianceAuditSnapshot(event, "before_snapshot");
+  const after = readComplianceAuditSnapshot(event, "after_snapshot");
+  return normalizeOptionalUuid(event.labor_employee_id)
+    || normalizeOptionalUuid(after.labor_employee_id)
+    || normalizeOptionalUuid(before.labor_employee_id)
+    || "";
+}
+
+export function getComplianceAuditActionLabel(event = {}) {
+  const tableName = String(event.table_name || "").trim();
+  const operation = String(event.operation || "").trim().toUpperCase();
+  const before = readComplianceAuditSnapshot(event, "before_snapshot");
+  const after = readComplianceAuditSnapshot(event, "after_snapshot");
+  const afterMetadata = readComplianceHistoryMetadata(after);
+  const beforeMetadata = readComplianceHistoryMetadata(before);
+  const nextMode = afterMetadata.completion_mode || after.exception_kind || after.source_note || after.status || "";
+  const previousMode = beforeMetadata.completion_mode || before.exception_kind || before.source_note || before.status || "";
+
+  if (tableName === "labor_compliance_evidence_links" && operation === "INSERT") {
+    if (String(nextMode).toLowerCase().includes("waived")) return "Marked Waived";
+    return "Marked Completed";
+  }
+  if (tableName === "labor_compliance_exceptions" && operation === "INSERT") return "Waiver Added";
+  if (tableName === "labor_compliance_due_date_overrides" && operation === "INSERT") return "Due Date Set";
+  if (tableName === "labor_compliance_due_date_overrides" && operation === "UPDATE") return "Due Date Changed";
+  if (operation === "UPDATE" && after.superseded_at && !before.superseded_at) return "Previous State Superseded";
+  if (previousMode && nextMode && previousMode !== nextMode) {
+    return `${getComplianceStateLabel(previousMode)} to ${getComplianceStateLabel(nextMode)}`;
+  }
+  if (operation === "INSERT") return "Compliance Entry Added";
+  if (operation === "UPDATE") return "Compliance Entry Updated";
+  return "Compliance Activity";
 }
