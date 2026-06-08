@@ -14,6 +14,7 @@ import { Tip, Badge, Btn, Card, Modal } from "../../shared/ui";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import { ENT_CSS } from "./enterpriseDashboard/entStyles";
+import { fmt$k, fmtDateLabel } from "./enterpriseDashboard/entFormat";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Timeframe config
@@ -66,18 +67,6 @@ function AnimatedNumber({ value, prefix = "", suffix = "", decimals = 0, duratio
   };
   return <span ref={ref}>{prefix}{fmt(typeof value === "number" ? value : 0)}{suffix}</span>;
 }
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   Tiny helpers
-   ═══════════════════════════════════════════════════════════════════════════ */
-const fmt$ = (v) => typeof v === "number" ? Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00";
-const fmt$k = (v) => "$" + fmt$(v);
-const fmtMoney = (n) => "$" + Math.round(n).toLocaleString();
-const fmtDateLabel = (d) => {
-  if (!d) return "";
-  const dt = new Date(d + "T00:00:00");
-  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-};
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Trend badge
