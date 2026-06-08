@@ -51,3 +51,13 @@ export const EVENT_TYPE_STYLES = {
 // ─── ClientsPage Active/All data column ordering ───────────────────────────
 export const baseCols = ["nextRes","lastRes","daysSince","totalRes","totalSpent"];
 export const extraCols = ["daycare","boarding","eval","postEval","tours","postTour"];
+
+// ─── FunnelPage date-range presets ─────────────────────────────────────────
+export const ranges = [
+  { id: "wtd", label: "WTD", desc: "Week to Date" },
+  { id: "past-week", label: "Past Week", desc: "Last 7 Days" },
+  { id: "mtd", label: "MTD", desc: "Month to Date" },
+  { id: "past-30", label: "Past 30", desc: "Last 30 Days" },
+  { id: "qtd", label: "QTD", desc: "Quarter to Date" },
+  { id: "ytd", label: "YTD", desc: "Year to Date" },
+];
