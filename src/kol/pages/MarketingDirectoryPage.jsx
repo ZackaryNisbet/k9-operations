@@ -62,93 +62,10 @@ import {
   summarizeDirectory,
   validateDirectoryAttachmentFiles,
 } from "../marketingDirectoryData";
-
-// ─── small utilities ────────────────────────────────────────────────────────
-function clientUuid() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
-    const r = (Math.random() * 16) | 0;
-    return (ch === "x" ? r : (r & 0x3) | 0x8).toString(16);
-  });
-}
-
-// HEIC/HEIF → JPEG (same approach as PhotosPage) so iPhone business-card photos
-// upload as a web-displayable image. Other files pass through untouched.
-async function normalizeUploadFile(file) {
-  if (!isHeicFile(file)) return file;
-  const heic2any = (await import("heic2any")).default;
-  const blob = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.85 });
-  const converted = Array.isArray(blob) ? blob[0] : blob;
-  const newName = (file.name || "card").replace(/\.(heic|heif)$/i, ".jpg");
-  return new File([converted], newName, { type: "image/jpeg", lastModified: file.lastModified || Date.now() });
-}
-
-function fmtDateTime(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
-
-function fmtDate(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
-}
-
-const MUTED = { color: C.textMut, fontSize: 11 };
-
-const LABEL_STYLE = {
-  display: "block",
-  fontSize: 11,
-  fontWeight: 700,
-  color: C.textSec,
-  marginBottom: 4,
-  letterSpacing: "0.03em",
-  textTransform: "uppercase",
-};
-
-const INLINE_INPUT = {
-  flex: 1,
-  minWidth: 0,
-  width: "100%",
-  padding: "7px 10px",
-  border: `1.5px solid ${C.border}`,
-  borderRadius: 8,
-  fontSize: 13,
-  fontFamily: "inherit",
-  color: C.text,
-  background: C.surface,
-  outline: "none",
-  boxSizing: "border-box",
-};
-
-const ICON_BTN_SM = {
-  border: `1px solid ${C.border}`,
-  background: C.surface,
-  borderRadius: 8,
-  cursor: "pointer",
-  color: C.textMut,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 32,
-  height: 32,
-  padding: 0,
-  flexShrink: 0,
-};
-
-// Icons in ../../shared/icons are fixed-size, prop-less SVGs. Glyph wraps one so a
-// call site can set its size + color: the `.md-glyph > svg` rule (injected once in
-// the page root) lets CSS dimensions on the wrapper drive the SVG, since CSS beats
-// the SVG's hardcoded width/height attributes. Color flows through `currentColor`.
-function Glyph({ icon: IconCmp, size = 16, color, style }) {
-  if (!IconCmp) return null;
-  return (
-    <span className="md-glyph" style={{ width: size, height: size, color, display: "inline-flex", flexShrink: 0, ...style }}>
-      <IconCmp />
-    </span>
-  );
-}
+import { MUTED, LABEL_STYLE, INLINE_INPUT, ICON_BTN_SM } from "./marketingDirectory/styles";
+import { fmtDateTime, fmtDate, fmtUpdateStamp } from "./marketingDirectory/format";
+import { clientUuid, normalizeUploadFile } from "./marketingDirectory/upload";
+import { Glyph } from "./marketingDirectory/Glyph";
 
 // ─── attachment chip (preview / delete) ─────────────────────────────────────
 function AttachmentChip({ attachment, onPreview, onDelete, busy, canManage }) {
@@ -499,13 +416,6 @@ function DirectoryExpansion({ entry, canManage, onAddContact, onEditContact, onD
       ) : null}
     </div>
   );
-}
-
-// Stamp like the tracker's update rows: "May 31, 2026 · 9:50 PM".
-function fmtUpdateStamp(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return fmtDate(value);
-  return `${fmtDate(value)} · ${date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}`;
 }
 
 // Inline updates area beneath an org row — a verbatim copy of the marketing
