@@ -4,6 +4,7 @@
 
 import { useState, useEffect, createContext, useContext, useCallback, useRef } from 'react';
 import { supabase } from './supabaseClient';
+import { setDemoActiveFromRole } from './shared/demoMode';
 import {
   AUTH_TIMEOUTS,
   classifyAuthFailure,
@@ -103,6 +104,7 @@ export function AuthProvider({ children }) {
 
   const setSignedOutState = useCallback((runId = runIdRef.current) => {
     if (!isRunActive(runId)) return;
+    setDemoActiveFromRole(null);
     setUser(null);
     setProfile(null);
     setNeedsPasswordSet(false);
@@ -234,6 +236,8 @@ export function AuthProvider({ children }) {
     try {
       const nextProfile = await fetchProfile(nextUser.id);
       if (!isRunActive(runId)) return;
+      // Activate the Demo obfuscation/read-only layer for Demo accounts.
+      setDemoActiveFromRole(nextProfile?.role);
       setProfile(nextProfile);
       setAuthError(null);
       setAuthStatus('ready');
