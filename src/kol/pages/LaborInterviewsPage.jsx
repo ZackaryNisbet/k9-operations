@@ -137,6 +137,17 @@ import {
   wordsFromProviderSegments,
 } from "./laborInterviews/helpers";
 import { InterviewStyles } from "./laborInterviews/components/InterviewStyles";
+import { SectionHeading } from "./laborInterviews/components/SectionHeading";
+import { EmptyState } from "./laborInterviews/components/EmptyState";
+import { TranscriptWords } from "./laborInterviews/components/TranscriptWords";
+import { IconButton } from "./laborInterviews/components/IconButton";
+import { RecommendationBadge } from "./laborInterviews/components/RecommendationBadge";
+import { InterviewSummaryPreviewPage } from "./laborInterviews/components/InterviewSummaryPreviewPage";
+import { StaticField } from "./laborInterviews/components/StaticField";
+import { InterviewWorkspaceTabs } from "./laborInterviews/components/InterviewWorkspaceTabs";
+import { MergeTrace } from "./laborInterviews/components/MergeTrace";
+import { SegmentedRecommendation } from "./laborInterviews/components/SegmentedRecommendation";
+import { ResumePanel } from "./laborInterviews/components/ResumePanel";
 
 
 function useStorageObjectPreviewUrl({ bucket, path, versionKey = "", setPreviewUrl, enabled = true }) {
@@ -176,260 +187,19 @@ function useStorageObjectPreviewUrl({ bucket, path, versionKey = "", setPreviewU
 }
 
 
-function SectionHeading({ title, detail, action }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
-      <div>
-        <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: C.text }}>{title}</h3>
-        {detail && <div style={{ marginTop: 3, color: C.textMut, fontSize: 13 }}>{detail}</div>}
-      </div>
-      {action}
-    </div>
-  );
-}
-
-function EmptyState({ title, body }) {
-  return (
-    <div style={{ padding: 38, border: `1.5px dashed ${C.border}`, borderRadius: 12, background: C.surfaceHover, textAlign: "center" }}>
-      <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>{title}</div>
-      <div style={{ fontSize: 13, color: C.textMut, marginTop: 6, maxWidth: 520, marginLeft: "auto", marginRight: "auto", lineHeight: 1.5 }}>{body}</div>
-    </div>
-  );
-}
 
 
 
-function TranscriptWords({ turn, currentTime, maxWords = null, searchQuery = "", tone = "light" }) {
-  const words = Array.isArray(turn?.words) && turn.words.length
-    ? turn.words
-    : String(turn?.text || "").split(/\s+/).filter(Boolean).map((text, index) => ({ id: `${turn?.id || "turn"}-${index}`, text }));
-  const visibleWords = maxWords ? words.slice(0, maxWords) : words;
-  const time = Number(currentTime || 0);
-  const dark = tone === "dark";
-  return (
-    <span>
-      {visibleWords.map((word) => {
-        const active = Number.isFinite(time)
-          && word.startSeconds != null
-          && word.endSeconds != null
-          && time >= word.startSeconds
-          && time <= word.endSeconds;
-        const searched = wordMatchesSearch(word.text, searchQuery);
-        return (
-          <span
-            key={word.id}
-            style={{
-              display: "inline-block",
-              marginRight: 5,
-              marginBottom: 3,
-              borderRadius: 6,
-              padding: dark ? "0 3px" : "0 2px",
-              background: active
-                ? (dark ? "#bef264" : "#dcfce7")
-                : searched
-                  ? (dark ? "rgba(250,204,21,0.22)" : "#fef3c7")
-                  : "transparent",
-              color: active ? (dark ? "#052e16" : C.pri) : searched ? (dark ? "#fde68a" : "#92400e") : "inherit",
-              boxShadow: active && dark ? "0 0 22px rgba(190, 242, 100, 0.28)" : "none",
-              transition: "background 120ms ease, color 120ms ease, box-shadow 120ms ease",
-            }}
-          >
-            {word.text}
-          </span>
-        );
-      })}
-      {maxWords && words.length > maxWords && <span style={{ color: C.textMut }}>...</span>}
-    </span>
-  );
-}
 
 
-function IconButton({ label, onClick, disabled, children, variant = "default", style = {} }) {
-  const colors = {
-    default: { bg: "#fff", color: C.textSec, border: C.border },
-    primary: { bg: C.pri, color: "#fff", border: C.pri },
-    danger: { bg: C.danLt, color: C.dan, border: "#fecaca" },
-  };
-  const tone = colors[variant] || colors.default;
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        width: 34,
-        height: 34,
-        borderRadius: 8,
-        border: `1px solid ${tone.border}`,
-        background: tone.bg,
-        color: tone.color,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.48 : 1,
-        fontWeight: 900,
-        fontSize: 15,
-        fontFamily: "inherit",
-        ...style,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function RecommendationBadge({ value }) {
-  const option = getInterviewRecommendationOption(value);
-  return <Badge color={option.tone}>{option.label}</Badge>;
-}
 
 
-function InterviewSummaryPreviewPage({ page, width }) {
-  if (!page) return null;
-  const safeWidth = Number(width) > 0 ? Number(width) : 816;
-  const scale = safeWidth / 612;
-  return (
-    <div
-      aria-label="Interview summary appendix preview"
-      style={{
-        width: safeWidth,
-        minHeight: 792 * scale,
-        background: "#fff",
-        boxShadow: "0 1px 12px rgba(15,23,42,0.12)",
-        boxSizing: "border-box",
-        padding: `${58 * scale}px ${54 * scale}px`,
-        color: "#0f172a",
-        fontFamily: "Arial, sans-serif",
-      }}
-    >
-      <div style={{ fontSize: 18 * scale, fontWeight: 800, lineHeight: 1.2 }}>{page.title || "Interview Summary"}</div>
-      {page.subtitle ? (
-        <div style={{ marginTop: 8 * scale, marginBottom: 22 * scale, fontSize: 9 * scale, color: "#64748b", lineHeight: 1.35 }}>{page.subtitle}</div>
-      ) : (
-        <div style={{ height: 18 * scale }} />
-      )}
-      <div style={{ display: "grid", gap: 12 * scale }}>
-        {(page.sections || []).map((section, sectionIndex) => (
-          <div key={`${section.heading || "section"}-${sectionIndex}`} style={{ display: "grid", gap: 6 * scale }}>
-            {section.heading ? (
-              <div style={{ fontSize: 11 * scale, fontWeight: 800, color: "#111827" }}>{section.heading}</div>
-            ) : null}
-            <div style={{ display: "grid", gap: 5 * scale }}>
-              {(section.bullets || []).map((bullet, bulletIndex) => (
-                <div key={bulletIndex} style={{ display: "grid", gridTemplateColumns: `${12 * scale}px minmax(0, 1fr)`, gap: 6 * scale, alignItems: "start", fontSize: 10 * scale, lineHeight: 1.35, color: "#334155" }}>
-                  <span>-</span>
-                  <span>{String(bullet || "").replace(/^[-*]\s*/, "")}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
-function StaticField({ label, value }) {
-  const isLink = /^https?:\/\//i.test(String(value || ""));
-  return (
-    <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: 11, color: C.textMut, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
-      <div style={{ marginTop: 4, fontSize: 14, color: C.text, fontWeight: 700, minHeight: 20, overflowWrap: "anywhere" }}>
-        {isLink ? <a href={value} target="_blank" rel="noreferrer" style={{ color: C.pri, textDecoration: "none" }}>{value}</a> : (value || "-")}
-      </div>
-    </div>
-  );
-}
 
-function InterviewWorkspaceTabs({ tabs = [], active, onChange }) {
-  if (!tabs.length) return null;
-  return (
-    <div style={{ display: "inline-grid", gridTemplateColumns: `repeat(${tabs.length}, minmax(140px, 1fr))`, border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden", background: "#fff", maxWidth: 520 }}>
-      {tabs.map((tab, index) => {
-        const selected = active === tab.id;
-        return (
-          <button
-            type="button"
-            key={tab.id}
-            onClick={() => onChange?.(tab.id)}
-            style={{
-              border: "none",
-              borderRight: index === tabs.length - 1 ? "none" : `1px solid ${C.border}`,
-              background: selected ? C.pri : "#fff",
-              color: selected ? "#fff" : C.textSec,
-              padding: "9px 12px",
-              cursor: "pointer",
-              fontFamily: "inherit",
-              textAlign: "left",
-              minWidth: 0,
-            }}
-          >
-            <div style={{ fontSize: 12, fontWeight: 950, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tab.label}</div>
-            {tab.detail && <div style={{ marginTop: 2, fontSize: 10, fontWeight: 800, opacity: selected ? 0.86 : 0.72 }}>{tab.detail}</div>}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
-function MergeTrace({ responses = [] }) {
-  const rows = (Array.isArray(responses) ? responses : [responses]).filter((response) => (
-    response?.manual_notes_text || response?.ai_merged_text || getInterviewResponseState(response) === "merged_draft"
-  ));
-  if (!rows.length) return null;
-  return (
-    <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, background: "#fbfdff", padding: 10, display: "grid", gap: 8 }}>
-      <div style={{ fontSize: 11, color: C.textMut, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>Merged Notes</div>
-      {rows.slice(0, 3).map((response, index) => (
-        <div key={response.id || index} style={{ display: "grid", gap: 5, fontSize: 12, lineHeight: 1.45 }}>
-          {response.manual_notes_text && (
-            <div style={{ color: "#94a3b8", whiteSpace: "pre-wrap" }}>{response.manual_notes_text}</div>
-          )}
-          {response.ai_merged_text && (
-            <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>{response.ai_merged_text}</div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
 
-function SegmentedRecommendation({ value, onChange, disabled }) {
-  return (
-    <div style={{ display: "inline-grid", gridTemplateColumns: "repeat(2, minmax(96px, 1fr))", border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden", background: "#fff" }}>
-      {INTERVIEW_RECOMMENDATION_OPTIONS.map((option) => {
-        const selected = value === option.value;
-        const selectedColor = option.value === "reject" ? C.dan : C.pri;
-        return (
-          <button
-            type="button"
-            key={option.value}
-            disabled={disabled}
-            onClick={() => onChange(option.value)}
-            style={{
-              border: "none",
-              borderRight: option.value === "reject" ? "none" : `1px solid ${C.border}`,
-              background: selected ? selectedColor : "#fff",
-              color: selected ? "#fff" : C.textSec,
-              padding: "9px 12px",
-              fontFamily: "inherit",
-              fontWeight: 850,
-              fontSize: 12,
-              cursor: disabled ? "not-allowed" : "pointer",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {option.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+
+
 
 function InterviewRoster({ records, onOpen, onAdd, canAdd, searchSlot = null, introValue = "", canEditIntro = false, onSaveIntro = null }) {
   const [q, setQ] = useState("");
@@ -567,49 +337,6 @@ function RestrictedInterviewDetail({ record }) {
 }
 
 
-function ResumePanel({ resumeArtifact, resumeCount = 0, uploading, onUploadClick, onOpen, onDownload, canUpload = true }) {
-  const metadata = resumeArtifact?.metadata && typeof resumeArtifact.metadata === "object" ? resumeArtifact.metadata : {};
-  const uploadedAt = resumeArtifact?.created_at ? new Date(resumeArtifact.created_at).toLocaleDateString() : "";
-  const sizeLabel = formatFileSize(metadata.size_bytes);
-  const hasResume = !!resumeArtifact?.storage_path;
-  return (
-    <div className="interview-detail-card" style={{ border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", padding: 16, display: "grid", gap: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <div style={{ fontSize: 16, fontWeight: 950, color: C.text }}>Resume</div>
-            <Badge color={hasResume ? "success" : "default"}>{hasResume ? "Attached" : "Missing"}</Badge>
-            {resumeCount > 1 && <Badge color="default">{resumeCount} files</Badge>}
-          </div>
-          <div style={{ marginTop: 4, color: C.textMut, fontSize: 12 }}>
-            {hasResume ? "Candidate resume stays with this interview record." : "Attach the applicant's resume before or during the interview."}
-          </div>
-        </div>
-        {canUpload && (
-          <Btn variant={hasResume ? "secondary" : "primary"} size="sm" onClick={onUploadClick} disabled={uploading}>
-            {uploading ? "Uploading..." : hasResume ? "Replace Resume" : "Upload Resume"}
-          </Btn>
-        )}
-      </div>
-      {hasResume ? (
-        <div style={{ border: `1px solid ${C.borderLight}`, borderRadius: 8, background: C.surfaceHover, padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 950, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {resumeArtifact.file_name || metadata.original_file_name || "Resume"}
-            </div>
-            <div style={{ marginTop: 4, fontSize: 11, color: C.textMut, fontWeight: 700 }}>
-              {[sizeLabel, uploadedAt ? `Uploaded ${uploadedAt}` : ""].filter(Boolean).join(" - ")}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Btn variant="ghost" size="sm" onClick={() => onOpen?.(resumeArtifact)}>Open</Btn>
-            <Btn variant="secondary" size="sm" onClick={() => onDownload?.(resumeArtifact)}>Download</Btn>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 function NewInterviewModal({
   draft,
