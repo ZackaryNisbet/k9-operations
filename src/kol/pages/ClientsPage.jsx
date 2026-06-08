@@ -14,6 +14,7 @@ import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
 import { baseCols, extraCols } from "./clients/constants";
+import { renderNotes, renderReasonBadge } from "./clients/components/cells";
 
 function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setLcFilters, lcFilterOpen, setLcFilterOpen, locationSlug }) {
   const [activeTab, setActiveTab] = useState("leads");
@@ -886,21 +887,6 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     );
   };
 
-  // ── Notes cell (shows last log note with date prefix) ──
-  const renderNotes = (client, tab) => {
-    const updates = client.lifecycle?.[tab]?.updates || [];
-    if (updates.length === 0) {
-      // For Ignite leads with no updates yet, show the received date from notes field
-      if (client.lifecycle?.conversion?.source === "ignite" && client.fields?.notes) {
-        return <span style={{fontSize:11,color:"#F97316",fontWeight:600,whiteSpace:"pre-wrap",wordBreak:"break-word",lineHeight:1.4}}>{client.fields.notes}</span>;
-      }
-      return <span style={{color:C.textMut,fontSize:11}}>—</span>;
-    }
-    const last = updates[0]; // most recent
-    const dateStr = last.loggedAt ? new Date(last.loggedAt).toLocaleDateString("en-US",{month:"numeric",day:"numeric",year:"2-digit"}) : "";
-    return <span style={{fontSize:11,color:C.text,whiteSpace:"pre-wrap",wordBreak:"break-word",lineHeight:1.4}}>{dateStr ? `${dateStr}: ` : ""}{last.notes}</span>;
-  };
-
   // ── Updates/Log cell ──
   const renderUpdatesLog = (client, tab) => {
     const updates = client.lifecycle?.[tab]?.updates || [];
@@ -938,17 +924,6 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       Revive
     </button>
   );
-
-  // ── Reclassified reason badge ──
-  const renderReasonBadge = (reason) => {
-    const colors = { "Unresponsive": C.warn, "Uninterested": C.dan, "Spam": "#9333EA", "Other": C.textSec };
-    const color = colors[reason] || C.textSec;
-    return (
-      <span style={{display:"inline-block",padding:"3px 10px",borderRadius:8,fontSize:10,fontWeight:700,background:`${color}15`,color,border:`1.5px solid ${color}30`}}>
-        {reason}
-      </span>
-    );
-  };
 
   // ── Client name cell (clickable) ──
   const renderName = (client) => {
