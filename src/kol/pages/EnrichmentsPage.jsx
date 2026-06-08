@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { C, gid, todayStr } from "../../shared/theme";
+import { todayStr } from "../../shared/theme";
 import { supabase } from "../../supabaseClient";
 import { useEnrichmentEvents } from "../../hooks/useEnrichmentEvents";
 import { useEnrichmentWorkflow } from "../../hooks/useEnrichmentWorkflow";
@@ -11,11 +11,7 @@ import {
   getMonthLabel,
   getMonthStart,
   normalizeDate,
-  parseLines,
-  parseProducts,
   prepareEventPayload,
-  serializeLines,
-  serializeProducts,
 } from "../enrichments/enrichmentData";
 import {
   buildGraphicStoragePath,
