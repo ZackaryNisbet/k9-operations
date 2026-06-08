@@ -46,6 +46,9 @@ import {
   getTaskCell,
 } from "./rotationStudio/rotationStudioGrid";
 import { rotationStudioStyles } from "./rotationStudio/rotationStudioStyles";
+import { CountStepper } from "./rotationStudio/CountStepper";
+import { RosterEditor } from "./rotationStudio/RosterEditor";
+import { TemplateCard } from "./rotationStudio/TemplateCard";
 
 const TASK_PICKER_KEYS = [
   "lgdc",
@@ -61,125 +64,6 @@ const TASK_PICKER_KEYS = [
   "float",
   "off",
 ];
-
-function CountStepper({ label, value, onChange, disabled }) {
-  const count = toCount(value);
-  return (
-    <div className="rotation-count-stepper">
-      <div>
-        <span className="rotation-count-label">{label}</span>
-        <span className="rotation-count-value">{count}</span>
-      </div>
-      <div className="rotation-count-controls">
-        <button type="button" onClick={() => onChange(count - 1)} disabled={disabled || count <= 0} aria-label={`Decrease ${label}`}>
-          -
-        </button>
-        <button type="button" onClick={() => onChange(count + 1)} disabled={disabled || count >= 24} aria-label={`Increase ${label}`}>
-          +
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TemplateThumbnail({ match }) {
-  const template = match?.template;
-  const preview = useMemo(() => buildTemplatePreviewGrid(template, { shift: template?.shift }), [template]);
-  const lanes = preview.lanes.slice(0, 3);
-  const slots = preview.slots.slice(0, 6);
-  return (
-    <div className="rotation-template-thumb" aria-hidden="true">
-      {lanes.map((lane) => (
-        <div key={lane.id} className="rotation-template-thumb-lane">
-          {slots.map((slot) => {
-            const task = preview.cells?.[lane.id]?.[slot.time]?.task || "off";
-            const color = TASK_COLORS[task] || TASK_COLORS.float;
-            return (
-              <span
-                key={`${lane.id}-${slot.time}`}
-                style={{
-                  background: task === "off" ? "#F8FAFC" : color.bg,
-                  borderColor: task === "off" ? "#E5E7EB" : `${color.text}22`,
-                }}
-              />
-            );
-          })}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TemplateCard({
-  match,
-  applied,
-  previewing,
-  onPreview,
-  onPreviewEnd,
-  onApply,
-}) {
-  const displayName = getTemplateDisplayName(match);
-  const confidence = match?.confidence || "fallback";
-  const fit = Math.round(match?.score || 0);
-  const explanation = match?.explanation || "Closest workbook match";
-  return (
-    <button
-      type="button"
-      className={`rotation-template-card${applied ? " is-applied" : ""}${previewing ? " is-previewing" : ""}`}
-      aria-label={`${displayName}. ${confidence} confidence, ${fit} fit. ${explanation}`}
-      title={`${displayName}\n${explanation}`}
-      onMouseEnter={onPreview}
-      onMouseLeave={onPreviewEnd}
-      onFocus={onPreview}
-      onBlur={onPreviewEnd}
-      onClick={onApply}
-    >
-      <TemplateThumbnail match={match} />
-      <span className="rotation-template-card-name">{displayName}</span>
-    </button>
-  );
-}
-
-function RosterEditor({ rows, onChange, disabled }) {
-  if (!rows.length) {
-    return (
-      <div className="rotation-roster-empty">
-        Add at least one employee to this shift to enable name and time adjustments.
-      </div>
-    );
-  }
-  return (
-    <div className="rotation-roster-grid">
-      {rows.map((row) => (
-        <div key={row.id} className="rotation-roster-row">
-          <div className="rotation-roster-role">
-            <strong>{row.label}</strong>
-            <span>{ROLE_CONFIG.find((role) => role.key === row.roleKey)?.label}</span>
-          </div>
-          <input
-            type="text"
-            value={row.name}
-            placeholder="Name optional"
-            disabled={disabled}
-            onChange={(event) => onChange(row.id, { name: event.target.value })}
-          />
-          <input
-            type="time"
-            value={row.shift_start}
-            disabled={disabled}
-            onChange={(event) => onChange(row.id, { shift_start: event.target.value })}
-          />
-          <input
-            type="time"
-            value={row.shift_end}
-            disabled={disabled}
-            onChange={(event) => onChange(row.id, { shift_end: event.target.value })}
-          />
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function PreviewCanvas({
   grid,
