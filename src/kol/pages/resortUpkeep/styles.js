@@ -174,3 +174,25 @@ export const impTd = { padding: "4px 6px", color: C.text, verticalAlign: "middle
 export const impCellInput = { width: "100%", minWidth: 70, boxSizing: "border-box", border: `1px solid ${C.borderLight}`, borderRadius: 6, background: "transparent", padding: "4px 6px", fontSize: 11.5, fontFamily: "inherit", color: C.text };
 export const impCellFocus = (e) => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = "#fff"; };
 export const impCellBlur = (e) => { e.currentTarget.style.borderColor = C.borderLight; e.currentTarget.style.background = "transparent"; };
+
+export const input = {
+  width: "100%",
+  boxSizing: "border-box",
+  border: `1px solid ${C.border}`,
+  borderRadius: 10,
+  background: "#fff",
+  color: C.text,
+  padding: "10px 12px",
+  fontSize: 13,
+  fontFamily: "inherit",
+};
+
+export const mSelect = { ...({ width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 10, background: "#fff", color: C.text, padding: "9px 11px", fontSize: 13, fontFamily: "inherit", fontWeight: 600 }) };
+
+export const MX_GRID = "minmax(0, 1fr) 150px 140px 92px";
+export const mxTableWrap = { border: `1.5px solid ${C.border}`, borderRadius: 10, overflow: "hidden", background: C.surface };
+export const mxHeadRow = { display: "grid", gridTemplateColumns: MX_GRID, gap: 8, padding: "8px 12px", background: "#fff", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.textMut };
+export const mxHeadCell = { display: "flex", alignItems: "center", minHeight: 16 };
+export const mxRow = { display: "grid", gridTemplateColumns: MX_GRID, gap: 8, padding: "8px 12px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "start" };
+export const mxText = { width: "100%", boxSizing: "border-box", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, lineHeight: 1.4, fontFamily: "inherit", color: C.text, background: "#fff", outline: "none", resize: "none", overflow: "hidden", minHeight: 38, whiteSpace: "pre-wrap", wordBreak: "break-word" };
+export const mxArrow = { width: 24, height: 24, display: "inline-flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.border}`, borderRadius: 6, background: "#fff", color: C.textSec, cursor: "pointer", fontSize: 12, fontWeight: 800, fontFamily: "inherit", padding: 0 };
