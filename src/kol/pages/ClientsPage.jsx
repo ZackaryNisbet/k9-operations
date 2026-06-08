@@ -13,6 +13,7 @@ import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
+import { baseCols, extraCols } from "./clients/constants";
 
 function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setLcFilters, lcFilterOpen, setLcFilterOpen, locationSlug }) {
   const [activeTab, setActiveTab] = useState("leads");
@@ -688,8 +689,6 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     { key: "eval", label: "Eval" }, { key: "postEval", label: "P-Eval" },
     { key: "tours", label: "Tours" }, { key: "postTour", label: "P-Tour" },
   ];
-  const baseCols = ["nextRes","lastRes","daysSince","totalRes","totalSpent"];
-  const extraCols = ["daycare","boarding","eval","postEval","tours","postTour"];
   const shownDataCols = showExtraCols ? [...baseCols.slice(0,3), ...extraCols, ...baseCols.slice(3)] : baseCols;
 
   // ── Source cell renderer ──

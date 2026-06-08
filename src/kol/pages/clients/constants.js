@@ -47,3 +47,7 @@ export const EVENT_TYPE_STYLES = {
   initial_sync: { color: C.pri, bg: C.priLt, icon: "sync", label: "Initial Sync" },
   milestone:    { color: "#8B5CF6", bg: "#EDE9FE", icon: "milestone", label: "Milestone" },
 };
+
+// ─── ClientsPage Active/All data column ordering ───────────────────────────
+export const baseCols = ["nextRes","lastRes","daysSince","totalRes","totalSpent"];
+export const extraCols = ["daycare","boarding","eval","postEval","tours","postTour"];
