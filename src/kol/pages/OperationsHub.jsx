@@ -14,7 +14,7 @@ import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
 import { getInventoryWorkflow } from "./inventoryStatus";
-import { POS_FE_TEMPLATE, POS_BE_TEMPLATE, EXCLUDED_SERVICES, COLLAR_PILL_COLORS } from "./operations/constants";
+import { POS_FE_TEMPLATE, POS_BE_TEMPLATE, EXCLUDED_SERVICES, COLLAR_PILL_COLORS, statusConfig, nbtn } from "./operations/constants";
 import { fmtCompletionTime } from "./operations/helpers";
 
 function OperationsHub({ data, save, nav, profile }) {
@@ -458,17 +458,6 @@ function OperationsHub({ data, save, nav, profile }) {
     { key: "daily", label: "Daily Operations", items: OPERATIONS_CATALOG.filter(c => c.frequency === "daily") },
     { key: "weekly", label: "Weekly Maintenance", items: OPERATIONS_CATALOG.filter(c => c.frequency === "weekly") },
   ];
-
-  const statusConfig = {
-    not_started: { label: "Not Started", bg: C.surfaceHover, color: C.textMut, barColor: C.borderLight },
-    in_progress: { label: "In Progress", bg: C.warnLt, color: C.warn, barColor: "#F59E0B" },
-    ready: { label: "Ready", bg: C.priLt, color: C.pri, barColor: C.pri },
-    completed: { label: "Completed", bg: C.sucLt, color: C.suc, barColor: "#10B981" },
-    coming_soon: { label: "Coming Soon", bg: C.surfaceHover, color: C.textMut, barColor: C.borderLight },
-    none: { label: "", bg: "transparent", color: "transparent", barColor: "transparent" },
-  };
-
-  const nbtn = { border: "none", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit", fontWeight: 600, fontSize: 12 };
 
   if (data.loading) return (
     <div style={{ padding: 60, textAlign: "center" }}>

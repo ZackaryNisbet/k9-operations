@@ -1,6 +1,8 @@
 // K9 Operations — shared operations constants (extracted from OperationsHub)
 // Self-contained data constants. See AGENTS.md for development contract.
 
+import { C } from "../../../shared/theme";
+
 // ─── OPS-010: Full FE/BE checklist templates imported from POS app ───────────
 // These replace the condensed shared/theme defaults for Lite locations.
 export const POS_FE_TEMPLATE = [
@@ -115,3 +117,15 @@ export const COLLAR_PILL_COLORS = [
   { key: "unclassified", label: "Unclassified", bg: "#F3F4F6", text: "#4B5563" },
   { key: "halfAndHalf", label: "H&H", bg: "#F3E5F5", text: "#7B1FA2" },
 ];
+
+// Ops card status → label/color mapping
+export const statusConfig = {
+  not_started: { label: "Not Started", bg: C.surfaceHover, color: C.textMut, barColor: C.borderLight },
+  in_progress: { label: "In Progress", bg: C.warnLt, color: C.warn, barColor: "#F59E0B" },
+  ready: { label: "Ready", bg: C.priLt, color: C.pri, barColor: C.pri },
+  completed: { label: "Completed", bg: C.sucLt, color: C.suc, barColor: "#10B981" },
+  coming_soon: { label: "Coming Soon", bg: C.surfaceHover, color: C.textMut, barColor: C.borderLight },
+  none: { label: "", bg: "transparent", color: "transparent", barColor: "transparent" },
+};
+
+export const nbtn = { border: "none", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit", fontWeight: 600, fontSize: 12 };
