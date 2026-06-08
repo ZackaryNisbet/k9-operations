@@ -103,6 +103,7 @@ import PerformanceReviewComplianceGrid, {
   PerformanceReviewComplianceGridStyles,
   ReviewCycleCell,
 } from "../components/PerformanceReviewComplianceGrid";
+import { SectionHeader } from "./training/components/SectionHeader";
 import { CapacitySectionHeader } from "./training/components/CapacitySectionHeader";
 import { LaborRosterCopyValue } from "./training/components/LaborRosterCopyValue";
 import { EmptyState } from "./training/components/EmptyState";
@@ -1327,17 +1328,6 @@ function getReadinessCellActorLine(cell = {}, status = "") {
 
 
 
-function SectionHeader({ title, count, children }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{title}</span>
-        {count != null && <Badge color="default">{count}</Badge>}
-      </div>
-      {children}
-    </div>
-  );
-}
 
 function PerformanceReviewStyles() {
   return (
