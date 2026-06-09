@@ -2,7 +2,7 @@
 // Matrix-style admin surface for configuring role layouts.
 // 4 rows (Opening/Midday/Closing/As Needed) x 3 columns (PCT/CSR/MOD).
 // Supports tasks and workflow references inside each cell with drag-and-drop.
-// Isolated page component. See AGENTS.md for development contract.
+// Isolated page component.
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";

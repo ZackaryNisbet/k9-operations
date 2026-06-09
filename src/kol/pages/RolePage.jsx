@@ -1,7 +1,7 @@
 // K9 Operations — RolePage
 // Main role page with four fixed sections: Opening, Midday, Closing, As Needed
 // Includes date cycling, task completion, and live workflow summary cards.
-// Isolated page component. See AGENTS.md for development contract.
+// Isolated page component.
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";

@@ -1,5 +1,5 @@
 // K9 Operations — ClientDetailPage
-// Isolated page component. See AGENTS.md for development contract.
+// Isolated page component.
 // CLM-005: Push to Gingr   |   IGN-003: Ignite Lead Section   |   CLM-008: Lifecycle Event Logging
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";

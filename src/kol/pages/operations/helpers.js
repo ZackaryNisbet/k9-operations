@@ -1,5 +1,5 @@
 // K9 Operations — shared operations helpers (extracted from OperationsHub)
-// Self-contained pure helpers. See AGENTS.md for development contract.
+// Self-contained pure helpers.
 
 // Format timestamp for display
 export const fmtCompletionTime = (isoStr) => {

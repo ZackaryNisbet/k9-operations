@@ -1,5 +1,5 @@
 // K9 Operations — ClientsPage
-// Isolated page component. See AGENTS.md for development contract.
+// Isolated page component.
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import ReactDOM from "react-dom";

@@ -15,7 +15,7 @@ the **target structure** every new file should follow.
    (`ui.jsx`, `listSurface.jsx`, `theme.js`, `icons.jsx`), pure engines
    (`schedulingEngine.js`, `accrualEngine.js`, `cashBasisRevenue.js`), and
    permission primitives live here. New surfaces **compose** `ui.jsx` +
-   `listSurface.jsx` (mandated by `DESIGN.md` §5 and `AGENTS.md`).
+   `listSurface.jsx` (mandated by `DESIGN.md` §5).
 3. **Per‑feature split.** A feature folder separates concerns:
    `pages/` (route entry, thin) → `components/` (UI) → `lib/` (pure logic) →
    `constants/` (static config) → `hooks/` (React data subscriptions).
@@ -66,7 +66,6 @@ src/
 ├── hooks/                  # Lite/shared React data hooks (20 files)
 ├── ignite/                 # lead email parser backend
 ├── migrations/             # (client-side migration helpers)
-├── investigations/         # verification notes
 └── __tests__/              # 63 Vitest files + fixtures
 ```
 
@@ -91,10 +90,8 @@ Combined, the six god files drop from **76,200 → 63,747 lines** (~12,450 lines
 relocated into ~80 focused modules). All six branches merge cleanly together and
 stay green (verified via an integration octopus‑merge: 988 tests + build).
 
-These were intentionally **parallelized by file ownership** (one agent per file,
-isolated worktrees) — multiple workstreams on the *same* file would only create
-merge conflicts. The decomposition method and remaining waves are tracked in
-[docs/refactor/APP_JSX_DECOMPOSITION.md](../refactor/APP_JSX_DECOMPOSITION.md).
+These were split by file ownership to keep each change focused — multiple
+workstreams on the *same* file would only create merge conflicts.
 
 ## 5. Target structure
 

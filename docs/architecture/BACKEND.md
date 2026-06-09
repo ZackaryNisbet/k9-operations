@@ -90,8 +90,7 @@ owns invariants under RLS. Highlights by domain:
   `update_grassroots_activity_with_history`.
 
 > The RPC contract currently lives only in SQL; the frontend discovers functions
-> by string name. Generating typed RPC bindings is a recommended improvement
-> (see [INDUSTRY_STANDARDS.md](INDUSTRY_STANDARDS.md)).
+> by string name. Generating typed RPC bindings is a recommended improvement.
 
 ## 4. Realtime
 
@@ -130,7 +129,7 @@ owns invariants under RLS. Highlights by domain:
   edge functions + `pg_cron`. Risky function deploys go through
   `scripts/deploy-risky-functions.mjs` with explicit `verifyJwt`.
 
-## 8. Gaps (tracked in INDUSTRY_STANDARDS.md)
+## 8. Gaps
 
 No CI workflow, no lint/format config, RPC signatures undocumented outside SQL,
 dual Ignite intake paths, and ~23 stub migrations add archaeology noise.

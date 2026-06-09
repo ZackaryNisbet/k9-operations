@@ -1,5 +1,5 @@
 // K9 Operations — EOD @mention helpers (extracted from EODPage)
-// Self-contained leaf component + render helper. See AGENTS.md for development contract.
+// Self-contained leaf component + render helper.
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { C } from "../../../shared/theme";

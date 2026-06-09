@@ -1,6 +1,6 @@
 // K9 Operations — shared constants for the client lifecycle pages.
 // Pure data extracted verbatim from ClientsPage / ClientDetailPage / FunnelPage so
-// the page modules stay focused on rendering. See AGENTS.md for the dev contract.
+// the page modules stay focused on rendering.
 
 import { C } from "../../../shared/theme";
 

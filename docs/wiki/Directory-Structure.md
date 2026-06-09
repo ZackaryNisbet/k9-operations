@@ -22,9 +22,7 @@ k9-operations/
 ├── ARCHITECTURE.md         # master architecture overview
 ├── DESIGN.md               # design system (tokens, components, standards)
 ├── README.md               # front page
-├── AGENTS.md / CLAUDE.md   # autonomous-agent instructions & conventions
-├── LICENSE / NOTICE        # licensing
-└── *.md                    # specs, audits, requirements (REVENUE_AUDIT, SECURITY_AUDIT, …)
+└── LICENSE / NOTICE        # licensing
 ```
 
 ## `src/` — application source
@@ -87,7 +85,6 @@ src/
 ├── hooks/                  # Cross/Lite React data hooks (useGingrData, useDashboardMetrics,
 │                           #   useSchedulingData, useEnrichment*, useFacilityPresence, …)
 ├── migrations/             # Client-side data migration helpers
-├── investigations/         # Verification notes
 └── __tests__/              # Vitest suites (66 files, 1000+ tests) + fixtures
 ```
 

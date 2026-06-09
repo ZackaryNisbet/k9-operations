@@ -1,6 +1,6 @@
 // K9 Operations — Timeline event icon (leaf component).
 // Extracted verbatim from ClientDetailPage (CLM-008). Stateless: renders an inline
-// SVG for a given lifecycle event icon type. See AGENTS.md for the dev contract.
+// SVG for a given lifecycle event icon type.
 
 import React from "react";
 

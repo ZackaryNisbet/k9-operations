@@ -1,6 +1,6 @@
 // K9 Operations — RequiredFieldsTab (CLM-004: Field Mapping Module)
 // Two-column drag-and-drop field mapping between K9 Ops Lite and Gingr.
-// Isolated page component. See AGENTS.md for development contract.
+// Isolated page component.
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import ReactDOM from "react-dom";

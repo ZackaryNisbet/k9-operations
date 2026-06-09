@@ -1,5 +1,5 @@
 // K9 Operations — IgniteParserConfigTab
-// Isolated page component. See AGENTS.md for development contract.
+// Isolated page component.
 
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../../supabaseClient";

@@ -5,11 +5,6 @@ operations stack — daily checklists, customer lifecycle/CRM, labor & training,
 scheduling, inventory, and reporting — on top of a facility's **Gingr** PMS, and
 ships as three runtime editions from one codebase.
 
-> **Status:** private product codebase. This README also serves as the front page
-> for the [proposed public release](docs/OPEN_SOURCE_PROPOSAL.md). A licensing
-> decision and a git‑history secret purge are **required before this repo is made
-> public** — see [docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md).
-
 ---
 
 ## What it does
@@ -67,7 +62,6 @@ master overview), then:
 - [Editions](docs/architecture/EDITIONS.md) — base vs analytics vs POS
 - [File organization](docs/architecture/FILE_ORGANIZATION.md) — structure & conventions
 - [Backend](docs/architecture/BACKEND.md) — Supabase functions, RPCs, migrations
-- [Industry standards](docs/architecture/INDUSTRY_STANDARDS.md) — quality scorecard
 - [Design system](DESIGN.md) — the visual language
 
 ## Project layout (high level)
@@ -88,10 +82,8 @@ supabase/
 
 ## Contributing
 
-Conventions live in the repo skills (`.claude/skills/coding-workflow`): feature
-branches, small behavior‑preserving PRs, draft PRs, tests + build green before
-review. A root `CONTRIBUTING.md` is part of the
-[open‑source checklist](docs/OPEN_SOURCE_PROPOSAL.md).
+Conventions: feature branches, small behavior‑preserving PRs, and tests + build
+green before review.
 
 ## License
 
@@ -99,6 +91,4 @@ review. A root `CONTRIBUTING.md` is part of the
 reserved. The source is public to **read and review**, but the license grants **no
 right to use, run, copy, modify, or distribute** it. This is intentionally *not* an
 open‑source license. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) (third‑party
-components retain their own licenses). Rationale and alternatives:
-[docs/OPEN_SOURCE_PROPOSAL.md](docs/OPEN_SOURCE_PROPOSAL.md). *Not legal advice —
-have counsel confirm the `LICENSE` text before public release.*
+components retain their own licenses).

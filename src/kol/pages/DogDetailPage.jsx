@@ -1,5 +1,5 @@
 // K9 Operations — DogDetailPage
-// Isolated page component. See AGENTS.md for development contract.
+// Isolated page component.
 // CLM-006: Enhanced with feeding schedule, medications, immunizations, vet contact, animal photo, temperament
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";

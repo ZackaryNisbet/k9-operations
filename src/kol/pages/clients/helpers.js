@@ -1,6 +1,6 @@
 // K9 Operations — shared pure helpers for the client lifecycle pages.
 // Logic-free moves extracted verbatim from ClientDetailPage; domain logic continues
-// to live in src/kol/clientManagementData.js. See AGENTS.md for the dev contract.
+// to live in src/kol/clientManagementData.js.
 
 import { C, titleCase } from "../../../shared/theme";
 import { EVENT_TYPE_STYLES } from "./constants";

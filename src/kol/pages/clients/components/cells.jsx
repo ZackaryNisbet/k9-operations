@@ -1,6 +1,6 @@
 // K9 Operations — stateless cell renderers for the client lifecycle list.
 // Extracted verbatim from ClientsPage: pure functions of their arguments (no closure
-// over page state), kept here to slim the page module. See AGENTS.md for the contract.
+// over page state), kept here to slim the page module.
 
 import React from "react";
 import { C } from "../../../../shared/theme";

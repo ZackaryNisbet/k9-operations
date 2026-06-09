@@ -1,5 +1,5 @@
 // K9 Operations — shared operations constants (extracted from OperationsHub)
-// Self-contained data constants. See AGENTS.md for development contract.
+// Self-contained data constants.
 
 import { C } from "../../../shared/theme";
 

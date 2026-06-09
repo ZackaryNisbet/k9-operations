@@ -1,5 +1,5 @@
 // K9 Operations — CheckoutTVPage
-// Isolated page component. See AGENTS.md for development contract.
+// Isolated page component.
 // Fixes: TV-001 (daycare count), TV-003 (large/small dog differentiation),
 //        TV-004 (room numbers), TV-005 (TV navigation with filtered views), TV-006 (checkout highlight animation),
 //        TV-010 (Gingr BOH poll for daycare dogs), TV-011 (view-dependent hero cards),
@@ -7,8 +7,6 @@
 //        TV-013 (persistent timestamp-based notices — immune to re-renders and poll cycles)
 //
 // TV-005 NOTE: In KolApp.jsx, the nav item for this page should be renamed from "Checkout TV" to "TV".
-// We cannot edit KolApp.jsx per AGENTS.md rules — only page files. This rename should be done separately.
-
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
 import { PRESENCE_NOTICE_WINDOW_MS, mapPresenceEventToNoticeGroup, useFacilityPresence } from "../../hooks/useFacilityPresence";

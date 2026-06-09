@@ -177,18 +177,7 @@ bootstrap), **#87** (marketing site), **#89** (AI assistant ops manual),
 
 ---
 
-## 7. Engineering standards & open‑source readiness
-
-- **Standards scorecard** (testing, types, lint/CI, security, a11y, perf) and
-  the gaps to close: **[docs/architecture/INDUSTRY_STANDARDS.md](docs/architecture/INDUSTRY_STANDARDS.md)**
-- **Proposed public GitHub repo** (structure, scope, licensing, CI, checklist):
-  **[docs/OPEN_SOURCE_PROPOSAL.md](docs/OPEN_SOURCE_PROPOSAL.md)**
-- **Security & secret/PII audit** (what was removed, what remains, env manifest):
-  **[docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md)**
-
----
-
-## 8. Document index
+## 7. Document index
 
 | Document | What it covers |
 | --- | --- |
@@ -201,9 +190,5 @@ bootstrap), **#87** (marketing site), **#89** (AI assistant ops manual),
 | [PAGE_DATA_LOGIC.md](docs/architecture/PAGE_DATA_LOGIC.md) | Per‑page data sources & how screens interconnect |
 | [FILE_ORGANIZATION.md](docs/architecture/FILE_ORGANIZATION.md) | Current & target file structure, conventions |
 | [BACKEND.md](docs/architecture/BACKEND.md) | Supabase functions, RPCs, migrations, realtime |
-| [INDUSTRY_STANDARDS.md](docs/architecture/INDUSTRY_STANDARDS.md) | Standards adherence & gaps |
 | [MOBILE.md](docs/architecture/MOBILE.md) | K9 Operations Mobile (companion app) — placeholder |
-| [../docs/OPEN_SOURCE_PROPOSAL.md](docs/OPEN_SOURCE_PROPOSAL.md) | Proposed public repo |
-| [../docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md) | Secret/PII audit & remediation |
-| [../docs/DEMO_VIDEO_SCRIPT.md](docs/DEMO_VIDEO_SCRIPT.md) | Demo video script & storyboard |
-| [DESIGN.md](DESIGN.md) | Design system (pre‑existing) |
+| [DESIGN.md](DESIGN.md) | Design system |

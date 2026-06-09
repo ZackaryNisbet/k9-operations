@@ -135,8 +135,7 @@ flowchart LR
 ```
 
 > Before this design, the POS data layer re‑downloaded the whole location dataset on
-> every change + a 30s always‑on poll. See PR #85 and
-> `docs/operations/SUPABASE_EGRESS_AUDIT.md`.
+> every change + a 30s always‑on poll (fixed in PR #85).
 
 ---
 
