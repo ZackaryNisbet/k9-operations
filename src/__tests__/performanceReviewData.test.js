@@ -361,6 +361,6 @@ describe("performance review PDF helpers", () => {
   });
 
   it("generates stable review filenames", () => {
-    expect(buildPerformanceReviewPdfFileName({ full_name: "Jordan Vance" }, "60_day")).toBe("jordan-smith-60-day-performance-review.pdf");
+    expect(buildPerformanceReviewPdfFileName({ full_name: "Jordan Vance" }, "60_day")).toBe("jordan-vance-60-day-performance-review.pdf");
   });
 });

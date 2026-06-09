@@ -518,7 +518,7 @@ describe("trainingData helpers", () => {
     expect(file).toContain("FN:Jane Vance");
     expect(file).toContain("FN:Pat Lee");
     expect(file).not.toContain("Status: Inactive");
-    expect(buildLaborEmployeeContactCardFilename({}, { locationName: "Adair Forsythe", bulk: true })).toBe("cherry-hill-active-employee-contacts.vcf");
+    expect(buildLaborEmployeeContactCardFilename({}, { locationName: "Adair Forsythe", bulk: true })).toBe("adair-forsythe-active-employee-contacts.vcf");
   });
 
   it("formats roster email recipients with display name and normalized email", () => {

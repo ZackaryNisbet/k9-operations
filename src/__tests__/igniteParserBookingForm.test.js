@@ -52,7 +52,7 @@ describe("parseIgniteEmail on the booking form", () => {
     expect(lead.error).toBeUndefined();
     expect(lead.leadType).toBe("web_form");
     expect(lead.clientName).toBe("Janelle Bennett");
-    expect(lead.email).toBe("jmbmartinez.jmm@gmail.com"); // lowercased
+    expect(lead.email).toBe("jmbbennett.jmm@gmail.com"); // lowercased
     expect(lead.phone).toBe(normalizePhone("8567018139")); // 18567018139
     expect(lead.formName).toBe("Booking");
     expect(lead.senderKnown).toBe(true);

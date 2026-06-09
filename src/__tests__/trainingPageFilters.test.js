@@ -1379,7 +1379,7 @@ describe("applyLaborRosterFilters", () => {
 
     expect(noteMatchesSearch(note, "gate movement")).toBe(true);
     expect(noteMatchesSearch(note, "daycare group")).toBe(true);
-    expect(noteMatchesSearch(note, "zack")).toBe(true);
+    expect(noteMatchesSearch(note, "zach")).toBe(true);
     expect(noteMatchesSearch(note, "email only")).toBe(false);
   });
 

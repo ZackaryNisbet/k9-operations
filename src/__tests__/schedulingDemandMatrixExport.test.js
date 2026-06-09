@@ -194,7 +194,7 @@ describe("Scheduling Demand Matrix export model", () => {
         generatedAt: "2026-05-17T12:00:00.000Z",
       });
 
-      expect(buildDemandMatrixExportFilename(model)).toBe("scheduling-demand-matrix-cherry-hill-2025-01-01-to-2025-01-02.xlsx");
+      expect(buildDemandMatrixExportFilename(model)).toBe("scheduling-demand-matrix-adair-forsythe-2025-01-01-to-2025-01-02.xlsx");
       expect(model.rows.some((row) => row.section === "Gingr Source Counts")).toBe(false);
       expect(model.rows.some((row) => row.section === "Historical Comparison")).toBe(true);
       expect(model.rows.find((row) => row.key === "opening.total_boarding")).toBeTruthy();

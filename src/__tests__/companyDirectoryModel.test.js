@@ -41,11 +41,11 @@ describe("company directory canonical org model", () => {
 
     expect(nodes.find((node) => node.person_id === "alan")).toMatchObject({
       photo_url: "https://example.com/alan.jpg",
-      initials: "AL",
+      initials: "PH",
     });
     expect(nodes.find((node) => node.person_id === "lia")).toMatchObject({
       photo_url: "https://example.com/lia.jpg",
-      initials: "LM",
+      initials: "SC",
     });
   });
 

@@ -85,7 +85,7 @@ describe("display helpers", () => {
     expect(getDirectoryContactName({})).toBe("Unnamed contact");
   });
   it("derives initials", () => {
-    expect(getDirectoryContactInitials({ first_name: "Jane", last_name: "Vance" })).toBe("JS");
+    expect(getDirectoryContactInitials({ first_name: "Jane", last_name: "Vance" })).toBe("JV");
     expect(getDirectoryContactInitials({})).toBe("?");
   });
   it("prefers the split address, falling back to the raw address", () => {

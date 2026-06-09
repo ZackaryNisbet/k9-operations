@@ -96,7 +96,7 @@ describe("name + phone presentation", () => {
     expect(cleanLeadName(bookingLead)).toBe("Janelle Bennett");
     expect(cleanLeadName({ first_name: "  Pa ", last_name: "  Hazleton " })).toBe("Pa Hazleton");
     expect(cleanLeadName({ first_name: "Liacouras", last_name: null })).toBe("Liacouras");
-    expect(leadSortName(bookingLead)).toBe("martinez janelle");
+    expect(leadSortName(bookingLead)).toBe("bennett janelle");
   });
 
   it("formats phone as (area) prefix-line", () => {

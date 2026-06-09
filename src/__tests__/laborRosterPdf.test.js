@@ -110,7 +110,7 @@ describe("labor roster PDF", () => {
     expect(text).toContain("Adair Forsythe Team Roster");
     expect(text).toContain("K9 Resorts Luxury Pet Hotel");
     expect(text).toContain("(856) 555-0100");
-    expect(text).toContain("zackary.nisbet@example.com");
+    expect(text).toContain("skylerary.brooks@example.com");
     expect(text).not.toContain("K9 Operations");
   });
 
@@ -163,7 +163,7 @@ describe("labor roster PDF", () => {
     expect(phoneOnlyText).toContain("(856) 555-0100");
     expect(phoneOnlyText).not.toContain("zackary.nisbet@example.com");
     expect(emailOnlyText).not.toContain("(856) 555-0100");
-    expect(emailOnlyText).toContain("zackary.nisbet@example.com");
+    expect(emailOnlyText).toContain("skylerary.brooks@example.com");
   });
 
   it("keeps commitment, phone, and email on one page without report metrics", async () => {
@@ -244,7 +244,7 @@ describe("labor roster PDF", () => {
     expect(pdfDoc.getPageCount()).toBe(1);
     // Scaling the page up must not drop or clip any roster text.
     expect(posterText).toBe(letterText);
-    expect(posterText).toContain("zackary.nisbet@example.com");
+    expect(posterText).toContain("skylerary.brooks@example.com");
   });
 
   it("accepts an explicit { width, height } page size", () => {
