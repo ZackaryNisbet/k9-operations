@@ -12,13 +12,13 @@ import { useWeatherData } from "../../hooks/useWeatherData";
 import { useWeatherDisplaySettings } from "../../hooks/useWeatherDisplaySettings";
 import TodayEnrichmentCard from "../enrichments/TodayEnrichmentCard";
 import { DEFAULT_INVENTORY_SCHEDULE, getInventoryCycleStart, getInventoryOverdueInfo, normalizeInventorySchedule } from "./inventorySchedule";
-import { classifyRole } from "./<path>";
-import { HomeHeader, QuickCard, MetricCard, WorkflowProgressPanel } from "./<path>";
-import { HomeWeatherButton, HomeWeatherCard, HomeWeatherModal } from "./<path>";
-import { formatBoardingDaycareSubtext, formatRoomsOccupiedSubtext } from "./<path>";
-import { buildPlatformHealthFailure } from "./<path>";
-import { HomePlatformHealthButton, HomePlatformHealthModal } from "./<path>";
-import { buildInventoryQuickAccessState } from "./<path>";
+import { classifyRole } from "./home/roleClassification";
+import { HomeHeader, QuickCard, MetricCard, WorkflowProgressPanel } from "./home/cards";
+import { HomeWeatherButton, HomeWeatherCard, HomeWeatherModal } from "./home/weatherWidgets";
+import { formatBoardingDaycareSubtext, formatRoomsOccupiedSubtext } from "./home/dashboardMetrics";
+import { buildPlatformHealthFailure } from "./home/platformHealthUtils";
+import { HomePlatformHealthButton, HomePlatformHealthModal } from "./home/platformHealthWidgets";
+import { buildInventoryQuickAccessState } from "./home/inventoryQuickAccess";
 
 function usePlatformHealth(locationId, date) {
   const [health, setHealth] = useState(null);
